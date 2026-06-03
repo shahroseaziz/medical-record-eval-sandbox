@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "ingest": "tsx scripts/ingest.ts",
+    "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.51.0",
@@ -36,6 +38,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.0.0",
     "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0"
   }
