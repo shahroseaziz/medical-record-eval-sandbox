@@ -45,13 +45,13 @@ jobs:
       - name: Seed fixtures (local CCDA → pgvector)
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
         run: npx tsx scripts/ingest.ts --local src/lib/ccda/__fixtures__
 
       - name: Unit + integration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
         run: npm test
 
       - name: Build
