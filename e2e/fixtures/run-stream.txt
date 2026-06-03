@@ -1,0 +1,11 @@
+2:[{"type":"retrieval","chunks":[{"section":"medications","text":"Lisinopril 10mg daily for hypertension","distance":0.12,"similarity":0.88}],"groundingContext":"[medications]\nLisinopril 10mg daily for hypertension"}]
+0:"The "
+0:"patient "
+0:"takes "
+0:"Lisinopril "
+0:"10mg "
+0:"daily "
+0:"for "
+0:"hypertension."
+d:{"finishReason":"stop","usage":{"promptTokens":120,"completionTokens":8}}
+2:[{"type":"eval","faithfulness":{"scorer":"faithfulness","score":1.0,"claims":[{"claim":"The patient takes Lisinopril 10mg daily for hypertension","verdict":"supported","rationale":"explicitly stated in medications section"}],"zeroClaimFlag":false,"extractPrompt":"Extract factual claims from the output.","verdictPrompt":"Verdict each claim against the grounding context."},"sectionHit":{"scorer":"section-hit","score":null,"requiredSections":[],"retrievedSections":["medications"],"missingSections":[]}}]
