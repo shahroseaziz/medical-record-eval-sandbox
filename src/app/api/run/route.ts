@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 120
 
 import { NextRequest } from 'next/server'
-import { createDataStreamResponse, streamText } from 'ai'
+import { createDataStreamResponse, streamText, type JSONValue } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import Anthropic from '@anthropic-ai/sdk'
 import { retrieve } from '@/lib/rag/index'
@@ -175,12 +175,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       ])
 
       // ── 6. Stream faithfulness rationale + eval results ──────
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       dataStream.writeData({
         type: 'eval',
-        faithfulness: faithfulnessResult as any,
-        sectionHit: sectionHitResult as any,
-      } as any)
+        faithfulness: faithfulnessResult,
+        sectionHit: sectionHitResult,
+      } as unknown as JSONValue)
 
       // ── 7. Persist trace to DB ────────────────────────────────
       const embeddingTokens = mode === 'retrieve' ? estimateTokens(query) : 0
