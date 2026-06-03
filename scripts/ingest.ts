@@ -9,6 +9,8 @@ import { SCHEMA_SQL, withClient } from '../src/lib/db/index.js'
 import { embed } from '../src/lib/voyage.js'
 
 const DRY_RUN = process.argv.includes('--dry-run')
+const LOCAL_IDX = process.argv.indexOf('--local')
+const LOCAL_DIR = LOCAL_IDX !== -1 ? process.argv[LOCAL_IDX + 1] : null
 const BATCH_SIZE = 16
 
 // Absolute path is always relative to project root (CWD when tsx is invoked)
@@ -67,6 +69,14 @@ async function processXml(
 }
 
 async function getXmlFiles(): Promise<string[]> {
+  if (LOCAL_DIR) {
+    const absDir = join(process.cwd(), LOCAL_DIR)
+    console.log(`--local: reading XML files from ${absDir}`)
+    return readdirSync(absDir)
+      .filter((f) => f.endsWith('.xml'))
+      .map((f) => join(absDir, f))
+  }
+
   if (DRY_RUN) {
     console.log('--dry-run: using fixtures')
     return readdirSync(FIXTURE_DIR)
@@ -143,7 +153,7 @@ async function main(): Promise<void> {
   }
 
   // Write to database
-  console.log('Writing to database...')
+  console.log(`Writing ${patientRows.length} patients, ${chunkRows.length} chunks to database...`)
   await withClient(async (client) => {
     await client.query(SCHEMA_SQL)
 
@@ -172,6 +182,11 @@ async function main(): Promise<void> {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     `)
   })
+
+  if (LOCAL_DIR) {
+    console.log('Local mode: skipping seed dump generation.')
+    return
+  }
 
   // Generate seed/embeddings.sql.gz
   console.log('Generating seed dump...')
