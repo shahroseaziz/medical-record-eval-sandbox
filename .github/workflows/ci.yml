@@ -10,6 +10,19 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +43,8 @@ jobs:
         run: npm run typecheck
 
       - name: Unit tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: npm test
 
       - name: Build
@@ -40,7 +55,7 @@ jobs:
           set -e
           required_paths=(
             "src/app" "src/components" "src/lib/ccda" "src/lib/rag" "src/lib/eval"
-            "src/lib/db.ts" "src/lib/claude.ts" "src/lib/voyage.ts" "src/lib/ratelimit.ts"
+            "src/lib/db" "src/lib/claude.ts" "src/lib/voyage.ts" "src/lib/ratelimit.ts"
             "src/lib/killswitch.ts" "src/lib/tokens.ts" "evals/golden" "evals/scorers"
             "evals/results" "evals/harness" "evals/thresholds.yaml" "scripts" "observability"
             "factory.json" ".env.example" "docker-compose.yml" ".github/workflows/ci.yml"
