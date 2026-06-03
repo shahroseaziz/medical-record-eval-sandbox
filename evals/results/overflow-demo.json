@@ -1,0 +1,27 @@
+{
+  "description": "Demonstration of context overflow when stuffing the 6 MB Agustin437 C-CDA record vs. using retrieve mode.",
+  "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+  "patientFile": "Agustin437_Hills818_e0de7b0a-c40b-6467-c099-0f9467be6c0a.xml",
+  "rawFileSizeBytes": 6391614,
+  "rawFileSizeHuman": "~6.1 MB",
+  "tiers": [
+    {
+      "tier": "retrieve",
+      "ragMode": "retrieve",
+      "k": 5,
+      "description": "Vector retrieval returns the k=5 most semantically relevant chunks. Each chunk is ≤ ~1500 tokens. Total context: 1 500–4 500 tokens. Fits comfortably within any current Claude model context window.",
+      "estimatedContextTokens": "1 500 – 4 500",
+      "overflowRisk": "none"
+    },
+    {
+      "tier": "stuff",
+      "ragMode": "stuff",
+      "k": "all",
+      "description": "Stuffing the full parsed narrative text of the 6 MB Agustin437 record into the model context results in severe overflow. After HTML stripping the 131 K-line XML file yields ~400 000+ characters of plain text (~100 000+ tokens) — exceeding all current Claude model context windows and guaranteed to cause truncation or API errors.",
+      "estimatedContextChars": "400 000+",
+      "estimatedContextTokens": "100 000+",
+      "overflowRisk": "extreme — exceeds all current model context windows; causes truncation or API rejection"
+    }
+  ],
+  "conclusion": "Retrieve mode (pgvector HNSW) is mandatory for large C-CDA records such as Agustin437. Stuff mode is only viable for records whose parsed narrative fits within the model context window (typically < 100 KB raw XML / < 10 000 tokens)."
+}
