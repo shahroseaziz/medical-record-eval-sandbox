@@ -22,7 +22,7 @@
     "ai": "^4.3.0",
     "fast-xml-parser": "^5.8.0",
     "next": "^15.0.0",
-    "postgres": "^3.4.5",
+    "pg": "^8.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -30,6 +30,7 @@
     "@eslint/eslintrc": "^3.0.0",
     "@playwright/test": "^1.52.0",
     "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.0.0",
