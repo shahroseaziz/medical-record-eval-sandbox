@@ -1,6 +1,6 @@
 const VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
-const MODEL = 'voyage-3.5'
-const DIM = 1024
+export const MODEL = 'voyage-3.5'
+export const DIM = 1024
 
 export async function embed(
   texts: string[],
