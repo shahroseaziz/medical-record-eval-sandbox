@@ -1,0 +1,15 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture: Agustin437 (6 MB gate) > snapshot: section list (sorted) > agustin-section-list 1`] = `
+[
+  "allergies",
+  "encounters",
+  "immunizations",
+  "medications",
+  "problems",
+  "results",
+  "vitals",
+]
+`;
+
+exports[`fixture: Agustin437 (6 MB gate) > snapshot: total chunk count > agustin-chunk-count 1`] = `33`;
