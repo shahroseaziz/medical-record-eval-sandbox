@@ -1,0 +1,4 @@
+faithfulness: 0.85   # chosen against the seeded set, not a powered calibration
+contains: 1.0
+judge_kappa_min: 0.0          # placeholder; finalized once calibration is measured
+extraction_completeness: 0.0  # placeholder; finalized once seed claims are authored
