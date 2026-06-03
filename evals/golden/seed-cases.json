@@ -1,0 +1,88 @@
+[
+  {
+    "id": "faith-agustin-problems-retrieve-pass",
+    "taskPrompt": "Based ONLY on the clinical sections provided, list the active medical problems documented for this patient. Do not add diagnoses or details not present in the provided context.",
+    "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+    "ragMode": "retrieve",
+    "expectedOutput": "",
+    "referenceLabel": "pass",
+    "requiredSections": ["problems"],
+    "expectedClaims": [
+      "the patient has active medical problems documented in their record"
+    ],
+    "rationale": "Pass faithfulness case. Retrieves the problems section for Agustin437 (6MB). Model is constrained to provided context and will faithfully list documented problems. Score expected >> 0.85 because all extracted claims will be grounded in the retrieved section. Required retrieve patient per task spec.",
+    "scorers": ["faithfulness", "section-hit"]
+  },
+  {
+    "id": "contains-agustin-allergies-retrieve-pass",
+    "taskPrompt": "List all known allergies for this patient as documented in the provided clinical record sections.",
+    "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+    "ragMode": "retrieve",
+    "expectedOutput": "allergy",
+    "referenceLabel": "pass",
+    "requiredSections": ["allergies"],
+    "rationale": "Contains + section-hit case for Agustin437 (6MB, required retrieve patient). Model will list allergies from the retrieved allergies section. Contains check: 'allergy' appears in any allergy-listing response. Section-hit check: allergies section must be retrieved within k chunks.",
+    "scorers": ["contains", "section-hit"]
+  },
+  {
+    "id": "faith-brenna-allergies-stuff-pass",
+    "taskPrompt": "Based ONLY on the provided patient record, list all documented allergies and adverse reactions. Include only information explicitly stated in the record.",
+    "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+    "ragMode": "stuff",
+    "expectedOutput": "",
+    "referenceLabel": "pass",
+    "expectedClaims": [
+      "the patient has documented allergies or adverse reactions listed in their record"
+    ],
+    "rationale": "Pass faithfulness case using stuff mode for Brenna468. Model is explicitly constrained to only use provided context. Any allergies listed will be directly from the record. Score expected >> 0.85.",
+    "scorers": ["faithfulness"]
+  },
+  {
+    "id": "faith-marisela-medications-stuff-pass",
+    "taskPrompt": "Based ONLY on the provided patient record, summarize the patient's current medication regimen as documented. List medication names only — do not infer doses or frequencies not explicitly stated.",
+    "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+    "ragMode": "stuff",
+    "expectedOutput": "",
+    "referenceLabel": "pass",
+    "expectedClaims": [
+      "the patient has medications documented in their record"
+    ],
+    "rationale": "Pass faithfulness case using stuff mode for Marisela850. Prompt explicitly restricts to documented information and forbids inferring doses, preventing hallucination of specifics. Score expected >> 0.85.",
+    "scorers": ["faithfulness"]
+  },
+  {
+    "id": "faith-agustin-vitals-retrieve-pass",
+    "taskPrompt": "Based ONLY on the clinical sections provided, describe the vital signs documented for this patient. Report only values explicitly present in the context.",
+    "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+    "ragMode": "retrieve",
+    "expectedOutput": "",
+    "referenceLabel": "pass",
+    "requiredSections": ["vitals"],
+    "expectedClaims": [
+      "the patient has vital signs documented in the record"
+    ],
+    "rationale": "Pass faithfulness retrieve case for Agustin437. Retrieves vitals section. Model reports only what is explicitly in the retrieved context. Score expected >> 0.85.",
+    "scorers": ["faithfulness", "section-hit"]
+  },
+  {
+    "id": "faith-brenna-hallucinated-labs-stuff-fail",
+    "taskPrompt": "Summarize the patient's most recent laboratory results and current medication management.",
+    "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+    "ragMode": "stuff",
+    "expectedOutput": "",
+    "referenceLabel": "fail",
+    "preauthoredOutput": "The patient's most recent comprehensive metabolic panel from January 2024 shows an HbA1c of 7.8%, indicating suboptimally controlled type 2 diabetes mellitus. She is currently prescribed metformin hydrochloride 1000 mg twice daily with meals (initiated March 2022) and empagliflozin 10 mg once daily (initiated September 2023). Her most recent fasting lipid panel from November 2023 shows LDL-C of 148 mg/dL and HDL-C of 44 mg/dL. The endocrinology team has recommended adding a GLP-1 receptor agonist to her regimen at her next scheduled visit in April 2024. Her eGFR is 72 mL/min/1.73m², and she has a documented penicillin allergy with anaphylaxis confirmed in 2019.",
+    "rationale": "Fail faithfulness case using pre-authored hallucinated output for Brenna468. The output contains specific clinical claims (HbA1c 7.8% in January 2024, exact medication names with doses and initiation dates, precise LDL/HDL values, eGFR value, specific endocrinology recommendation) that are unlikely to be verbatim in the Synthea record. The faithfulness judge evaluates these claims against the full stuffed record. Most claims will be scored 'unsupported' or 'partial', yielding a faithfulness score << 0.85.",
+    "scorers": ["faithfulness"]
+  },
+  {
+    "id": "contains-marisela-problems-stuff-pass",
+    "taskPrompt": "List the active health problems and conditions documented in this patient's record.",
+    "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+    "ragMode": "stuff",
+    "expectedOutput": "condition",
+    "referenceLabel": "pass",
+    "rationale": "Contains case using stuff mode for Marisela850. The full record is provided. Any reasonable response listing active health problems will contain the word 'condition'. This exercises the contains scorer with stuff mode.",
+    "scorers": ["contains"]
+  }
+]
