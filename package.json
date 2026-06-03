@@ -2,9 +2,8 @@
   "name": "medical-record-eval-sandbox",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@11.5.1",
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "scripts": {
     "dev": "next dev",
