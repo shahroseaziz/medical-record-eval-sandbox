@@ -15,7 +15,9 @@
     "test:e2e": "playwright test",
     "format": "prettier --write .",
     "ingest": "tsx scripts/ingest.ts",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "generate:baseline": "tsx scripts/generate-baseline.ts",
+    "validate:evals": "tsx scripts/validate-evals.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
