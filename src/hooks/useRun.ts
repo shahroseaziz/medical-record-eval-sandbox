@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import type { RunRequest } from '@/app/api/run/types'
+import type { RunRequest, RunTrace } from '@/app/api/run/types'
 import type { FaithfulnessResult, SectionHitResult } from '@/lib/eval/types'
 import { getByoHeaders, getJudgeUsesByo } from '@/components/ApiKeyInput'
 
@@ -19,6 +19,7 @@ export interface RunState {
   text: string
   retrieval: RetrievalData | null
   evalResult: EvalData | null
+  trace: RunTrace | null
   loading: boolean
   error: string | null
 }
@@ -51,12 +52,13 @@ export function useRun() {
     text: '',
     retrieval: null,
     evalResult: null,
+    trace: null,
     loading: false,
     error: null,
   })
 
   const run = useCallback(async (request: RunRequest) => {
-    setState({ text: '', retrieval: null, evalResult: null, loading: true, error: null })
+    setState({ text: '', retrieval: null, evalResult: null, trace: null, loading: true, error: null })
 
     try {
       const headers: Record<string, string> = {
@@ -112,6 +114,8 @@ export function useRun() {
                   sectionHit: d.sectionHit as SectionHitResult,
                 },
               }))
+            } else if (d.type === 'trace') {
+              setState((s) => ({ ...s, trace: d.trace as RunTrace }))
             } else if (d.type === 'error') {
               setState((s) => ({ ...s, error: (d.message ?? 'Unknown error') as string }))
             }

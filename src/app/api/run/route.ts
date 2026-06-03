@@ -297,6 +297,8 @@ export async function POST(req: NextRequest): Promise<Response> {
           judgeUsesByo: effectiveJudgeUsesByo,
         }
 
+        dataStream.writeData({ type: 'trace', trace } as unknown as JSONValue)
+
         await withClient(async (client) => {
           await client.query('INSERT INTO traces (trace) VALUES ($1)', [JSON.stringify(trace)])
         })
