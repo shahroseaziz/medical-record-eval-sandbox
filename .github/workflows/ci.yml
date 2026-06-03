@@ -14,76 +14,47 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "pnpm"
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Lint
-        run: pnpm lint
+        run: npm run lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
 
       - name: Unit tests
-        run: pnpm test
+        run: npm test
 
       - name: Build
-        run: pnpm build
+        run: npm run build
 
       - name: Assert required paths exist
         run: |
           set -e
           required_paths=(
-            "src/app"
-            "src/components"
-            "src/lib/ccda"
-            "src/lib/rag"
-            "src/lib/eval"
-            "src/lib/db.ts"
-            "src/lib/claude.ts"
-            "src/lib/voyage.ts"
-            "src/lib/ratelimit.ts"
-            "src/lib/killswitch.ts"
-            "src/lib/tokens.ts"
-            "evals/golden"
-            "evals/scorers"
-            "evals/results"
-            "evals/harness"
-            "evals/thresholds.yaml"
-            "scripts"
-            "observability"
-            "factory.json"
-            ".env.example"
-            "docker-compose.yml"
-            ".github/workflows/ci.yml"
+            "src/app" "src/components" "src/lib/ccda" "src/lib/rag" "src/lib/eval"
+            "src/lib/db.ts" "src/lib/claude.ts" "src/lib/voyage.ts" "src/lib/ratelimit.ts"
+            "src/lib/killswitch.ts" "src/lib/tokens.ts" "evals/golden" "evals/scorers"
+            "evals/results" "evals/harness" "evals/thresholds.yaml" "scripts" "observability"
+            "factory.json" ".env.example" "docker-compose.yml" ".github/workflows/ci.yml"
           )
-          all_ok=true
-          for path in "${required_paths[@]}"; do
-            if [ ! -e "$path" ]; then
-              echo "MISSING: $path"
-              all_ok=false
-            else
-              echo "OK: $path"
-            fi
+          ok=true
+          for p in "${required_paths[@]}"; do
+            if [ ! -e "$p" ]; then echo "MISSING: $p"; ok=false; else echo "OK: $p"; fi
           done
-          if [ "$all_ok" = false ]; then
-            exit 1
-          fi
+          $ok || exit 1
           echo "All required paths present."
 
       - name: No git-LFS pointer files
         run: |
           if git lfs ls-files 2>/dev/null | grep -q .; then
-            echo "ERROR: git-LFS pointer files detected"
-            git lfs ls-files
-            exit 1
+            echo "ERROR: git-LFS pointer files detected"; git lfs ls-files; exit 1
           fi
           echo "No git-LFS pointer files."
