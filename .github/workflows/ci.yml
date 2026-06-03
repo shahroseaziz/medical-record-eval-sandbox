@@ -74,6 +74,14 @@ jobs:
           $ok || exit 1
           echo "All required paths present."
 
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: evals/results/test-report.json
+          if-no-files-found: warn
+
       - name: No git-LFS pointer files
         run: |
           if git lfs ls-files 2>/dev/null | grep -q .; then
