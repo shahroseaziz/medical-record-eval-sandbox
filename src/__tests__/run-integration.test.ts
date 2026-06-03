@@ -52,6 +52,32 @@ function parseDataStreamParts(text: string): Array<{ type: string; value: unknow
 
 // ─── Mock setup ───────────────────────────────────────────────────────────────
 
+// Mock @upstash/redis so rate-limit and killswitch work without real Upstash
+vi.mock('@upstash/redis', () => ({
+  Redis: {
+    fromEnv: vi.fn(() => ({
+      incrby: vi.fn().mockResolvedValue(100),
+      decrby: vi.fn().mockResolvedValue(0),
+      expire: vi.fn().mockResolvedValue(1),
+    })),
+  },
+}))
+
+// Mock @upstash/ratelimit so all requests pass (no real Redis needed)
+vi.mock('@upstash/ratelimit', () => {
+  const mockLimit = vi.fn().mockResolvedValue({
+    success: true,
+    limit: 10,
+    remaining: 9,
+    reset: Date.now() + 3_600_000,
+  })
+  const MockRatelimit = Object.assign(
+    vi.fn().mockImplementation(() => ({ limit: mockLimit })),
+    { slidingWindow: vi.fn().mockReturnValue({}) },
+  )
+  return { Ratelimit: MockRatelimit }
+})
+
 // Mock @ai-sdk/anthropic to avoid real API calls
 vi.mock('@ai-sdk/anthropic', () => ({
   createAnthropic: () => (modelId: string) => ({ provider: 'anthropic', modelId }),
@@ -191,9 +217,12 @@ vi.mock('@anthropic-ai/sdk', () => {
       }],
     })
 
+  // Always returns a small token count so the 12k guardrail doesn't trip on test inputs
+  const mockCountTokens = vi.fn().mockResolvedValue({ input_tokens: 50 })
+
   return {
     default: class MockAnthropic {
-      messages = { create: mockCreate }
+      messages = { create: mockCreate, countTokens: mockCountTokens }
       static APIError = APIError
     },
     APIError,
