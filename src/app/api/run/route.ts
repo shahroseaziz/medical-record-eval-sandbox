@@ -10,8 +10,10 @@ import type { RetrievedChunk } from '@/lib/rag/index'
 import { scoreFaithfulness, scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
-import { estimateTokens } from '@/lib/tokens'
+import { estimateTokens, countInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '@/lib/tokens'
 import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
+import { checkRateLimit } from '@/lib/ratelimit'
+import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import type { RunTrace, RunRequest } from './types'
 
 const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
@@ -61,6 +63,25 @@ function isOverContextError(error: unknown): boolean {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  // ── 0. Rate limit (shared bucket across all routes, per client IP) ──────
+  // Fail closed: if Upstash is unreachable, reject rather than allow traffic.
+  let rlResult: { ok: boolean; headers: Record<string, string> }
+  try {
+    rlResult = await checkRateLimit(req)
+  } catch {
+    return Response.json(
+      { error: 'Service temporarily unavailable.' },
+      { status: 503 },
+    )
+  }
+  if (!rlResult.ok) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Max 10 requests per hour per IP.' },
+      { status: 429, headers: rlResult.headers },
+    )
+  }
+
+  // ── 1. Parse + validate request ──────────────────────────────────────────
   let body: Partial<RunRequest>
   try {
     body = (await req.json()) as Partial<RunRequest>
@@ -91,7 +112,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (mode === 'retrieve' && !process.env.VOYAGE_API_KEY) {
     return Response.json(
       { error: 'VOYAGE_API_KEY is required for retrieve mode' },
-      { status: 503 }
+      { status: 503 },
     )
   }
 
@@ -100,129 +121,177 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
   }
 
-  const aiProvider = createAnthropic({ apiKey: anthropicApiKey })
   const judgeClient = new Anthropic({ apiKey: anthropicApiKey })
+  const aiProvider = createAnthropic({ apiKey: anthropicApiKey })
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+
+  // ── 2. Retrieval (retrieve mode only) ────────────────────────────────────
+  let chunks: RetrievedChunk[] = []
+  if (mode === 'retrieve') {
+    const retrieveResult = await retrieve(patientId, query, k)
+    chunks = retrieveResult.chunks
+  }
+
+  // ── 3. Assemble prompt ───────────────────────────────────────────────────
+  const groundingContext = buildGroundingContext(mode, chunks, record)
+  const assembledPrompt = buildPrompt(query, groundingContext)
+
+  // ── 4. Killswitch — book estimated spend (free-tier only) ────────────────
+  // BYO callers (apiKey provided) bypass Anthropic spend caps but still share
+  // the rate-limit bucket above. Fail closed if Upstash is unreachable.
+  const isByo = Boolean(apiKey)
+  let refundSpend: (() => Promise<void>) | null = null
+  if (!isByo) {
+    try {
+      refundSpend = await bookSpend()
+    } catch (err) {
+      if (err instanceof SpendCapError) {
+        return Response.json(
+          {
+            error:
+              'Free-tier usage limit reached. Provide your own Anthropic API key to continue.',
+          },
+          { status: 429 },
+        )
+      }
+      // Upstash unreachable → fail closed
+      return Response.json(
+        { error: 'Service temporarily unavailable.' },
+        { status: 503 },
+      )
+    }
+  }
 
   return createDataStreamResponse({
     execute: async (dataStream) => {
-      // ── 1. Retrieval (retrieve mode only) ────────────────────
-      let chunks: RetrievedChunk[] = []
-      let groundingContext = ''
+      try {
+        // ── 5. Token limit pre-check (12k guardrail, fail closed) ─────────
+        // Uses Anthropic countTokens API; falls back to char/4 when the API
+        // is unavailable. Reject > 12k before making any generation call.
+        const inputCount = await countInputTokens(assembledPrompt, judgeClient)
+        if (inputCount > MAX_INPUT_TOKENS) {
+          if (refundSpend) { await refundSpend(); refundSpend = null }
+          dataStream.writeData({
+            type: 'error',
+            message: `Assembled context exceeds the ${MAX_INPUT_TOKENS}-token limit (${inputCount} tokens). Reduce record size or use retrieve mode.`,
+          })
+          return
+        }
 
-      if (mode === 'retrieve') {
-        const retrieveResult = await retrieve(patientId, query, k)
-        chunks = retrieveResult.chunks
-        groundingContext = buildGroundingContext('retrieve', chunks)
+        // Fallback 190k pre-check via char estimate (extra safety net)
+        const estimatedInputTokens = estimateTokens(assembledPrompt)
+        if (estimatedInputTokens > MODEL_CONTEXT_LIMIT) {
+          if (refundSpend) { await refundSpend(); refundSpend = null }
+          dataStream.writeData({
+            type: 'error',
+            message: `Assembled context (~${estimatedInputTokens} tokens) exceeds model context limit (${MODEL_CONTEXT_LIMIT} tokens). Reduce record size or use retrieve mode.`,
+          })
+          return
+        }
 
-        dataStream.writeData({
-          type: 'retrieval',
-          chunks: chunks.map((c) => ({
-            section: c.section,
-            text: c.text,
-            distance: c.distance,
-            similarity: c.similarity,
-          })),
-          groundingContext,
+        // ── 6. Stream retrieval metadata ──────────────────────────────────
+        if (mode === 'retrieve') {
+          dataStream.writeData({
+            type: 'retrieval',
+            chunks: chunks.map((c) => ({
+              section: c.section,
+              text: c.text,
+              distance: c.distance,
+              similarity: c.similarity,
+            })),
+            groundingContext,
+          })
+        }
+
+        // ── 7. Stream generation tokens ───────────────────────────────────
+        const result = streamText({
+          model: aiProvider(model),
+          prompt: assembledPrompt,
+          maxTokens: MAX_OUTPUT_TOKENS,
         })
-      } else {
-        groundingContext = buildGroundingContext('stuff', [], record)
-      }
 
-      // ── 2. Assemble prompt ────────────────────────────────────
-      const assembledPrompt = buildPrompt(query, groundingContext)
+        result.mergeIntoDataStream(dataStream)
 
-      // Over-context pre-check (catches large records before hitting Anthropic)
-      const estimatedInputTokens = estimateTokens(assembledPrompt)
-      if (estimatedInputTokens > MODEL_CONTEXT_LIMIT) {
+        // ── 8. Collect full output + usage ────────────────────────────────
+        const [output, usage] = await Promise.all([result.text, result.usage])
+
+        // ── 9. Run scorers ────────────────────────────────────────────────
+        const evalCase: EvalCase = {
+          id: caseId,
+          patientId,
+          query,
+          output,
+          mode,
+          retrievedChunks:
+            mode === 'retrieve'
+              ? chunks.map((c) => ({ section: c.section, text: c.text }))
+              : undefined,
+          record: mode === 'stuff' ? record : undefined,
+          k: mode === 'retrieve' ? k : undefined,
+        }
+
+        const [faithfulnessResult, sectionHitResult] = await Promise.all([
+          scoreFaithfulness(evalCase, judgeClient),
+          Promise.resolve(scoreSectionHit(evalCase)),
+        ])
+
+        // ── 10. Stream eval results ───────────────────────────────────────
         dataStream.writeData({
-          type: 'error',
-          message: `Assembled prompt (~${estimatedInputTokens} tokens) exceeds model context limit (${MODEL_CONTEXT_LIMIT} tokens). Reduce record size or use retrieve mode.`,
+          type: 'eval',
+          faithfulness: faithfulnessResult,
+          sectionHit: sectionHitResult,
+        } as unknown as JSONValue)
+
+        // ── 11. Persist trace to DB ───────────────────────────────────────
+        const embeddingTokens = mode === 'retrieve' ? estimateTokens(query) : 0
+        const estCostUsd =
+          usage.promptTokens * INPUT_COST_PER_TOKEN +
+          usage.completionTokens * OUTPUT_COST_PER_TOKEN +
+          embeddingTokens * EMBED_COST_PER_TOKEN
+
+        const trace: RunTrace = {
+          caseId,
+          ragMode: mode,
+          retrieval:
+            mode === 'retrieve'
+              ? {
+                  chunks: chunks.map((c) => ({
+                    section: c.section,
+                    text: c.text,
+                    distance: c.distance,
+                    similarity: c.similarity,
+                  })),
+                  groundingContext,
+                  assembledPrompt,
+                }
+              : undefined,
+          sectionHit: sectionHitResult,
+          output,
+          scorerResults: [faithfulnessResult, sectionHitResult],
+          generationModel: model,
+          judgeModel,
+          embeddingModel: mode === 'retrieve' ? EMBEDDING_MODEL : 'none',
+          inputType: 'query',
+          tokens: {
+            input: usage.promptTokens,
+            output: usage.completionTokens,
+            estCostUsd,
+          },
+          claimCount: faithfulnessResult.claims.length,
+          outputLength: output.length,
+        }
+
+        await withClient(async (client) => {
+          await client.query('INSERT INTO traces (trace) VALUES ($1)', [JSON.stringify(trace)])
         })
-        return
+      } catch (e) {
+        // Refund the booked spend if the request aborts or errors mid-flight.
+        if (refundSpend) {
+          await refundSpend()
+          refundSpend = null
+        }
+        throw e
       }
-
-      // ── 3. Stream generation tokens ──────────────────────────
-      const result = streamText({
-        model: aiProvider(model),
-        prompt: assembledPrompt,
-      })
-
-      // Merges text deltas into the data stream as they arrive
-      result.mergeIntoDataStream(dataStream)
-
-      // ── 4. Collect full output + usage ───────────────────────
-      const [output, usage] = await Promise.all([result.text, result.usage])
-
-      // ── 5. Run scorers ────────────────────────────────────────
-      const evalCase: EvalCase = {
-        id: caseId,
-        patientId,
-        query,
-        output,
-        mode,
-        retrievedChunks:
-          mode === 'retrieve'
-            ? chunks.map((c) => ({ section: c.section, text: c.text }))
-            : undefined,
-        record: mode === 'stuff' ? record : undefined,
-        k: mode === 'retrieve' ? k : undefined,
-      }
-
-      const [faithfulnessResult, sectionHitResult] = await Promise.all([
-        scoreFaithfulness(evalCase, judgeClient),
-        Promise.resolve(scoreSectionHit(evalCase)),
-      ])
-
-      // ── 6. Stream faithfulness rationale + eval results ──────
-      dataStream.writeData({
-        type: 'eval',
-        faithfulness: faithfulnessResult,
-        sectionHit: sectionHitResult,
-      } as unknown as JSONValue)
-
-      // ── 7. Persist trace to DB ────────────────────────────────
-      const embeddingTokens = mode === 'retrieve' ? estimateTokens(query) : 0
-      const estCostUsd =
-        usage.promptTokens * INPUT_COST_PER_TOKEN +
-        usage.completionTokens * OUTPUT_COST_PER_TOKEN +
-        embeddingTokens * EMBED_COST_PER_TOKEN
-
-      const trace: RunTrace = {
-        caseId,
-        ragMode: mode,
-        retrieval:
-          mode === 'retrieve'
-            ? {
-                chunks: chunks.map((c) => ({
-                  section: c.section,
-                  text: c.text,
-                  distance: c.distance,
-                  similarity: c.similarity,
-                })),
-                groundingContext,
-                assembledPrompt,
-              }
-            : undefined,
-        sectionHit: sectionHitResult,
-        output,
-        scorerResults: [faithfulnessResult, sectionHitResult],
-        generationModel: model,
-        judgeModel,
-        embeddingModel: mode === 'retrieve' ? EMBEDDING_MODEL : 'none',
-        inputType: 'query',
-        tokens: {
-          input: usage.promptTokens,
-          output: usage.completionTokens,
-          estCostUsd,
-        },
-        claimCount: faithfulnessResult.claims.length,
-        outputLength: output.length,
-      }
-
-      await withClient(async (client) => {
-        await client.query('INSERT INTO traces (trace) VALUES ($1)', [JSON.stringify(trace)])
-      })
     },
 
     onError: (error) => {
