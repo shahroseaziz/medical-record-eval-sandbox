@@ -95,9 +95,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     mode,
     record,
     k = 6,
-    apiKey,
     model = DEFAULT_GENERATION_MODEL,
     judgeModel = DEFAULT_JUDGE_MODEL,
+    judgeUsesByo = false,
   } = body
 
   if (!patientId || !query) {
@@ -116,13 +116,28 @@ export async function POST(req: NextRequest): Promise<Response> {
     )
   }
 
-  const anthropicApiKey = apiKey ?? process.env.ANTHROPIC_API_KEY
-  if (!anthropicApiKey) {
+  // BYO key comes from a request header, never from the request body.
+  // It is used in-flight only and is never logged or persisted.
+  const byoKey = req.headers.get('x-byo-api-key') ?? undefined
+  const envKey = process.env.ANTHROPIC_API_KEY
+
+  // Generation always uses the BYO key when provided; falls back to env.
+  const generationKey = byoKey ?? envKey
+  if (!generationKey) {
     return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
   }
 
-  const judgeClient = new Anthropic({ apiKey: anthropicApiKey })
-  const aiProvider = createAnthropic({ apiKey: anthropicApiKey })
+  // Judge uses the seeded env key by default so scores stay comparable to the baseline.
+  // If judgeUsesByo is true the judge uses the caller's key (scores are non-comparable).
+  // If no env key exists, fall back to the BYO key regardless (only available option).
+  const effectiveJudgeUsesByo = Boolean(judgeUsesByo && byoKey)
+  const judgeKey = effectiveJudgeUsesByo ? byoKey! : (envKey ?? byoKey!)
+  if (!judgeKey) {
+    return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
+  }
+
+  const judgeClient = new Anthropic({ apiKey: judgeKey })
+  const aiProvider = createAnthropic({ apiKey: generationKey })
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
 
   // ── 2. Retrieval (retrieve mode only) ────────────────────────────────────
@@ -137,9 +152,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   const assembledPrompt = buildPrompt(query, groundingContext)
 
   // ── 4. Killswitch — book estimated spend (free-tier only) ────────────────
-  // BYO callers (apiKey provided) bypass Anthropic spend caps but still share
-  // the rate-limit bucket above. Fail closed if Upstash is unreachable.
-  const isByo = Boolean(apiKey)
+  // BYO callers (key provided via header) bypass Anthropic spend caps but still
+  // share the rate-limit bucket above. Fail closed if Upstash is unreachable.
+  const isByo = Boolean(byoKey)
   let refundSpend: (() => Promise<void>) | null = null
   if (!isByo) {
     try {
@@ -279,6 +294,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           },
           claimCount: faithfulnessResult.claims.length,
           outputLength: output.length,
+          judgeUsesByo: effectiveJudgeUsesByo,
         }
 
         await withClient(async (client) => {
