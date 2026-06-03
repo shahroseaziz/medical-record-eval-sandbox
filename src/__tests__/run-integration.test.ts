@@ -241,10 +241,10 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
     handler = mod.POST
   })
 
-  function makeReq(body: object): Request {
+  function makeReq(body: object, extraHeaders: Record<string, string> = {}): Request {
     return new Request('http://localhost/api/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
       body: JSON.stringify(body),
     })
   }
@@ -279,6 +279,23 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
           makeReq({ patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' }) as never
         )
         expect(res.status).toBe(503)
+      } finally {
+        if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved
+      }
+    })
+
+    it('accepts BYO key via X-Byo-Api-Key header when env key is absent', async () => {
+      const saved = process.env.ANTHROPIC_API_KEY
+      delete process.env.ANTHROPIC_API_KEY
+      try {
+        const res = await handler(
+          makeReq(
+            { patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' },
+            { 'X-Byo-Api-Key': 'sk-ant-test-byo-key' },
+          ) as never
+        )
+        // Should NOT return 503 — BYO key satisfies the key requirement
+        expect(res.status).not.toBe(503)
       } finally {
         if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved
       }

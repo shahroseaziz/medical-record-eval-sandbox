@@ -24,6 +24,8 @@ export interface RunTrace {
   }
   claimCount: number
   outputLength: number
+  /** Whether the judge used the caller's BYO key. When true, scores are non-comparable to seeded baseline. */
+  judgeUsesByo: boolean
 }
 
 export interface RunRequest {
@@ -34,10 +36,10 @@ export interface RunRequest {
   record?: string
   /** Number of chunks to retrieve — retrieve mode only, default 6 */
   k?: number
-  /** BYO Anthropic API key; falls back to ANTHROPIC_API_KEY env var */
-  apiKey?: string
   /** Generation model; defaults to claude-haiku-4-5-20251001 */
   model?: string
   /** Judge model for faithfulness scoring; defaults to claude-haiku-4-5-20251001 */
   judgeModel?: string
+  /** If true, the judge uses the caller's BYO key instead of the seeded key. Default: false. */
+  judgeUsesByo?: boolean
 }

@@ -24,14 +24,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     )
   }
 
-  let body: { apiKey?: string } = {}
+  let body: Record<string, unknown> = {}
   try {
-    body = (await req.json()) as { apiKey?: string }
+    body = (await req.json()) as Record<string, unknown>
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const isByo = Boolean(body.apiKey)
+  // BYO key comes from a request header, never from the request body.
+  const isByo = Boolean(req.headers.get('x-byo-api-key'))
 
   // Book free-tier judge spend (BYO bypasses Anthropic caps)
   if (!isByo) {
