@@ -51,7 +51,13 @@ SEED_URL=                           # see step 3 below
 > **Upstash**: The spend-cap and rate-limit guards require Upstash Redis even locally.
 > Create a free database at [upstash.com](https://upstash.com) and copy the REST URL + token.
 
-### 3. Seed the database (one-time)
+### 3. Install dependencies
+
+```bash
+npm ci
+```
+
+### 4. Seed the database (one-time)
 
 The fastest path loads a pre-built SQL dump — embeddings are already included, so no Voyage
 call is needed for seeding. Set `SEED_URL` in `.env.local` to the URL published on the
@@ -64,7 +70,7 @@ npm run seed
 **Alternative** — seed directly from the bundled Synthea fixtures (calls Voyage):
 
 ```bash
-npx tsx scripts/ingest.ts --local src/lib/ccda/__fixtures__
+npm run ingest -- --local src/lib/ccda/__fixtures__
 ```
 
 The seed command is idempotent-safe: it rejects if the database already contains patient rows.
@@ -74,10 +80,9 @@ To re-seed, truncate first:
 TRUNCATE patients, chunks, seed_meta CASCADE;
 ```
 
-### 4. Install and run
+### 5. Start the dev server
 
 ```bash
-npm ci
 npm run dev
 ```
 
