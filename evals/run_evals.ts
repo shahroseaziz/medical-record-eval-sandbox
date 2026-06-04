@@ -10,7 +10,7 @@
  *   3. BYO-key grep (no hardcoded API keys in src/)
  *   4. Per-case score reproduction: |fresh_mean - baseline_mean| ≤ max(0.15, 3·stddev)
  *   5. Off-band invariant (in-band seed case guard)
- *   6. Under-extraction guard (zeroClaimFlag on a seeded case → fail)
+ *   6. Under-extraction guard (fresh zero-claim on a case whose baseline HAD claims → fail)
  *   7. Contains determinism (same input → identical result both runs)
  *   8. 6 MB section_hit required pass (all Agustin437 retrieve cases)
  *   9. Aggregate passRate EXACT (same pass count as baseline)
@@ -232,6 +232,22 @@ export function checkInBand(
     }
   }
   return null
+}
+
+/**
+ * A baseline case is "zero-claim by design" when its faithfulness scorer
+ * recorded a zeroClaimFlag (e.g. a bare-list seed the extractor classifies as
+ * names, not atomic claims) — or, defensively, when it has no mean score at all.
+ * Used to make the under-extraction guard baseline-relative so the judge's
+ * run-to-run non-determinism on such a case can't flake the gate red.
+ */
+export function isBaselineZeroClaim(
+  bc: { scorerResults: BaselineScorerResult[]; meanScore: number | null }
+): boolean {
+  return (
+    bc.scorerResults.some((r) => r.scorer === 'faithfulness' && r.zeroClaimFlag) ||
+    bc.meanScore === null
+  )
 }
 
 export function checkUnderExtraction(
@@ -621,8 +637,13 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
     const allZero = freshResults.every((r) => r.zeroClaimFlag)
     const freshMean = computeMeanScore(freshResults)
 
-    // Under-extraction guard
-    add(checkUnderExtraction(bc.caseId, allZero))
+    // Under-extraction guard — baseline-relative. A fresh zero-claim run is only
+    // a regression (judge/extraction broke) if the baseline DID extract claims.
+    // A case whose baseline is itself zero-claim (e.g. a bare-list seed) getting
+    // zero claims is consistent with baseline, not breakage. Without this, the
+    // judge's run-to-run non-determinism on such a case flakes the gate red even
+    // though line [5c]/[6] correctly excludes it from the aggregate.
+    add(checkUnderExtraction(bc.caseId, allZero && !isBaselineZeroClaim(bc)))
 
     if (!allZero && freshMean !== null) {
       ok(`freshMean=${freshMean.toFixed(4)} (${FAITHFULNESS_GATE_RUNS} runs)`)

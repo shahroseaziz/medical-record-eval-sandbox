@@ -29,6 +29,7 @@ import {
   checkScoreTolerance,
   checkInBand,
   checkUnderExtraction,
+  isBaselineZeroClaim,
   checkPassRateExact,
   checkBYOKeyGrep,
   isUpstreamOutage,
@@ -201,6 +202,59 @@ describe('checkUnderExtraction', () => {
     expect(v).not.toBeNull()
     expect((v as GateViolation).check).toBe('under-extraction')
     expect((v as GateViolation).message).toMatch(/0 claims/i)
+  })
+})
+
+describe('isBaselineZeroClaim (under-extraction is baseline-relative)', () => {
+  it('true when the faithfulness scorer recorded zeroClaimFlag', () => {
+    expect(
+      isBaselineZeroClaim({
+        meanScore: null,
+        scorerResults: [{ scorer: 'faithfulness', score: null, zeroClaimFlag: true }],
+      })
+    ).toBe(true)
+  })
+
+  it('true when meanScore is null even without an explicit flag', () => {
+    expect(
+      isBaselineZeroClaim({
+        meanScore: null,
+        scorerResults: [{ scorer: 'faithfulness', score: null }],
+      })
+    ).toBe(true)
+  })
+
+  it('false for a normal scored baseline case', () => {
+    expect(
+      isBaselineZeroClaim({
+        meanScore: 0.92,
+        scorerResults: [{ scorer: 'faithfulness', score: 0.92 }],
+      })
+    ).toBe(false)
+  })
+
+  // The actual flake: a fresh zero-claim run on a baseline-zero-claim case must
+  // NOT fire under-extraction (it's consistent, not breakage). The call site
+  // computes `allZero && !isBaselineZeroClaim(bc)`.
+  it('suppresses under-extraction when both baseline and fresh are zero-claim', () => {
+    const bc = {
+      meanScore: null,
+      scorerResults: [{ scorer: 'faithfulness', score: null, zeroClaimFlag: true }],
+    }
+    const allZeroFresh = true
+    expect(checkUnderExtraction('faith-marisela-medications-stuff-pass', allZeroFresh && !isBaselineZeroClaim(bc))).toBeNull()
+  })
+
+  // Genuine regression: baseline HAD claims, fresh dropped to zero → still red.
+  it('still fires under-extraction when baseline had claims but fresh is zero', () => {
+    const bc = {
+      meanScore: 0.88,
+      scorerResults: [{ scorer: 'faithfulness', score: 0.88 }],
+    }
+    const allZeroFresh = true
+    const v = checkUnderExtraction('faith-agustin-problems-retrieve-pass', allZeroFresh && !isBaselineZeroClaim(bc))
+    expect(v).not.toBeNull()
+    expect((v as GateViolation).check).toBe('under-extraction')
   })
 })
 
