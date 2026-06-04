@@ -30,6 +30,7 @@ import {
   checkInBand,
   checkUnderExtraction,
   checkPassRateExact,
+  checkBYOKeyGrep,
   isUpstreamOutage,
   runGate,
   type GateViolation,
@@ -232,7 +233,63 @@ describe('checkPassRateExact', () => {
   })
 })
 
-// ── [7] Outage simulation ─────────────────────────────────────────────────────
+// ── [7] BYO-key grep ─────────────────────────────────────────────────────────
+
+describe('checkBYOKeyGrep', () => {
+  it('passes when no hardcoded keys are present', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'byo-key-test-'))
+    const cleanFile = join(tmpDir, 'clean.ts')
+    writeFileSync(cleanFile, 'const apiKey = process.env.ANTHROPIC_API_KEY\n')
+    try {
+      expect(checkBYOKeyGrep(tmpDir)).toBeNull()
+    } finally {
+      try { unlinkSync(cleanFile) } catch { /* ignore */ }
+      try { rmdirSync(tmpDir) } catch { /* ignore */ }
+    }
+  })
+
+  it('gate-red on hardcoded Anthropic API key pattern', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'byo-key-test-'))
+    const leakedFile = join(tmpDir, 'leaked.ts')
+    writeFileSync(leakedFile, 'const key = "sk-ant-api03-ABCDEFGHIJ1234567890XYZ"\n')
+    try {
+      const v = checkBYOKeyGrep(tmpDir)
+      expect(v).not.toBeNull()
+      expect((v as GateViolation).check).toBe('byo-key-grep')
+      expect((v as GateViolation).message).toMatch(/hardcoded api key/i)
+    } finally {
+      try { unlinkSync(leakedFile) } catch { /* ignore */ }
+      try { rmdirSync(tmpDir) } catch { /* ignore */ }
+    }
+  })
+
+  it('gate-red on hardcoded Voyage API key pattern (pa- prefix)', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'byo-key-test-'))
+    const leakedFile = join(tmpDir, 'leaked.ts')
+    // pa- followed by 30+ alphanumeric chars matches the Voyage key pattern
+    writeFileSync(leakedFile, 'const voyageKey = "pa-abcdefghijklmnopqrstuvwxyz1234567890"\n')
+    try {
+      const v = checkBYOKeyGrep(tmpDir)
+      expect(v).not.toBeNull()
+      expect((v as GateViolation).check).toBe('byo-key-grep')
+      expect((v as GateViolation).message).toMatch(/hardcoded api key/i)
+    } finally {
+      try { unlinkSync(leakedFile) } catch { /* ignore */ }
+      try { rmdirSync(tmpDir) } catch { /* ignore */ }
+    }
+  })
+
+  it('passes for a directory with no .ts files', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'byo-key-test-'))
+    try {
+      expect(checkBYOKeyGrep(tmpDir)).toBeNull()
+    } finally {
+      try { rmdirSync(tmpDir) } catch { /* ignore */ }
+    }
+  })
+})
+
+// ── [8] Outage simulation ─────────────────────────────────────────────────────
 
 const mockHeaders = new Headers()
 
@@ -283,7 +340,7 @@ describe('isUpstreamOutage', () => {
   })
 })
 
-// ── [8] runGate — outage simulation via injected probers ─────────────────────
+// ── [9] runGate — outage simulation via injected probers ─────────────────────
 
 describe('runGate — outage path', () => {
   it('returns inconclusive when Voyage probe fails', async () => {
@@ -324,7 +381,7 @@ describe('runGate — outage path', () => {
   })
 })
 
-// ── [9] runGate — injected model mismatch → static red before API ─────────────
+// ── [10] runGate — injected model mismatch → static red before API ─────────────
 
 describe('runGate — injected model mismatch', () => {
   it('returns gate-red with model-guard violation when judgeModel is wrong', async () => {

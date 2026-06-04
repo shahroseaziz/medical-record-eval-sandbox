@@ -120,10 +120,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: ci
-    # Only run when baseline is committed and the main CI job succeeded.
-    if: >
-      needs.ci.result == 'success' &&
-      hashFiles('evals/results/seed-baseline.json') != ''
+    # Always run when CI succeeds — the gate itself returns red when the baseline
+    # is absent, so deleting seed-baseline.json in a PR fails the gate rather than
+    # silently skipping it (hashFiles('...') == '' causes GitHub to skip the job,
+    # which branch protection treats as passing).
+    if: needs.ci.result == 'success'
 
     steps:
       - name: Checkout
