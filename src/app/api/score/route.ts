@@ -9,7 +9,7 @@ import { scoreFaithfulness } from '@/lib/eval/index'
 import type { EvalCase, FaithfulnessResult } from '@/lib/eval/index'
 import { retrieve } from '@/lib/rag/index'
 import { withClient } from '@/lib/db/index'
-import { estimateTokens } from '@/lib/tokens'
+import { estimateTokens, assertWithinTokenLimit, MAX_INPUT_TOKENS, TokenLimitError } from '@/lib/tokens'
 
 // 2 judge calls (extract + verdict): ~3.5k input + 1k output each @ Haiku pricing
 const JUDGE_SCORE_ESTIMATE_MICRO_USD = Math.ceil(7_000 * 0.8 + 2_000 * 4.0) // 13_600 µ$
@@ -325,6 +325,22 @@ export async function POST(req: NextRequest): Promise<Response> {
     // ── 5. Score (fixed extraction → user-rubric verdict) ─────────────────
     // No generation call. Per-call output token caps guard both judge calls.
     const judgeClient = new Anthropic({ apiKey: judgeKey })
+
+    // ── 5a. Input size guard ────────────────────────────────────────────────
+    // Reject oversized inputs before any judge call so that actual spend
+    // stays within the booked JUDGE_SCORE_ESTIMATE_MICRO_USD. Uses the free
+    // countTokens API (char/4 fallback when unavailable). Applies to all
+    // callers — BYO and free-tier — because a 1 MB grounding would blow the
+    // real token cap regardless of spend-cap status.
+    // TokenLimitError propagates to the outer catch, which refunds spend and
+    // returns 413.
+    const combinedInput = [
+      parsedReq.capturedOutput,
+      groundingText,
+      parsedReq.userVerdictRubric ?? '',
+    ].join('\n')
+    await assertWithinTokenLimit(combinedInput, judgeClient)
+
     faithfulnessResult = await abortable(
       scoreFaithfulness(evalCase, judgeClient, parsedReq.userVerdictRubric, {
         extractMaxTokens: SCORE_EXTRACT_MAX_TOKENS,
@@ -337,6 +353,14 @@ export async function POST(req: NextRequest): Promise<Response> {
     if (refundSpend) {
       await refundSpend()
       refundSpend = null
+    }
+    if (e instanceof TokenLimitError) {
+      return Response.json(
+        {
+          error: `Input exceeds ${MAX_INPUT_TOKENS}-token limit (${e.tokenCount} tokens). Reduce capturedGrounding or capturedOutput size.`,
+        },
+        { status: 413 },
+      )
     }
     const msg = e instanceof Error ? e.message : 'An unexpected error occurred.'
     return Response.json({ error: msg }, { status: 503 })

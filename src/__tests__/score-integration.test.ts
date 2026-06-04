@@ -239,6 +239,36 @@ describe('/api/score integration (mocked Claude)', () => {
       })
     })
 
+    it('calls decrby (refund) when the request is aborted mid-flight', async () => {
+      // Make the first judge call synchronously abort the signal before returning.
+      // This drives the abortable() race: once the signal fires while abortable()
+      // is waiting, abortable() rejects with AbortError → outer catch refunds.
+      const controller = new AbortController()
+
+      mockCreate.mockReset()
+      mockCreate.mockImplementation(() => {
+        controller.abort()
+        return new Promise(() => {}) // never resolves — abort wins the race
+      })
+
+      const reqWithSignal = new Request('http://localhost/api/score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'captured',
+          capturedOutput: 'Some output.',
+          capturedGrounding: 'Some context.',
+        }),
+        signal: controller.signal,
+      })
+
+      const res = await handler(reqWithSignal as never)
+
+      // Outer catch fires on AbortError and calls refundSpend()
+      expect(res.status).toBe(503)
+      expect(mockDecrby).toHaveBeenCalled()
+    })
+
     it('judge call failure returns errored:true (200) without calling refund — spend is consumed', async () => {
       // scoreFaithfulness swallows errors from the judge and returns errored:true.
       // The route returns 200 with errored:true; no refund fires for a failed judge call.
@@ -262,8 +292,9 @@ describe('/api/score integration (mocked Claude)', () => {
   // ── 4. score POST decrements the same per-IP allowance ──────────────────────
 
   describe('shared rate-limit bucket', () => {
-    it('decrements the shared per-IP rate-limit bucket on each call', async () => {
+    it('decrements the shared per-IP rate-limit bucket on each call and books killswitch spend', async () => {
       mockRlLimit.mockClear()
+      mockIncrby.mockClear()
 
       await handler(makeReq({
         source: 'captured',
@@ -273,6 +304,9 @@ describe('/api/score integration (mocked Claude)', () => {
 
       // checkRateLimit calls getInstance().limit() — which is mockRlLimit
       expect(mockRlLimit).toHaveBeenCalledTimes(1)
+      // bookSpend calls redis.incrby (daily + hourly keys) — verifies killswitch
+      // spend is booked on the same per-IP path as /api/run for free-tier callers
+      expect(mockIncrby).toHaveBeenCalled()
     })
 
     it('returns 429 when the shared rate-limit bucket is exhausted', async () => {
@@ -384,6 +418,23 @@ describe('/api/score integration (mocked Claude)', () => {
         capturedOutput: 'x',
       }) as never)
       expect(res.status).toBe(400)
+    })
+
+    it('returns 413 when combined input exceeds the token limit', async () => {
+      // 50 000 chars ÷ 4 ≈ 12 500 tokens > MAX_INPUT_TOKENS (12 000).
+      // The countTokens API is not mocked, so countInputTokens falls back to
+      // char/4 estimation — still sufficient to trip the guard.
+      const largeGrounding = 'x'.repeat(50_000)
+
+      const res = await handler(makeReq({
+        source: 'captured',
+        capturedOutput: 'Patient takes Lisinopril.',
+        capturedGrounding: largeGrounding,
+      }) as never)
+
+      expect(res.status).toBe(413)
+      const body = await res.json() as { error: string }
+      expect(body.error).toContain('token limit')
     })
 
     it('returns 503 when ANTHROPIC_API_KEY is absent and no BYO key', async () => {
