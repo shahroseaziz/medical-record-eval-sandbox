@@ -154,3 +154,187 @@ test.describe('smoke: browse → pick → prompt → toggle → run (all APIs mo
     expect(cases).toHaveLength(1)
   })
 })
+
+test.describe('golden set builder: capture, label, provenance', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('/api/patients*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ patients: [MOCK_PATIENT] }),
+      })
+    })
+    await page.route(/\/api\/patients\/.+\/chunks/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ chunks: MOCK_CHUNKS }),
+      })
+    })
+    await page.route('/api/run', async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'x-vercel-ai-data-stream': 'v1',
+        },
+        body: FIXTURE_STREAM,
+      })
+    })
+    await page.goto('/')
+  })
+
+  async function runQuery(page: import('@playwright/test').Page, query = 'What medications?') {
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill(query)
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toContainText('Lisinopril', { timeout: 5000 })
+  }
+
+  test('capture panel opens after a run and saves a designed-pass case', async ({ page }) => {
+    await runQuery(page)
+
+    // Capture button should be enabled after run
+    const captureBtn = page.getByTestId('capture-from-run-btn')
+    await expect(captureBtn).toBeEnabled()
+    await captureBtn.click()
+
+    // Capture panel appears
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+
+    // Default mode is "promote" — no textarea visible
+    await expect(page.getByTestId('reference-output-input')).not.toBeVisible()
+
+    // Switch to "edit" mode — textarea pre-filled with model output
+    await page.getByTestId('capture-mode-edit').click()
+    const refOutput = page.getByTestId('reference-output-input')
+    await expect(refOutput).toBeVisible()
+    await expect(refOutput).toContainText('Lisinopril')
+
+    // Edit the output
+    await refOutput.fill('Lisinopril 10mg daily.')
+
+    // Intent label: designed-pass is default
+    await expect(page.getByTestId('intent-label-pass')).toBeChecked()
+
+    // Save
+    await page.getByTestId('save-capture-btn').click()
+    await expect(page.getByTestId('capture-panel')).not.toBeVisible()
+
+    // Case appears in list with designed-pass badge
+    const cases = await page.evaluate(() => {
+      const raw = localStorage.getItem('user_cases_v2')
+      return raw ? (JSON.parse(raw) as unknown[]) : []
+    })
+    expect(cases).toHaveLength(1)
+    const savedCase = cases[0] as Record<string, unknown>
+    expect(savedCase.intentLabel).toBe('pass')
+    expect(savedCase.referenceOutput).toBe('Lisinopril 10mg daily.')
+    expect(savedCase.capturedOutput).toContain('Lisinopril')
+
+    // Intent badge visible in list
+    await expect(page.getByText('designed-pass')).toBeVisible()
+  })
+
+  test('designed-fail with completeness reason shows out-of-scope warning', async ({ page }) => {
+    await runQuery(page)
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+
+    // Select designed-fail
+    await page.getByTestId('intent-label-fail').click()
+    await expect(page.getByTestId('fail-reason-input')).toBeVisible()
+
+    // Enter a non-completeness reason — no warning
+    await page.getByTestId('fail-reason-input').fill('wrong section retrieved')
+    await expect(page.getByTestId('out-of-scope-warning')).not.toBeVisible()
+
+    // Clear and enter a completeness reason — warning fires
+    await page.getByTestId('fail-reason-input').fill('missing completeness of medication list')
+    await expect(page.getByTestId('out-of-scope-warning')).toBeVisible()
+    await expect(page.getByTestId('out-of-scope-warning')).toContainText(
+      'completeness or style concern',
+    )
+
+    // Style reason also triggers warning
+    await page.getByTestId('fail-reason-input').fill('output style is too verbose')
+    await expect(page.getByTestId('out-of-scope-warning')).toBeVisible()
+  })
+
+  test('scratch mode lets user write reference from scratch', async ({ page }) => {
+    await runQuery(page)
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await page.getByTestId('capture-mode-scratch').click()
+
+    const refOutput = page.getByTestId('reference-output-input')
+    await expect(refOutput).toBeVisible()
+    await expect(refOutput).toHaveValue('')
+
+    await refOutput.fill('The patient is on Lisinopril 10mg for hypertension (ICD-10 I10).')
+    await page.getByTestId('save-capture-btn').click()
+
+    const cases = await page.evaluate(() => {
+      const raw = localStorage.getItem('user_cases_v2')
+      return raw ? (JSON.parse(raw) as unknown[]) : []
+    })
+    expect(cases).toHaveLength(1)
+    const savedCase = cases[0] as Record<string, unknown>
+    expect(savedCase.referenceOutput).toContain('ICD-10 I10')
+    // capturedOutput is always the verbatim model output, not the edited reference
+    expect(savedCase.capturedOutput).toContain('Lisinopril')
+  })
+
+  test('provenance is rendered per case', async ({ page }) => {
+    await runQuery(page)
+    await page.getByTestId('capture-from-run-btn').click()
+    await page.getByTestId('save-capture-btn').click()
+
+    // Wait for case to appear — find provenance element
+    const cases = await page.evaluate(() => {
+      const raw = localStorage.getItem('user_cases_v2')
+      return raw ? (JSON.parse(raw) as unknown[]) : []
+    })
+    expect(cases).toHaveLength(1)
+    const uc = cases[0] as Record<string, unknown>
+    const caseId = uc.id as string
+
+    const provEl = page.getByTestId(`provenance-${caseId}`)
+    await expect(provEl).toBeVisible()
+    await expect(provEl).toContainText('mode:retrieve')
+    await expect(provEl).toContainText('hash:')
+  })
+
+  test('STALE flag appears when gen prompt changes after capture', async ({ page }) => {
+    await runQuery(page)
+
+    // Open gen prompt editor and set a custom prompt
+    await page.locator('details:has(textarea[data-testid="gen-prompt-input"])').click()
+    await page.getByTestId('gen-prompt-input').fill('You are a medical assistant v1.')
+
+    // Capture a case (provenance hashes the current gen prompt)
+    await page.getByTestId('capture-from-run-btn').click()
+    await page.getByTestId('save-capture-btn').click()
+
+    // Find the saved case ID
+    const cases = await page.evaluate(() => {
+      const raw = localStorage.getItem('user_cases_v2')
+      return raw ? (JSON.parse(raw) as unknown[]) : []
+    })
+    expect(cases).toHaveLength(1)
+    const caseId = (cases[0] as Record<string, unknown>).id as string
+
+    // No STALE flag yet — gen prompt matches
+    await expect(page.getByTestId(`stale-flag-${caseId}`)).not.toBeVisible()
+
+    // Change the gen prompt
+    await page.getByTestId('gen-prompt-input').fill('You are a medical assistant v2 — different.')
+
+    // STALE flag should now appear
+    await expect(page.getByTestId(`stale-flag-${caseId}`)).toBeVisible()
+    await expect(page.getByTestId(`stale-flag-${caseId}`)).toContainText('STALE')
+  })
+})

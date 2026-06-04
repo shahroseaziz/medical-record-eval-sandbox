@@ -1,15 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { PatientBrowser, type PatientRow } from './PatientBrowser'
 import { PromptEditor } from './PromptEditor'
 import { RagModeToggle } from './RagModeToggle'
 import { TransformInspector } from './TransformInspector'
 import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
+import { GoldenSetBuilder } from './GoldenSetBuilder'
 import { ApiKeyInput } from './ApiKeyInput'
 import { useRun } from '@/hooks/useRun'
-import type { UserCase } from '@/lib/cases'
+import type { UserCase, UserCaseV2 } from '@/lib/cases'
+import { loadGenPrompt, saveGenPrompt } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -38,8 +40,18 @@ export function Workspace() {
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
+  const [genPrompt, setGenPrompt] = useState('')
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
+
+  useEffect(() => {
+    setGenPrompt(loadGenPrompt())
+  }, [])
+
+  function handleGenPromptChange(v: string) {
+    setGenPrompt(v)
+    saveGenPrompt(v)
+  }
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
@@ -48,6 +60,7 @@ export function Workspace() {
       query,
       mode,
       record: mode === 'stuff' ? record : undefined,
+      generationPrompt: genPrompt || undefined,
     })
   }
 
@@ -60,6 +73,20 @@ export function Workspace() {
       query: uc.query,
       mode: uc.mode,
       record: uc.mode === 'stuff' ? uc.record : undefined,
+      generationPrompt: genPrompt || undefined,
+    })
+  }
+
+  function handleRunGoldenCase(uc: UserCaseV2) {
+    setQuery(uc.taskPrompt)
+    setMode(uc.ragMode)
+    if (uc.capturedGrounding.record) setRecord(uc.capturedGrounding.record)
+    run({
+      patientId: uc.patientId,
+      query: uc.taskPrompt,
+      mode: uc.ragMode,
+      record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
+      generationPrompt: genPrompt || undefined,
     })
   }
 
@@ -106,6 +133,36 @@ export function Workspace() {
           )}
 
           <PromptEditor value={query} onChange={setQuery} disabled={loading} />
+
+          <details style={{ marginTop: '0.75rem' }}>
+            <summary
+              style={{ fontSize: '0.82rem', color: '#666', cursor: 'pointer', userSelect: 'none' }}
+            >
+              Generation prompt (advanced)
+            </summary>
+            <div style={{ marginTop: '0.4rem' }}>
+              <textarea
+                data-testid="gen-prompt-input"
+                value={genPrompt}
+                onChange={(e) => handleGenPromptChange(e.target.value)}
+                disabled={loading}
+                rows={4}
+                placeholder="Leave blank to use the built-in medical-record-analyst template."
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  fontFamily: 'inherit',
+                  fontSize: '0.82rem',
+                  padding: '0.4rem 0.6rem',
+                  resize: 'vertical',
+                }}
+              />
+              <p style={{ fontSize: '0.75rem', color: '#888', margin: '0.2rem 0 0' }}>
+                Overrides the built-in system prompt. The text is never persisted in traces
+                (only a hash is stored for provenance).
+              </p>
+            </div>
+          </details>
 
           <div style={{ marginTop: '0.75rem' }}>
             <RagModeToggle
@@ -242,13 +299,27 @@ export function Workspace() {
 
       <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
 
-      {/* User case manager */}
+      {/* User case manager (V1) */}
       <UserCaseManager
         currentPatientId={selectedPatient?.id ?? null}
         currentQuery={query}
         currentMode={mode}
         currentRecord={record}
         onRunCase={handleRunCase}
+      />
+
+      <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
+
+      {/* Golden set builder (V2) */}
+      <GoldenSetBuilder
+        runOutput={text}
+        retrieval={retrieval}
+        currentPatientId={selectedPatient?.id ?? null}
+        currentQuery={query}
+        currentMode={mode}
+        currentRecord={record}
+        currentGenPrompt={genPrompt}
+        onRunCase={handleRunGoldenCase}
       />
     </div>
   )
