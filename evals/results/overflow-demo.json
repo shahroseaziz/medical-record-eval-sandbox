@@ -8,8 +8,8 @@
     {
       "tier": "retrieve",
       "ragMode": "retrieve",
-      "k": 5,
-      "description": "Vector retrieval returns the k=5 most semantically relevant chunks. Each chunk is ≤ ~1500 tokens. Total context: 1 500–4 500 tokens. Fits comfortably within any current Claude model context window.",
+      "k": 6,
+      "description": "Vector retrieval returns the k=6 most semantically relevant chunks. Each chunk is ≤ ~1500 tokens. Total context: 1 500–4 500 tokens. Fits comfortably within any current Claude model context window.",
       "estimatedContextTokens": "1 500 – 4 500",
       "overflowRisk": "none"
     },
