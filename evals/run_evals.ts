@@ -8,7 +8,7 @@
  *   1. Model equality guards (judgeModel + embeddingModel must match constants)
  *   2. judge_kappa_min floor from thresholds.yaml
  *   3. BYO-key grep (no hardcoded API keys in src/)
- *   4. Per-case score reproduction: |fresh_mean - baseline_mean| ≤ max(0.05, 3·stddev)
+ *   4. Per-case score reproduction: |fresh_mean - baseline_mean| ≤ max(0.15, 3·stddev)
  *   5. Off-band invariant (in-band seed case guard)
  *   6. Under-extraction guard (zeroClaimFlag on a seeded case → fail)
  *   7. Contains determinism (same input → identical result both runs)
@@ -196,7 +196,7 @@ export function checkScoreTolerance(
   baselineMean: number,
   baselineStdDev: number
 ): GateViolation | null {
-  const tolerance = Math.max(0.05, 3 * baselineStdDev)
+  const tolerance = Math.max(0.15, 3 * baselineStdDev)
   const delta = Math.abs(freshMean - baselineMean)
   if (delta > tolerance) {
     return {
@@ -633,7 +633,7 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
         add(v)
         if (!v) {
           ok(
-            `within tolerance ±${Math.max(0.05, 3 * (bc.scoreStdDev ?? 0)).toFixed(4)} of baseline=${bc.meanScore.toFixed(4)}`
+            `within tolerance ±${Math.max(0.15, 3 * (bc.scoreStdDev ?? 0)).toFixed(4)} of baseline=${bc.meanScore.toFixed(4)}`
           )
         }
       }

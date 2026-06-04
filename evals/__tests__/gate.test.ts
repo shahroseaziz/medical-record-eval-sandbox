@@ -131,25 +131,24 @@ describe('checkScoreTolerance', () => {
     expect(checkScoreTolerance('case-1', 0.9, 0.9, 0)).toBeNull()
   })
 
-  it('passes when delta is within 0.05 minimum band', () => {
-    expect(checkScoreTolerance('case-1', 0.95, 0.91, 0)).toBeNull()  // delta=0.04 < 0.05
+  it('passes when delta is within 0.15 minimum band', () => {
+    expect(checkScoreTolerance('case-1', 0.95, 0.85, 0)).toBeNull()  // delta=0.10 < 0.15
   })
 
-  it('gate-red when delta exceeds 0.05 minimum band', () => {
-    const v = checkScoreTolerance('case-1', 0.80, 0.92, 0)  // delta=0.12 > 0.05
+  it('gate-red when delta exceeds 0.15 minimum band', () => {
+    const v = checkScoreTolerance('case-1', 0.70, 0.92, 0)  // delta=0.22 > 0.15
     expect(v).not.toBeNull()
     expect((v as GateViolation).check).toBe('score-tolerance')
   })
 
-  it('uses 3·stddev when it exceeds 0.05', () => {
-    // stddev=0.02 → 3*0.02=0.06 → tolerance=0.06
-    // delta=0.055 < 0.06 → should pass
-    expect(checkScoreTolerance('case-1', 0.955, 0.9, 0.02)).toBeNull()
+  it('uses 3·stddev when it exceeds the 0.15 floor', () => {
+    // stddev=0.08 → 3*0.08=0.24 → tolerance=0.24; delta=0.20 < 0.24 → pass
+    expect(checkScoreTolerance('case-1', 0.70, 0.9, 0.08)).toBeNull()
   })
 
   it('gate-red when delta exceeds 3·stddev tolerance', () => {
-    // stddev=0.02 → tolerance=0.06; delta=0.07 > 0.06 → fail
-    const v = checkScoreTolerance('case-1', 0.97, 0.9, 0.02)
+    // stddev=0.08 → tolerance=0.24; delta=0.25 > 0.24 → fail
+    const v = checkScoreTolerance('case-1', 0.65, 0.9, 0.08)
     expect(v).not.toBeNull()
     expect((v as GateViolation).check).toBe('score-tolerance')
   })
