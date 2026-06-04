@@ -18,6 +18,9 @@
 
 import { describe, it, expect } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
+import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   EXPECTED_JUDGE_MODEL,
   EXPECTED_EMBEDDING_MODEL,
@@ -280,11 +283,10 @@ describe('isUpstreamOutage', () => {
   })
 })
 
-// ── [8] runGate — outage simulation via injected voyageProber ─────────────────
+// ── [8] runGate — outage simulation via injected probers ─────────────────────
 
 describe('runGate — outage path', () => {
   it('returns inconclusive when Voyage probe fails', async () => {
-    // Gate requires env vars before calling the prober; set stub values.
     const prevVoyage = process.env.VOYAGE_API_KEY
     const prevAnthropic = process.env.ANTHROPIC_API_KEY
     process.env.VOYAGE_API_KEY = 'test-stub'
@@ -301,16 +303,48 @@ describe('runGate — outage path', () => {
       process.env.ANTHROPIC_API_KEY = prevAnthropic
     }
   })
+
+  it('returns inconclusive when Claude probe fails', async () => {
+    const prevVoyage = process.env.VOYAGE_API_KEY
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY
+    process.env.VOYAGE_API_KEY = 'test-stub'
+    process.env.ANTHROPIC_API_KEY = 'test-stub'
+    try {
+      const result = await runGate({
+        voyageProber: async () => 'ok',
+        anthropicProber: async () => 'down',
+      })
+      expect(result.status).toBe('inconclusive')
+      expect(result.violations).toHaveLength(0)
+      expect(result.inconclusiveReason).toMatch(/claude/i)
+    } finally {
+      process.env.VOYAGE_API_KEY = prevVoyage
+      process.env.ANTHROPIC_API_KEY = prevAnthropic
+    }
+  })
 })
 
 // ── [9] runGate — injected model mismatch → static red before API ─────────────
 
 describe('runGate — injected model mismatch', () => {
-  it('returns gate-red before any API call when judgeModel is wrong', async () => {
-    // Write a temp baseline with wrong model — use in-memory baseline override via opts
-    // We can't easily override baseline data without filesystem, so we test via the
-    // checkModelGuards helper (already covered above).
-    // This integration-level test verifies the gate exits early on static failure.
+  it('returns gate-red with model-guard violation when judgeModel is wrong', async () => {
+    // Write a temp baseline with wrong judgeModel to exercise the full runGate code path
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gate-model-test-'))
+    const baselinePath = join(tmpDir, 'baseline.json')
+    const casesPath = join(tmpDir, 'cases.json')
+
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({
+        judgeModel: 'wrong-model-injected',   // intentionally wrong
+        embeddingModel: EXPECTED_EMBEDDING_MODEL,
+        k: 5,
+        cases: [],
+        aggregate: { passRate: null, n: 0, note: 'test', judgeHumanKappa: 0.9 },
+      })
+    )
+    writeFileSync(casesPath, JSON.stringify([]))
+
     const apiCallCount = { n: 0 }
     const fakeClient = {
       messages: {
@@ -321,16 +355,29 @@ describe('runGate — injected model mismatch', () => {
       },
     } as unknown as Anthropic
 
-    // Pass a mock prober that would succeed if reached (to isolate the static check)
-    const result = await runGate({
-      anthropicClient: fakeClient,
-      voyageProber: async () => 'ok',
-      // Use a non-existent baseline path to trigger gate-red early (simpler than injecting bad data)
-      baselinePath: '/tmp/nonexistent-baseline-12345.json',
-    })
+    const prevVoyage = process.env.VOYAGE_API_KEY
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY
+    process.env.VOYAGE_API_KEY = 'test-stub'
+    process.env.ANTHROPIC_API_KEY = 'test-stub'
+    try {
+      const result = await runGate({
+        anthropicClient: fakeClient,
+        voyageProber: async () => 'ok',
+        anthropicProber: async () => 'ok',
+        baselinePath,
+        casesPath,
+      })
 
-    expect(result.status).toBe('red')
-    // Gate must not have made any judge API calls
-    expect(apiCallCount.n).toBe(0)
+      expect(result.status).toBe('red')
+      expect(result.violations.some((v) => v.check === 'model-guard')).toBe(true)
+      // Model guard fires in static checks before any API call for scoring
+      expect(apiCallCount.n).toBe(0)
+    } finally {
+      process.env.VOYAGE_API_KEY = prevVoyage
+      process.env.ANTHROPIC_API_KEY = prevAnthropic
+      try { unlinkSync(baselinePath) } catch { /* ignore */ }
+      try { unlinkSync(casesPath) } catch { /* ignore */ }
+      try { rmdirSync(tmpDir) } catch { /* ignore */ }
+    }
   })
 })

@@ -42,6 +42,7 @@ export const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
 export const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
 
 const FAITHFULNESS_GATE_RUNS = 3   // fewer than baseline's k for speed; tolerance band absorbs variance
+const ANTHROPIC_PROBE_TIMEOUT_MS = 15_000
 
 const REPO_ROOT = join(import.meta.dirname, '..')
 const BASELINE_PATH = join(REPO_ROOT, 'evals/results/seed-baseline.json')
@@ -124,6 +125,8 @@ export interface GateOptions {
   anthropicClient?: Anthropic
   /** Override Voyage liveness probe for tests */
   voyageProber?: (apiKey: string) => Promise<'ok' | 'down'>
+  /** Override Claude liveness probe for tests */
+  anthropicProber?: () => Promise<'ok' | 'down'>
   /** Override baseline path for tests */
   baselinePath?: string
   /** Override seed-cases path for tests */
@@ -378,6 +381,29 @@ async function probeVoyage(apiKey: string): Promise<'ok' | 'down'> {
   }
 }
 
+async function probeAnthropic(client: Anthropic): Promise<'ok' | 'down'> {
+  try {
+    await Promise.race([
+      client.messages.create({
+        model: EXPECTED_JUDGE_MODEL,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'ping' }],
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('ETIMEDOUT: Claude probe timeout')),
+          ANTHROPIC_PROBE_TIMEOUT_MS
+        )
+      ),
+    ])
+    return 'ok'
+  } catch (err) {
+    // Non-outage errors (auth, bad-request) mean the API is reachable
+    if (isUpstreamOutage(err)) return 'down'
+    return 'ok'
+  }
+}
+
 function log(msg: string): void {
   process.stdout.write(msg + '\n')
 }
@@ -445,9 +471,10 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
     return { status: 'red', violations }
   }
 
-  // ── [4] Voyage liveness probe ────────────────────────────────────────────────
+  // ── [4] API liveness probes (Voyage + Claude) ───────────────────────────────
 
-  log('\n[4] Voyage liveness probe')
+  log('\n[4] API liveness probes (Voyage + Claude)')
+
   const voyageKey = process.env.VOYAGE_API_KEY
   if (!voyageKey) {
     return {
@@ -455,20 +482,6 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
       violations: [{ check: 'env', message: 'VOYAGE_API_KEY env var is required.' }],
     }
   }
-
-  const voyageProber = opts.voyageProber ?? probeVoyage
-  const voyageStatus = await voyageProber(voyageKey)
-  if (voyageStatus === 'down') {
-    log('  INCONCLUSIVE  Voyage AI liveness probe failed')
-    return {
-      status: 'inconclusive',
-      violations: [],
-      inconclusiveReason: 'Voyage AI appears to be down (liveness probe timed out or returned 5xx).',
-    }
-  }
-  ok('Voyage AI responding')
-
-  // ── [5-9] Live judge scoring ─────────────────────────────────────────────────
 
   const anthropicKey = process.env.ANTHROPIC_API_KEY
   if (!anthropicKey) {
@@ -479,6 +492,31 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
   }
 
   const client = opts.anthropicClient ?? new Anthropic({ apiKey: anthropicKey })
+
+  const voyageStatus = await (opts.voyageProber ?? probeVoyage)(voyageKey)
+  if (voyageStatus === 'down') {
+    log('  INCONCLUSIVE  Voyage AI liveness probe failed')
+    return {
+      status: 'inconclusive',
+      violations: [],
+      inconclusiveReason: 'Voyage AI appears to be down (liveness probe timed out or returned 5xx).',
+    }
+  }
+  ok('Voyage AI responding')
+
+  const claudeProbe = opts.anthropicProber ?? (() => probeAnthropic(client))
+  const claudeStatus = await claudeProbe()
+  if (claudeStatus === 'down') {
+    log('  INCONCLUSIVE  Claude API liveness probe failed')
+    return {
+      status: 'inconclusive',
+      violations: [],
+      inconclusiveReason: 'Claude API appears to be down (liveness probe failed).',
+    }
+  }
+  ok('Claude API responding')
+
+  // ── [5-9] Live judge scoring ─────────────────────────────────────────────────
 
   log('\n[5] Per-case live judge scoring')
 
@@ -553,27 +591,32 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
     // ── [5c] Live faithfulness judge ─────────────────────────────────────────
     if (!hasFaithfulness) continue
 
-    let freshResults: FaithfulnessResult[]
-    try {
-      freshResults = []
-      for (let i = 0; i < FAITHFULNESS_GATE_RUNS; i++) {
-        freshResults.push(await scoreFaithfulness(evalCase, client))
-      }
-    } catch (err) {
-      if (isUpstreamOutage(err)) {
-        log('  INCONCLUSIVE  Claude API appears to be down')
-        return {
-          status: 'inconclusive',
-          violations: [],
-          inconclusiveReason: `Claude API call failed: ${(err as Error).message}`,
+    // scoreFaithfulness swallows all API exceptions internally; detect mid-run outage
+    // by re-probing Claude whenever a result comes back errored.
+    const freshResults: FaithfulnessResult[] = []
+    let caseErrored = false
+    for (let i = 0; i < FAITHFULNESS_GATE_RUNS; i++) {
+      const r = await scoreFaithfulness(evalCase, client)
+      if (r.errored) {
+        const recheck = opts.anthropicProber ?? (() => probeAnthropic(client))
+        if (await recheck() === 'down') {
+          log('  INCONCLUSIVE  Claude API went down during scoring')
+          return {
+            status: 'inconclusive',
+            violations: [],
+            inconclusiveReason: `Claude API failed mid-run (run ${i + 1}/${FAITHFULNESS_GATE_RUNS}): ${r.errorMessage ?? 'unknown error'}`,
+          }
         }
+        add({
+          check: 'judge-error',
+          message: `Case ${bc.caseId}: judge returned errored result (run ${i + 1}): ${r.errorMessage ?? 'unknown'}`,
+        })
+        caseErrored = true
+        break
       }
-      add({
-        check: 'judge-error',
-        message: `Case ${bc.caseId}: judge threw unexpectedly: ${(err as Error).message}`,
-      })
-      continue
+      freshResults.push(r)
     }
+    if (caseErrored) continue
 
     const allZero = freshResults.every((r) => r.zeroClaimFlag)
     const freshMean = computeMeanScore(freshResults)

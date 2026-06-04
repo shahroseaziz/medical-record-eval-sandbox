@@ -118,6 +118,7 @@ jobs:
   eval-gate:
     name: Eval Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: ci
     # Only run when baseline is committed and the main CI job succeeded.
     if: >
