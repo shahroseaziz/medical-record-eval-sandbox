@@ -69,17 +69,24 @@ export async function executeSeedSql(client: Client, sql: string): Promise<void>
     await client.query(ddl)
   }
 
-  for (const block of copyBlocks) {
-    for (const row of block.rows) {
-      if (row.length === 0) continue
-      const placeholders = block.columns.map((col, i) =>
-        col === 'embedding' ? `$${i + 1}::vector` : `$${i + 1}`
-      )
-      await client.query(
-        `INSERT INTO ${block.table} (${block.columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        row
-      )
+  await client.query('BEGIN')
+  try {
+    for (const block of copyBlocks) {
+      for (const row of block.rows) {
+        if (row.length === 0) continue
+        const placeholders = block.columns.map((col, i) =>
+          col === 'embedding' ? `$${i + 1}::vector` : `$${i + 1}`
+        )
+        await client.query(
+          `INSERT INTO ${block.table} (${block.columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+          row
+        )
+      }
     }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
   }
 }
 
