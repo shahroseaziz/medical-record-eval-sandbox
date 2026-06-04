@@ -308,6 +308,35 @@ describe('account-portable state blob: serialize/deserialize', () => {
     const bad = JSON.stringify({ version: 99, genPrompt: '', judgeRubric: '', cases: [] })
     expect(() => deserializeState(bad)).toThrow('Unsupported state blob version: 99')
   })
+
+  it('throws with a clear message on malformed JSON (e.g. truncated paste)', () => {
+    expect(() => deserializeState('{"version":1,"genPrompt":"x')).toThrow(
+      'deserializeState: invalid JSON',
+    )
+  })
+
+  it('absent blob.cases falls back to [] — does not write "undefined" string', () => {
+    // Blob with no cases field
+    const partial = JSON.stringify({ version: 1, genPrompt: 'gp', judgeRubric: 'jr' })
+    deserializeState(partial)
+    expect(loadUserCasesV2()).toEqual([])
+    // Verify the raw key is not the string "undefined"
+    expect(localStorage.getItem('user_cases_v2')).not.toBe('undefined')
+  })
+
+  it('absent blob.genPrompt falls back to "" — does not write "undefined" string', () => {
+    const partial = JSON.stringify({ version: 1, judgeRubric: 'jr', cases: [] })
+    deserializeState(partial)
+    expect(loadGenPrompt()).toBe('')
+    expect(localStorage.getItem('gen_prompt_v1')).not.toBe('undefined')
+  })
+
+  it('absent blob.judgeRubric falls back to "" — does not write "undefined" string', () => {
+    const partial = JSON.stringify({ version: 1, genPrompt: 'gp', cases: [] })
+    deserializeState(partial)
+    expect(loadJudgeRubric()).toBe('')
+    expect(localStorage.getItem('judge_rubric_v1')).not.toBe('undefined')
+  })
 })
 
 describe('UserCaseV2 isolation: seeded aggregate unaffected by v2 localStorage', () => {

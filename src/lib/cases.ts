@@ -107,18 +107,19 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// FNV-1a 32-bit → 8-char hex; synchronous and deterministic.
-function fnv1a32(str: string): string {
-  let h = 0x811c9dc5
+// FNV-1a 64-bit → 16-char hex; synchronous, deterministic, ~1.8×10¹⁹ values (negligible collision risk).
+function fnv1a64(str: string): string {
+  let h = BigInt('0xcbf29ce484222325')
+  const prime = BigInt('0x00000100000001b3')
   for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
+    h ^= BigInt(str.charCodeAt(i))
+    h = BigInt.asUintN(64, h * prime)
   }
-  return (h >>> 0).toString(16).padStart(8, '0')
+  return h.toString(16).padStart(16, '0')
 }
 
 export function genPromptHash(prompt: string): string {
-  return fnv1a32(normalizeWhitespace(prompt))
+  return fnv1a64(normalizeWhitespace(prompt))
 }
 
 // A case is stale when the live gen-prompt hash differs from what was used to produce it.
@@ -208,11 +209,19 @@ export function serializeState(): string {
 
 export function deserializeState(json: string): void {
   if (typeof window === 'undefined') return
-  const blob = JSON.parse(json) as StateBlob
+  let blob: StateBlob
+  try {
+    blob = JSON.parse(json) as StateBlob
+  } catch {
+    throw new Error('deserializeState: invalid JSON')
+  }
   if (blob.version !== 1) throw new Error(`Unsupported state blob version: ${blob.version}`)
-  saveGenPrompt(blob.genPrompt)
-  saveJudgeRubric(blob.judgeRubric)
-  localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(blob.cases))
+  // Guard each field: absent or wrong-type fields fall back to safe defaults so
+  // localStorage never receives the JS-coerced string "undefined".
+  saveGenPrompt(typeof blob.genPrompt === 'string' ? blob.genPrompt : '')
+  saveJudgeRubric(typeof blob.judgeRubric === 'string' ? blob.judgeRubric : '')
+  const cases = Array.isArray(blob.cases) ? blob.cases : []
+  localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(cases))
 }
 
 // ── Seeded aggregate (purity boundary) ────────────────────────────────────
