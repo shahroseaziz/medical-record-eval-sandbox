@@ -6,6 +6,8 @@ import type { RunTrace } from '@/app/api/run/types'
 const FIXTURE_TRACE: RunTrace = {
   caseId: 'test-case-1',
   ragMode: 'retrieve',
+  grounding: '[medications]\nLisinopril 10mg daily\n\n[allergies]\nPenicillin allergy',
+  generationPromptIsUserAuthored: false,
   retrieval: {
     chunks: [
       { section: 'medications', text: 'Lisinopril 10mg daily for hypertension', distance: 0.12, similarity: 0.88 },

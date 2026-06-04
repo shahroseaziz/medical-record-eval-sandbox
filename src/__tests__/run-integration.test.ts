@@ -504,6 +504,152 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       expect(res.status).toBe(200)
     })
   })
+
+  // ── P2: custom generationPrompt + grounding exposure ────────────────────────
+
+  describe('custom generationPrompt + grounding exposure (P2)', () => {
+    const CUSTOM_PROMPT = 'CANARY_CUSTOM_PROMPT_XYZ: You are a specialized test assistant.'
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mockCreate: any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mockStreamTextFn: any
+
+    beforeAll(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockCreate = ((await import('@anthropic-ai/sdk')) as any).__mockCreate
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockStreamTextFn = (await import('ai') as any).streamText
+    })
+
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      process.env.VOYAGE_API_KEY = 'test-voyage-key'
+      // Reset to stable alternating extract/verdict responses, independent of prior test state.
+      mockCreate.mockReset()
+      let callIdx = 0
+      mockCreate.mockImplementation(() => {
+        const idx = callIdx++
+        if (idx % 2 === 0) {
+          return Promise.resolve({
+            content: [{
+              type: 'tool_use',
+              name: 'extract_claims',
+              input: { claims: ['The patient takes medication.'] },
+            }],
+          })
+        }
+        return Promise.resolve({
+          content: [{
+            type: 'tool_use',
+            name: 'verdict_claims',
+            input: {
+              verdicts: [{
+                claim: 'The patient takes medication.',
+                verdict: 'supported',
+                rationale: 'Stated in grounding.',
+              }],
+            },
+          }],
+        })
+      })
+      mockStreamTextFn.mockClear()
+    })
+
+    function extractTrace(body: string): RunTrace | undefined {
+      const parts = parseDataStreamParts(body)
+      const tracePart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'
+      )
+      if (!tracePart) return undefined
+      return (tracePart.value as Record<string, unknown>).trace as RunTrace
+    }
+
+    it('custom generationPrompt is forwarded as system param to streamText (end-to-end plumbing)', async () => {
+      const res = await handler(makeReq({
+        patientId: 'p1',
+        query: 'What medications is the patient on?',
+        mode: 'stuff',
+        record: 'Patient takes Lisinopril 10mg daily.',
+        generationPrompt: CUSTOM_PROMPT,
+      }) as never)
+      await res.text()  // drain stream so execute() completes
+
+      const calls = mockStreamTextFn.mock.calls
+      expect(calls.length).toBeGreaterThan(0)
+      const lastArgs = calls[calls.length - 1][0]
+      expect(lastArgs.system).toBe(CUSTOM_PROMPT)
+    })
+
+    it('default prompt reproduces prior behavior when generationPrompt is absent', async () => {
+      const res = await handler(makeReq({
+        patientId: 'p1',
+        query: 'What medications is the patient on?',
+        mode: 'retrieve',
+      }) as never)
+
+      const trace = extractTrace(await res.text())
+      expect(trace).toBeDefined()
+      expect(trace!.generationPromptIsUserAuthored).toBe(false)
+      // Default (example-authored) prompt is logged in full — not redacted
+      expect(trace!.retrieval?.assembledPrompt).toContain('medical record analyst')
+
+      const calls = mockStreamTextFn.mock.calls
+      const lastArgs = calls[calls.length - 1][0]
+      expect(lastArgs.system).toContain('medical record analyst')
+    })
+
+    it('no user-supplied prompt text survives in any trace field (CI grep-test)', async () => {
+      const res = await handler(makeReq({
+        patientId: 'p1',
+        query: 'What medications is the patient on?',
+        mode: 'retrieve',
+        generationPrompt: CUSTOM_PROMPT,
+      }) as never)
+
+      const trace = extractTrace(await res.text())
+      expect(trace).toBeDefined()
+      expect(trace!.generationPromptIsUserAuthored).toBe(true)
+
+      const traceJson = JSON.stringify(trace)
+      // Neither the canary nor any fragment of the user-authored prompt may persist
+      expect(traceJson).not.toContain('CANARY_CUSTOM_PROMPT_XYZ')
+      expect(traceJson).not.toContain(CUSTOM_PROMPT)
+
+      // assembledPrompt is a redaction marker (hash + length), never the raw text
+      expect(trace!.retrieval?.assembledPrompt).toMatch(/^\[REDACTED sha256=[0-9a-f]+ length=\d+\]$/)
+    })
+
+    it('run result exposes grounding in trace for retrieve mode (for UI capture)', async () => {
+      const res = await handler(makeReq({
+        patientId: 'p1',
+        query: 'What medications is the patient on?',
+        mode: 'retrieve',
+      }) as never)
+
+      const trace = extractTrace(await res.text())
+      expect(trace).toBeDefined()
+      expect(typeof trace!.grounding).toBe('string')
+      expect(trace!.grounding.length).toBeGreaterThan(0)
+      // The mock retrieve() returns a Lisinopril chunk — grounding should contain it
+      expect(trace!.grounding).toContain('Lisinopril')
+    })
+
+    it('run result exposes grounding in trace for stuff mode (for UI capture)', async () => {
+      const RECORD = 'Patient takes Lisinopril 10mg daily for hypertension.'
+      const res = await handler(makeReq({
+        patientId: 'p1',
+        query: 'What medications is the patient on?',
+        mode: 'stuff',
+        record: RECORD,
+      }) as never)
+
+      const trace = extractTrace(await res.text())
+      expect(trace).toBeDefined()
+      expect(typeof trace!.grounding).toBe('string')
+      expect(trace!.grounding).toContain('Lisinopril')
+    })
+  })
 })
 
 // ─── DB trace persistence (requires DATABASE_URL) ─────────────────────────────
@@ -561,5 +707,9 @@ describe.skipIf(!hasDb)('RunTrace DB persistence (live DB)', () => {
     expect(trace.generationModel).toBe('claude-haiku-4-5-20251001')
     expect(trace.judgeModel).toBe('claude-haiku-4-5-20251001')
     expect(trace.embeddingModel).toBe('none')
+    // P2: grounding and prompt-authorship fields
+    expect(typeof trace.grounding).toBe('string')
+    expect(trace.grounding.length).toBeGreaterThan(0)
+    expect(trace.generationPromptIsUserAuthored).toBe(false)
   }, 60_000)
 })
