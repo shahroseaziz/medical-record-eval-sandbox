@@ -1,4 +1,4 @@
 faithfulness: 0.85   # chosen against the seeded set, not a powered calibration
 contains: 1.0
-judge_kappa_min: 0.0          # placeholder; finalized once calibration is measured
+judge_kappa_min: 0.40         # honest floor: chosen conservatively, not derived from the n=86 calibration set (too small to power a reliable floor); Landis-Koch "moderate" as minimum bar; measured kappa is directional
 extraction_completeness: 0.0  # placeholder; finalized once seed claims are authored

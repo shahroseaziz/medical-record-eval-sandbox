@@ -4,8 +4,9 @@ import {
   computeStdDev,
   medianRunIndex,
   computeAggregate,
+  computeKappa,
 } from '../aggregate'
-import type { FaithfulnessRunResult, CaseAggregateInput } from '../aggregate'
+import type { FaithfulnessRunResult, CaseAggregateInput, BinaryLabel } from '../aggregate'
 
 describe('computeMeanScore', () => {
   it('returns null for empty input', () => {
@@ -186,5 +187,68 @@ describe('computeAggregate', () => {
     const result = computeAggregate(cases)
     expect(result.passRate).toBeCloseTo(0.5)
     expect(result.judgeReferenceAgreement).toBeCloseTo(1.0)
+  })
+})
+
+describe('computeKappa', () => {
+  it('returns null for empty arrays', () => {
+    expect(computeKappa([], [])).toBeNull()
+  })
+
+  it('returns null for mismatched lengths', () => {
+    expect(computeKappa(['supported'], ['supported', 'unsupported'])).toBeNull()
+  })
+
+  it('returns 1.0 for perfect agreement', () => {
+    const labels: BinaryLabel[] = ['supported', 'supported', 'unsupported']
+    expect(computeKappa(labels, labels)).toBeCloseTo(1.0)
+  })
+
+  it('returns 1.0 when both raters agree on all-supported fixture', () => {
+    const labels: BinaryLabel[] = ['supported', 'supported', 'supported', 'supported']
+    expect(computeKappa(labels, labels)).toBeCloseTo(1.0)
+  })
+
+  it('returns a negative kappa when raters mostly disagree', () => {
+    const a: BinaryLabel[] = ['supported', 'supported', 'supported', 'unsupported']
+    const b: BinaryLabel[] = ['unsupported', 'unsupported', 'supported', 'supported']
+    const k = computeKappa(a, b)
+    expect(k).not.toBeNull()
+    expect(k!).toBeLessThan(0)
+  })
+
+  it('computes kappa correctly on a known fixture', () => {
+    // po=3/4=0.75; p1pos=2/4=0.5, p2pos=2/4=0.5; pe=0.5*0.5+0.5*0.5=0.5
+    // kappa=(0.75-0.5)/(1-0.5)=0.5
+    const a: BinaryLabel[] = ['supported', 'supported', 'unsupported', 'unsupported']
+    const b: BinaryLabel[] = ['supported', 'unsupported', 'unsupported', 'unsupported']
+    expect(computeKappa(a, b)).toBeCloseTo(0.5)
+  })
+
+  it('returns ~0.9 for near-perfect agreement (calibration fixture)', () => {
+    // Simulates 86 claims: 83 agree, A has 66 sup, B has 67 sup
+    // Expected kappa ≈ 0.9006
+    const a: BinaryLabel[] = [
+      ...Array(66).fill('supported') as BinaryLabel[],
+      ...Array(20).fill('unsupported') as BinaryLabel[],
+    ]
+    // B: 67 supported, 19 unsupported; 3 disagreements at positions 65, 66, 67
+    const b: BinaryLabel[] = [
+      ...Array(65).fill('supported') as BinaryLabel[],
+      ...Array(1).fill('unsupported') as BinaryLabel[], // disagree at pos 65
+      ...Array(1).fill('supported') as BinaryLabel[],   // disagree at pos 66
+      ...Array(1).fill('supported') as BinaryLabel[],   // disagree at pos 67
+      ...Array(18).fill('unsupported') as BinaryLabel[],
+    ]
+    const k = computeKappa(a, b)
+    expect(k).not.toBeNull()
+    expect(k!).toBeGreaterThan(0.85)
+    expect(k!).toBeLessThanOrEqual(1.0)
+  })
+
+  it('kappa is symmetric', () => {
+    const a: BinaryLabel[] = ['supported', 'supported', 'unsupported', 'supported']
+    const b: BinaryLabel[] = ['supported', 'unsupported', 'unsupported', 'supported']
+    expect(computeKappa(a, b)).toBeCloseTo(computeKappa(b, a)!)
   })
 })
