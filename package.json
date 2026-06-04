@@ -19,7 +19,10 @@
     "generate:baseline": "tsx scripts/generate-baseline.ts",
     "compute:kappa": "tsx scripts/compute-kappa.ts",
     "validate:evals": "tsx scripts/validate-evals.ts",
-    "eval:gate": "tsx evals/run_evals.ts"
+    "eval:gate": "tsx evals/run_evals.ts",
+    "healthcheck": "tsx scripts/healthcheck.ts",
+    "healthcheck:self-test": "tsx scripts/healthcheck-self-test.ts",
+    "quality:report": "tsx scripts/observability/quality-report.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",

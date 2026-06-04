@@ -1,0 +1,168 @@
+name: Production Health Check
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+# weekly:      Monday 09:00 UTC — catch silent regressions between deploys
+# post-deploy: trigger manually after a Vercel deployment with workflow_dispatch
+#              (or call via GH API: gh workflow run healthcheck.yml)
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Weekly, Monday 09:00 UTC
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — cold-load check only, no API calls (verifies workflow wiring)'
+        type: boolean
+        required: false
+        default: false
+      skip_drift:
+        description: 'Skip drift canary (cold-load + live run only)'
+        type: boolean
+        required: false
+        default: false
+      skip_quality_report:
+        description: 'Skip quality report over traces table'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  # ── Job 1: Health check ──────────────────────────────────────────────────────
+  healthcheck:
+    name: Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── [1] Cold-load assertion (DB-free) ─────────────────────────────────
+      # GET / — the homepage reads evals/results/seed-baseline.json at render
+      # time (a static file bundled into the Next.js deployment) and renders the
+      # EvalScorecard with PASS/FAIL labels and pass-rate.  No DB connection is
+      # required, so this passes even when Neon is suspended (free-tier sleep).
+      - name: '[1] Cold-load static assertion (DB-free path)'
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+          SKIP_LIVE: '1'
+          SKIP_DRIFT: '1'
+        run: |
+          echo "::group::Cold-load check"
+          npx tsx scripts/healthcheck.ts
+          echo "::endgroup::"
+
+      # ── [2] Live free-tier run ─────────────────────────────────────────────
+      # POST /api/run without x-byo-api-key.  The server uses its own
+      # ANTHROPIC_API_KEY (free-tier path via the spend cap / killswitch).
+      # Asserts RunTrace.tokens.estCostUsd > 0, confirming the full pipeline
+      # ran (embedding → retrieval → generation → faithfulness judge → trace persist).
+      - name: '[2] Live free-tier run'
+        if: ${{ !inputs.dry_run }}
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+          SKIP_LIVE: '0'
+          SKIP_DRIFT: '1'
+        run: |
+          echo "::group::Live run (full response logged below)"
+          npx tsx scripts/healthcheck.ts
+          echo "::endgroup::"
+
+      # ── [3] Drift canary ───────────────────────────────────────────────────
+      # Re-runs the 7 seed cases through the deployed /api/run endpoint using
+      # a BYO API key (avoids burning the production free-tier spend cap).
+      # Alerts on:
+      #   • live faithfulness score outside meanScore ± max(0.05, 3·σ)
+      #   • judgeModel or embeddingModel in the trace differs from pinned constants
+      #     (MODEL-DEPRECATION: silent model substitution changes scoring behaviour)
+      # Pre-authored outputs are intentionally excluded — they use designed-fail
+      # text that would not be reproduced by the deployed endpoint.
+      - name: '[3] Drift canary (7 seed cases)'
+        if: ${{ !inputs.dry_run && !inputs.skip_drift }}
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
+          SKIP_LIVE: '1'
+          SKIP_DRIFT: '0'
+        run: |
+          echo "::group::Drift canary (scores + model config)"
+          npx tsx scripts/healthcheck.ts
+          echo "::endgroup::"
+
+  # ── Job 2: Quality report over traces ────────────────────────────────────────
+  # Connects to the production Neon DB (REQUIRED — not a soft fallback).
+  # Computes rolling-window quality metrics and alerts on threshold breaches.
+  quality-report:
+    name: Quality Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: healthcheck
+    # Run even when healthcheck fails so we get the quality report regardless
+    if: ${{ always() && !inputs.skip_quality_report && !inputs.dry_run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Quality metrics over the traces table:
+      #   • zero-claim rate       (> 10% → alert)
+      #   • section-hit miss rate (> 20% → alert)
+      #   • judge-error rate      (> 5%  → alert)
+      #   • faithfulness p50      (< 0.70 → alert)
+      #   • faithfulness p90      (< 0.85 → alert, same as gate threshold)
+      #   • model-deprecation     (unexpected judgeModel / embeddingModel → alert)
+      - name: Quality report over traces (last 30 days)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WINDOW_DAYS: '30'
+        run: |
+          echo "::group::Quality report"
+          npx tsx scripts/observability/quality-report.ts
+          echo "::endgroup::"
+
+  # ── Job 3: Canary band self-test ─────────────────────────────────────────────
+  # Verifies that an injected band-exceeding score fires the alert.
+  # Runs on every trigger to catch regressions in the monitoring logic itself.
+  canary-self-test:
+    name: Canary Band Self-Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Inject a score outside the band and confirm the alert fires.
+      # If checkDriftBand returns null for an obviously out-of-band score,
+      # the monitoring logic is broken and this job fails.
+      # Also verifies the data stream parser handles 2:-prefixed lines correctly.
+      - name: Verify band-exceeding score triggers alert
+        run: npx tsx scripts/healthcheck-self-test.ts
