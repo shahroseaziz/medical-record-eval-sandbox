@@ -257,7 +257,7 @@ if (judgeKappaMin > 0) {
   } else if (agg && agg.judgeHumanKappa === null) {
     fail('Baseline aggregate.judgeHumanKappa is null — kappa could not be computed; check human-labels.json')
   } else {
-    ok('judgeHumanKappa not yet computed in baseline — run npm run compute:kappa (skipped in CI until baseline is generated)')
+    fail('judgeHumanKappa absent from baseline aggregate — run npm run compute:kappa before committing baseline')
   }
 }
 

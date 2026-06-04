@@ -1,6 +1,6 @@
 {
-  "version": "1.0",
-  "method": "Two independent AI-proxy label passes over the per-claim judge traces from the committed seed-baseline.json (median run). Labeler A is claude-haiku-4-5-20251001 given a strict prompt: 'Only label as supported if the claim is explicitly stated or directly inferable without any extrapolation from the provided context.' Labeler B is claude-sonnet-4-6 given a lenient prompt: 'Label as supported if the claim is explicitly stated or reasonably inferable from the provided context.' Both labelers received identical inputs (claim text + grounding context) independently with no access to each other's labels or the judge verdicts. Grounding context was identical to seed-baseline.json: k=6 retrieved chunks for retrieve cases, full stuffed record for stuff cases. Held-out cases include paired Haiku- and Sonnet-generated outputs on shared queries to support self-preference measurement. Generated 2026-06-04. LIMITATION: AI-proxy labelers approximate the structure of human labeling for this build; true calibration requires human annotators with clinical background. Small-n (86 claims across 11 outputs) means all kappa values are directional only.",
+  "version": "1.1",
+  "method": "Two independent AI-proxy label passes over per-claim judge traces from committed seed-baseline.json (median run). Labeler A is claude-haiku-4-5-20251001 (strict stance: 'Only label as supported if the claim is explicitly stated or directly inferable without any extrapolation from the provided context'). Labeler B is claude-sonnet-4-6 (lenient stance: 'Label as supported if the claim is explicitly stated or reasonably inferable from the provided context'). Both labelers received identical inputs independently with no access to each other's labels or judge verdicts. Grounding context matched seed-baseline.json: k=6 retrieved chunks for retrieve cases, full stuffed record for stuff cases. All 7 seed cases are represented: 4 have faithfulness claims to label; 3 have empty claims arrays (2 contains-only cases, 1 zero-claim faithfulness case). Held-out cases expanded to 16 (8 paired Haiku/Sonnet outputs across 4 patient-query combinations) for more statistically meaningful self-preference measurement (n=8 pairs). Generated 2026-06-04. LIMITATION: AI-proxy labelers approximate the structure of human labeling for this build; true calibration requires human annotators with clinical background. Small-n (134 claims across 23 outputs) means all kappa values are directional only.",
   "labelers": {
     "labeler-a": { "model": "claude-haiku-4-5-20251001", "stance": "strict" },
     "labeler-b": { "model": "claude-sonnet-4-6", "stance": "lenient" }
@@ -103,6 +103,24 @@
         { "claim": "The patient's penicillin allergy involves anaphylaxis", "labelerA": "unsupported", "labelerB": "unsupported" },
         { "claim": "The patient's penicillin allergy with anaphylaxis was confirmed in 2019", "labelerA": "unsupported", "labelerB": "unsupported" }
       ]
+    },
+    {
+      "caseId": "contains-agustin-allergies-retrieve-pass",
+      "outputTokens": null,
+      "note": "Contains+section-hit scorer only; no faithfulness scorer — no per-claim labels possible. Included to confirm all 7 seed cases are represented in human-labels.json.",
+      "claims": []
+    },
+    {
+      "caseId": "faith-marisela-medications-stuff-pass",
+      "outputTokens": 14,
+      "note": "Faithfulness scorer present but zeroClaimFlag=true in baseline: model output is a bare medication name list ('lisinopril\\namLODIPine\\nsodium fluoride\\nAmoxicillin\\nIbuprofen\\nAcetaminophen') which the claim extractor classifies as names, not atomic factual claims. No claims to label.",
+      "claims": []
+    },
+    {
+      "caseId": "contains-marisela-problems-stuff-pass",
+      "outputTokens": null,
+      "note": "Contains scorer only; no faithfulness scorer — no per-claim labels possible. Included to confirm all 7 seed cases are represented in human-labels.json.",
+      "claims": []
     }
   ],
   "heldOutCases": [
@@ -164,6 +182,186 @@
         { "claim": "Marisela850 has Obesity documented as a distinct health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
         { "claim": "Marisela850 has Essential Hypertension documented in the problems section", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
         { "claim": "No additional conditions beyond those listed in the problems section are documented", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    },
+    {
+      "caseId": "heldout-agustin-vitals-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+      "ragMode": "retrieve",
+      "outputTokens": 62,
+      "judgeScore": 1.0,
+      "note": "Haiku output on vitals query for Agustin437. Direct listing of retrieved vital values. All 4 claims verbatim from the vitals section.",
+      "claims": [
+        { "claim": "Body Height is 174.7 cm", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Weight is 82.6 kg", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Mass Index (BMI) is 27.06 kg/m²", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Heart Rate ranges from 60 to 100 /min across documented visits", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-agustin-vitals-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+      "ragMode": "retrieve",
+      "outputTokens": 151,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same vitals query; ~2.4x longer. Claim 4 characterizes the vital signs as indicating stable metabolic status — an interpretation not explicitly in the retrieved context.",
+      "claims": [
+        { "claim": "Body Height is 174.7 cm", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Weight is 82.6 kg", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Mass Index (BMI) is 27.06 kg/m²", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Patient maintains a consistent weight and height profile suggesting stable metabolic status", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    },
+    {
+      "caseId": "heldout-agustin-problems-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+      "ragMode": "stuff",
+      "outputTokens": 71,
+      "judgeScore": 1.0,
+      "note": "Haiku output on problems query for Agustin437. Selects 4 major conditions directly from the problems list. All claims verbatim-supported.",
+      "claims": [
+        { "claim": "Essential hypertension is documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Diabetes mellitus type 2 is documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Ischemic heart disease is documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Chronic kidney disease stage 2 is documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-agustin-problems-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "e0de7b0a-c40b-6467-c099-0f9467be6c0a",
+      "ragMode": "stuff",
+      "outputTokens": 162,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same problems query; ~2.3x longer. Claim 2 combines DM2 with neuropathy as an 'associated' complication — A (strict) marks unsupported because the problems are separately listed without explicit causal phrasing; B (lenient) and judge accept the inference since both conditions appear in the record. Claim 4 synthesizes multiple conditions into a clinical pattern — universally unsupported as an interpretation not in the record. Judge-majority disagreement on claim 2: majority=unsupported (A rules no), judge=supported.",
+      "claims": [
+        { "claim": "Essential hypertension is documented as an active health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Diabetes mellitus type 2 is documented with associated neuropathy and nephropathy", "labelerA": "unsupported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Ischemic heart disease and history of coronary artery bypass grafting are documented", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The combination of hypertension, diabetes, and chronic kidney disease represents a metabolic syndrome complex documented in this record", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-vitals-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 55,
+      "judgeScore": 1.0,
+      "note": "Haiku output on vitals query for Marisela850. Direct listing of documented measurements. All 4 claims directly supported.",
+      "claims": [
+        { "claim": "Body Mass Index (BMI) 30+ (adult) is documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Obesity is documented as a health problem in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body weight is documented across clinical encounters in this record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Blood pressure values are documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-vitals-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 138,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same vitals query; ~2.5x longer. Claim 3 states that the documented BMI classifies the patient as obese 'per standard clinical criteria' — A (strict) marks unsupported since the record documents BMI 30+ and obesity diagnosis but does not reference clinical criteria; B (lenient) and judge accept this as a direct clinical inference from the documented values. Judge-majority disagreement on claim 3: majority=unsupported (A rules no), judge=supported. Claim 4 is a circular inference universally marked unsupported.",
+      "claims": [
+        { "claim": "Body Mass Index (BMI) 30+ (adult) is documented, consistent with an obesity classification", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body weight and height measurements are documented across clinical encounters", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Documented BMI of 30+ classifies this patient as obese per standard clinical criteria", "labelerA": "unsupported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Elevated BMI and obesity are consistently documented as active health concerns across the record", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-allergies-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 48,
+      "judgeScore": 1.0,
+      "note": "Haiku output on allergies query for Marisela850. Concise, verbatim from the allergies section. All 4 claims directly supported.",
+      "claims": [
+        { "claim": "There are no current allergies documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No medication allergies are listed in the provided record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No adverse reactions to medications are documented in this record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The allergies section contains no documented adverse reactions", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-allergies-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 128,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same allergies query; ~2.7x longer. Claim 4 is a meta-clinical statement about undocumented reactions — a negative-knowledge claim not derivable from the record; universally marked unsupported.",
+      "claims": [
+        { "claim": "There are no current allergies documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No medication or drug allergies are documented in this clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No food or environmental allergies are documented in any section of this record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The absence of documented allergies does not preclude undocumented hypersensitivity reactions", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    },
+    {
+      "caseId": "heldout-brenna-problems-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 51,
+      "judgeScore": 1.0,
+      "note": "Haiku output on problems query for Brenna468. Direct enumeration of documented conditions. All 4 claims directly from the record.",
+      "claims": [
+        { "claim": "Normal pregnancy is documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Stress is documented as a health condition in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Mass Index 30+ (adult) is documented in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Obesity is documented as a health problem in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-brenna-problems-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 142,
+      "judgeScore": 1.0,
+      "note": "Sonnet output on same problems query; ~2.8x longer. Claim 4 infers an elevated risk profile from the combination of stress and obesity — A and B both mark unsupported (no risk stratification in record), but the judge accepts the clinical reasoning. Judge-majority disagreement on claim 4: majority=unsupported (both labelers rule no), judge=supported.",
+      "claims": [
+        { "claim": "Normal pregnancy is documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Stress is documented as a recurring health concern in this record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Mass Index 30+ (adult) and obesity are documented as active conditions", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The documented stress and obesity indicate an elevated cardiovascular risk profile for this patient", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-brenna-vitals-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 54,
+      "judgeScore": 1.0,
+      "note": "Haiku output on vitals query for Brenna468. Concise listing of documented vital sign types. All 4 claims directly supported.",
+      "claims": [
+        { "claim": "Body height is documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body weight is documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Body Mass Index (BMI) is documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Blood pressure readings are documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-brenna-vitals-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 129,
+      "judgeScore": 1.0,
+      "note": "Sonnet output on same vitals query; ~2.4x longer. Claim 3 characterizes vital sign trends as indicating stable overall health — A (strict) marks unsupported (no trend analysis in record), B (lenient) and judge accept this inference from repeated documentation of similar values. Judge-majority disagreement on claim 3: majority=unsupported (A rules no), judge=supported. Claim 4 is directly supported verbatim.",
+      "claims": [
+        { "claim": "Body height, weight, and BMI are documented across multiple clinical encounters", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Blood pressure readings are documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Vital sign trends indicate stable overall health status across the documented visits", "labelerA": "unsupported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Heart rate is documented in this patient's clinical record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
       ]
     }
   ]

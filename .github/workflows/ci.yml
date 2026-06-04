@@ -62,6 +62,14 @@ jobs:
           git diff --staged --quiet || git commit -m "ci: pin eval baseline [skip ci]"
           git push origin HEAD:${{ github.ref_name }}
 
+      - name: Compute judge calibration kappa
+        run: |
+          if [ -f evals/results/seed-baseline.json ]; then
+            npm run compute:kappa
+          else
+            echo "Baseline not yet generated — skipping kappa computation"
+          fi
+
       - name: Validate eval artifacts
         run: npm run validate:evals
 

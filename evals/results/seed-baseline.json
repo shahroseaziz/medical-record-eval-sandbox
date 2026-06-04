@@ -773,17 +773,17 @@
     "judgeReferenceAgreement": 1,
     "n": 4,
     "note": "directional, n=6-8",
-    "judgeHumanKappa": 0.968,
-    "interHumanKappa": 0.901,
-    "kappaN": 86,
+    "judgeHumanKappa": 0.883,
+    "interHumanKappa": 0.857,
+    "kappaN": 134,
     "kappaNotes": "directional, small-n; labels from AI-proxy labelers (haiku strict, sonnet lenient) as documented in evals/golden/human-labels.json; strict majority rule (both labelers must agree supported)",
     "selfPreference": {
       "haikuJudgesHaikuMeanScore": 1,
-      "haikuJudgesSonnetMeanScore": 0.75,
-      "delta": -0.25,
-      "haikuMeanOutputTokens": 67,
-      "sonnetMeanOutputTokens": 138,
-      "n": 2,
+      "haikuJudgesSonnetMeanScore": 0.813,
+      "delta": -0.187,
+      "haikuMeanOutputTokens": 59,
+      "sonnetMeanOutputTokens": 141,
+      "n": 8,
       "note": "negative delta means Haiku-generated outputs score higher; verbosity confound: Sonnet outputs are longer on average"
     }
   }

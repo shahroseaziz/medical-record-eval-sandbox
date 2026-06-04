@@ -127,25 +127,38 @@ function main(): void {
 
   // ── Seed cases: judge verdicts from baseline ────────────────────────────────
   for (const sc of labels.seedCases) {
+    // Zero-claim or contains-only cases have no faithfulness claims to pair — skip silently
+    if (sc.claims.length === 0) continue
+
     const baselineClaims = baselineClaimMap.get(sc.caseId)
     if (!baselineClaims) {
-      console.warn(`  WARN  No baseline claims for seed case ${sc.caseId} — skipped`)
-      continue
-    }
-    if (baselineClaims.length !== sc.claims.length) {
-      console.warn(
-        `  WARN  Claim count mismatch for ${sc.caseId}: baseline=${baselineClaims.length} labels=${sc.claims.length} — skipped`
-      )
+      console.warn(`  WARN  No baseline faithfulness claims for seed case ${sc.caseId} — skipped`)
       continue
     }
 
-    for (let i = 0; i < sc.claims.length; i++) {
-      const lc = sc.claims[i]
-      const jv = verdictToBinary(baselineClaims[i].verdict)
+    // Match by claim text, not by array index, to guard against model non-determinism
+    const baselineByText = new Map<string, string>()
+    for (const bc of baselineClaims) {
+      baselineByText.set(bc.claim, bc.verdict)
+    }
+
+    let unmatched = 0
+    for (const lc of sc.claims) {
+      const verdict = baselineByText.get(lc.claim)
+      if (verdict === undefined) {
+        unmatched++
+        continue
+      }
+      const jv = verdictToBinary(verdict)
       aAll.push(lc.labelerA)
       bAll.push(lc.labelerB)
       judgeAll.push(jv)
       majorityAll.push(humanMajority(lc.labelerA, lc.labelerB))
+    }
+    if (unmatched > 0) {
+      console.warn(
+        `  WARN  ${unmatched}/${sc.claims.length} claims unmatched by text in ${sc.caseId} (model non-determinism?) — partial match used`
+      )
     }
   }
 
