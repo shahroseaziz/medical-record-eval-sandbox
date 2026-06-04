@@ -8,6 +8,7 @@ import { TransformInspector } from './TransformInspector'
 import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
 import { ApiKeyInput } from './ApiKeyInput'
+import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { useRun } from '@/hooks/useRun'
 import type { UserCase } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
@@ -38,8 +39,12 @@ export function Workspace() {
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
+  const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
+
+  const customGenerationPrompt =
+    generationPrompt !== DEFAULT_GENERATION_PROMPT ? generationPrompt : undefined
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
@@ -48,6 +53,7 @@ export function Workspace() {
       query,
       mode,
       record: mode === 'stuff' ? record : undefined,
+      generationPrompt: customGenerationPrompt,
     })
   }
 
@@ -60,6 +66,7 @@ export function Workspace() {
       query: uc.query,
       mode: uc.mode,
       record: uc.mode === 'stuff' ? uc.record : undefined,
+      generationPrompt: customGenerationPrompt,
     })
   }
 
@@ -106,6 +113,12 @@ export function Workspace() {
           )}
 
           <PromptEditor value={query} onChange={setQuery} disabled={loading} />
+
+          <GenerationPromptEditor
+            value={generationPrompt}
+            onChange={setGenerationPrompt}
+            disabled={loading}
+          />
 
           <div style={{ marginTop: '0.75rem' }}>
             <RagModeToggle
