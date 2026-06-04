@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { createHash } from 'node:crypto'
 import type { EvalCase, FaithfulnessResult, FaithfulnessClaim } from '../types'
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
@@ -66,6 +67,8 @@ function isExtractInput(x: unknown): x is ExtractInput {
   return Array.isArray(cast['claims']) && cast['claims'].every((c: unknown) => typeof c === 'string')
 }
 
+const VALID_VERDICTS = new Set(['supported', 'unsupported', 'partial'])
+
 function isVerdictInput(x: unknown): x is VerdictInput {
   if (typeof x !== 'object' || x === null) return false
   const cast = x as Record<string, unknown>
@@ -76,6 +79,7 @@ function isVerdictInput(x: unknown): x is VerdictInput {
     return (
       typeof vcast['claim'] === 'string' &&
       typeof vcast['verdict'] === 'string' &&
+      VALID_VERDICTS.has(vcast['verdict'] as string) &&
       typeof vcast['rationale'] === 'string'
     )
   })
@@ -101,8 +105,16 @@ ${output}
 Extract all atomic factual claims from this text. Return them as a flat list. If the text contains no factual claims (e.g. only questions or greetings), return an empty list.`
 }
 
-export function buildVerdictPrompt(claims: string[], groundingContext: string): string {
+const DEFAULT_VERDICT_RUBRIC = `For each claim assign:
+- "supported": directly and explicitly supported by the context
+- "unsupported": contradicted by the context, or not present at all
+- "partial": mentioned but with caveats, hedging, or incomplete coverage
+
+Evaluate strictly. A claim is NOT supported unless the context explicitly backs it.`
+
+export function buildVerdictPrompt(claims: string[], groundingContext: string, rubric?: string): string {
   const numberedClaims = claims.map((c, i) => `${i + 1}. ${c}`).join('\n')
+  const activeRubric = rubric ?? DEFAULT_VERDICT_RUBRIC
   return `You are a faithfulness judge. Evaluate each claim ONLY against the grounding context below. Do not use outside knowledge.
 
 GROUNDING CONTEXT (sole source of truth):
@@ -111,12 +123,12 @@ ${groundingContext}
 CLAIMS TO EVALUATE:
 ${numberedClaims}
 
-For each claim assign:
-- "supported": directly and explicitly supported by the context
-- "unsupported": contradicted by the context, or not present at all
-- "partial": mentioned but with caveats, hedging, or incomplete coverage
+${activeRubric}`
+}
 
-Evaluate strictly. A claim is NOT supported unless the context explicitly backs it.`
+function rubricRedactionMarker(rubric: string): string {
+  const hash = createHash('sha256').update(rubric).digest('hex').slice(0, 8)
+  return `[judge-rubric redacted sha256=${hash} len=${rubric.length}]`
 }
 
 async function tryExtract(
@@ -196,7 +208,8 @@ function normalizeVerdict(v: string): FaithfulnessClaim['verdict'] {
 
 export async function scoreFaithfulness(
   evalCase: EvalCase,
-  client?: Anthropic
+  client?: Anthropic,
+  judgePrompt?: string
 ): Promise<FaithfulnessResult> {
   const anthropicClient =
     client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -230,8 +243,16 @@ export async function scoreFaithfulness(
     }
   }
 
-  const verdictPrompt = buildVerdictPrompt(extractResult.claims, groundingContext)
-  const verdictResult = await verdictWithRetry(anthropicClient, verdictPrompt)
+  // Call (2): build the verdict prompt with the caller-supplied rubric (or the default).
+  // The rubric controls HOW each claim is judged; the fixed tool schema enforces the output shape.
+  const verdictPromptFull = buildVerdictPrompt(extractResult.claims, groundingContext, judgePrompt)
+  const verdictResult = await verdictWithRetry(anthropicClient, verdictPromptFull)
+
+  // Never persist user-authored rubric text in traces — store hash+length only.
+  const rubricMeta = judgePrompt ? rubricRedactionMarker(judgePrompt) : undefined
+  const verdictPromptLogged = rubricMeta
+    ? buildVerdictPrompt(extractResult.claims, groundingContext, rubricMeta)
+    : verdictPromptFull
 
   if (verdictResult === null) {
     return {
@@ -241,7 +262,8 @@ export async function scoreFaithfulness(
       errorMessage: 'Claim verdicting failed after retry — response unparseable',
       claims: [],
       extractPrompt,
-      verdictPrompt,
+      verdictPrompt: verdictPromptLogged,
+      ...(rubricMeta ? { verdictRubricMeta: rubricMeta } : {}),
     }
   }
 
@@ -260,6 +282,7 @@ export async function scoreFaithfulness(
     score,
     claims,
     extractPrompt,
-    verdictPrompt,
+    verdictPrompt: verdictPromptLogged,
+    ...(rubricMeta ? { verdictRubricMeta: rubricMeta } : {}),
   }
 }

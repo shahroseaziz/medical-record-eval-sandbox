@@ -55,8 +55,10 @@ export interface FaithfulnessResult extends BaseScoreResult {
   zeroClaimFlag?: boolean
   /** Prompt sent to Claude for claim extraction (call 1) */
   extractPrompt: string
-  /** Prompt sent to Claude for claim verdicting (call 2) */
+  /** Prompt sent to Claude for claim verdicting (call 2); rubric text is redacted when caller-supplied */
   verdictPrompt: string
+  /** Present when a caller-supplied verdict rubric was used; sha256=<hex8> len=<n> (rubric text is never persisted) */
+  verdictRubricMeta?: string
 }
 
 export interface ExtractionCompletenessResult extends BaseScoreResult {
