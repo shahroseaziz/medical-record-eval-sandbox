@@ -18,7 +18,8 @@
     "seed": "tsx scripts/seed.ts",
     "generate:baseline": "tsx scripts/generate-baseline.ts",
     "compute:kappa": "tsx scripts/compute-kappa.ts",
-    "validate:evals": "tsx scripts/validate-evals.ts"
+    "validate:evals": "tsx scripts/validate-evals.ts",
+    "eval:gate": "tsx evals/run_evals.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
