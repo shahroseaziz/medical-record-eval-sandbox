@@ -38,10 +38,14 @@ jobs:
     name: Health Check
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # For deployment_status events only run on success; pass-through for all others.
+    # For deployment_status events: only run on a SUCCESSFUL PRODUCTION deploy.
+    # Vercel fires deployment_status for Preview deploys too (every PR) — without the
+    # environment guard this prod health-check runs against an unmerged preview and
+    # red-X'es every PR. (Verified: Vercel stamps environment 'Production' | 'Preview'.)
     if: >
       github.event_name != 'deployment_status' ||
-      github.event.deployment_status.state == 'success'
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
 
     steps:
       - name: Checkout
@@ -121,7 +125,8 @@ jobs:
     if: >
       always() &&
       (github.event_name != 'deployment_status' ||
-       github.event.deployment_status.state == 'success') &&
+       (github.event.deployment_status.state == 'success' &&
+        github.event.deployment_status.environment == 'Production')) &&
       !inputs.skip_quality_report &&
       !inputs.dry_run
 
@@ -163,7 +168,8 @@ jobs:
     timeout-minutes: 5
     if: >
       github.event_name != 'deployment_status' ||
-      github.event.deployment_status.state == 'success'
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
 
     steps:
       - name: Checkout

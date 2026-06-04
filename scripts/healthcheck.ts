@@ -279,8 +279,12 @@ async function coldLoadCheck(prodUrl: string): Promise<HealthCheckAlert[]> {
 async function liveRunCheck(prodUrl: string): Promise<HealthCheckAlert[]> {
   const alerts: HealthCheckAlert[] = []
 
-  // Use a retrieve case — no large record payload; tests the full pipeline end-to-end
-  // including Voyage embedding, pgvector retrieval, Claude generation, and judge scoring.
+  // Use a retrieve case with a SMALL k — even retrieve mode can exceed the 12k
+  // free-tier token ceiling: this patient's 6 retrieved sections assemble to ~17k
+  // tokens, which the guardrail (correctly) rejects. k=3 keeps the assembled context
+  // comfortably under the ceiling (~8.6k) so this probe exercises a SUCCESSFUL
+  // free-tier run end-to-end (Voyage embed → pgvector retrieval → generation → judge),
+  // rather than tripping the guardrail it is not meant to test.
   const result = await runOne(
     prodUrl,
     {
@@ -288,7 +292,7 @@ async function liveRunCheck(prodUrl: string): Promise<HealthCheckAlert[]> {
       query:
         'Based ONLY on the clinical sections provided, describe the vital signs documented for this patient. Report only values explicitly present in the context.',
       mode: 'retrieve',
-      k: 6,
+      k: 3,
     },
     undefined // no x-byo-api-key → exercises the free-tier spending cap path
   )
