@@ -49,7 +49,7 @@ jobs:
         run: npx tsx scripts/ingest.ts --local src/lib/ccda/__fixtures__
 
       - name: Generate eval baseline (first run only)
-        if: hashFiles('evals/results/seed-baseline.json') == ''
+        if: github.event_name == 'push' && hashFiles('evals/results/seed-baseline.json') == ''
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
@@ -60,7 +60,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add evals/results/seed-baseline.json evals/results/overflow-demo.json
           git diff --staged --quiet || git commit -m "ci: pin eval baseline [skip ci]"
-          git push
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Validate eval artifacts
         run: npm run validate:evals

@@ -35,7 +35,7 @@ import type { EvalCase, FaithfulnessResult } from '../src/lib/eval/index.js'
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const EMBEDDING_MODEL = 'voyage-3.5'
-const K = 5
+const K = 6
 
 const GOLDEN_PATH = join(process.cwd(), 'evals/golden/seed-cases.json')
 const BASELINE_PATH = join(process.cwd(), 'evals/results/seed-baseline.json')

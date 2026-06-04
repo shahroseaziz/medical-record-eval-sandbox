@@ -5,6 +5,7 @@ import { PatientBrowser, type PatientRow } from './PatientBrowser'
 import { PromptEditor } from './PromptEditor'
 import { RagModeToggle } from './RagModeToggle'
 import { TransformInspector } from './TransformInspector'
+import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
 import { ApiKeyInput } from './ApiKeyInput'
 import { useRun } from '@/hooks/useRun'
@@ -38,7 +39,7 @@ export function Workspace() {
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
 
-  const { text, retrieval, evalResult, loading, error, run } = useRun()
+  const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
@@ -223,6 +224,13 @@ export function Workspace() {
           )}
         </div>
       </div>
+
+      {trace && (
+        <>
+          <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
+          <Inspector trace={trace} />
+        </>
+      )}
 
       <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
 
