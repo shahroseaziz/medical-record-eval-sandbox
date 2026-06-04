@@ -3,7 +3,8 @@
 export interface ScorecardAggregate {
   passRate: number
   judgeReferenceAgreement: number
-  judgeHumanKappa: number
+  judgeHumanKappa: number | null
+  interHumanKappa?: number | null
   n: number
 }
 
@@ -19,8 +20,12 @@ export interface EvalScorecardProps {
   cases: ScorecardCase[]
 }
 
+function fmtKappa(k: number | null | undefined): string {
+  return k == null ? 'N/A' : k.toFixed(2)
+}
+
 export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
-  const { passRate, judgeReferenceAgreement, judgeHumanKappa, n } = aggregate
+  const { passRate, judgeReferenceAgreement, judgeHumanKappa, interHumanKappa, n } = aggregate
 
   return (
     <section data-testid="eval-scorecard" style={{ fontSize: '0.9rem' }}>
@@ -45,8 +50,11 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
         <span data-testid="scorecard-judge-agreement">
           Judge-vs-reference: <strong>{(judgeReferenceAgreement * 100).toFixed(1)}%</strong>
         </span>
-        <span data-testid="scorecard-kappa">
-          Cohen&apos;s κ (judge-human): <strong>{judgeHumanKappa.toFixed(2)}</strong>
+        <span data-testid="scorecard-kappa-judge-human">
+          Cohen&apos;s κ (judge-human): <strong>{fmtKappa(judgeHumanKappa)}</strong>
+        </span>
+        <span data-testid="scorecard-kappa-inter-human">
+          Cohen&apos;s κ (inter-human): <strong>{fmtKappa(interHumanKappa)}</strong>
         </span>
         <span style={{ color: '#888', fontSize: '0.82rem' }}>n={n}</span>
       </div>

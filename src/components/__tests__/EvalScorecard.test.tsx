@@ -7,6 +7,7 @@ const AGG: ScorecardAggregate = {
   passRate: 0.75,
   judgeReferenceAgreement: 1.0,
   judgeHumanKappa: 0.883,
+  interHumanKappa: 0.72,
   n: 4,
 }
 
@@ -26,9 +27,24 @@ describe('EvalScorecard', () => {
     expect(screen.getByTestId('scorecard-judge-agreement')).toHaveTextContent('100.0%')
   })
 
-  it('renders Cohen kappa', () => {
+  it('renders judge-human Cohen kappa', () => {
     render(<EvalScorecard aggregate={AGG} cases={CASES} />)
-    expect(screen.getByTestId('scorecard-kappa')).toHaveTextContent('0.88')
+    expect(screen.getByTestId('scorecard-kappa-judge-human')).toHaveTextContent('0.88')
+  })
+
+  it('renders inter-human Cohen kappa', () => {
+    render(<EvalScorecard aggregate={AGG} cases={CASES} />)
+    expect(screen.getByTestId('scorecard-kappa-inter-human')).toHaveTextContent('0.72')
+  })
+
+  it('renders N/A for null judge-human kappa', () => {
+    render(<EvalScorecard aggregate={{ ...AGG, judgeHumanKappa: null }} cases={CASES} />)
+    expect(screen.getByTestId('scorecard-kappa-judge-human')).toHaveTextContent('N/A')
+  })
+
+  it('renders N/A for missing inter-human kappa', () => {
+    render(<EvalScorecard aggregate={{ ...AGG, interHumanKappa: undefined }} cases={CASES} />)
+    expect(screen.getByTestId('scorecard-kappa-inter-human')).toHaveTextContent('N/A')
   })
 
   it('renders per-case pass row with label, score, and verdict', () => {

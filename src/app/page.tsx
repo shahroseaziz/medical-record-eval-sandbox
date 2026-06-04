@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Workspace } from '@/components/Workspace'
 import { EvalScorecard } from '@/components/EvalScorecard'
 import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
+import { loadThresholds } from '@/lib/eval/thresholds'
 
 interface BaselineCase {
   caseId: string
@@ -14,6 +15,7 @@ interface BaselineFile {
     passRate: number | null
     judgeReferenceAgreement: number | null
     judgeHumanKappa?: number | null
+    interHumanKappa?: number | null
     n: number
   }
   cases: BaselineCase[]
@@ -26,10 +28,13 @@ function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[
     const agg = data.aggregate
     if (agg.passRate === null || agg.judgeReferenceAgreement === null) return null
 
+    const { faithfulness: passThreshold } = loadThresholds()
+
     const aggregate: ScorecardAggregate = {
       passRate: agg.passRate,
       judgeReferenceAgreement: agg.judgeReferenceAgreement,
-      judgeHumanKappa: agg.judgeHumanKappa ?? 0,
+      judgeHumanKappa: agg.judgeHumanKappa ?? null,
+      interHumanKappa: agg.interHumanKappa ?? null,
       n: agg.n,
     }
     const cases: ScorecardCase[] = (data.cases ?? [])
@@ -38,7 +43,7 @@ function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[
         id: c.caseId,
         label: c.caseId,
         faithfulnessScore: c.meanScore as number,
-        pass: (c.meanScore as number) >= 0.85,
+        pass: (c.meanScore as number) >= passThreshold,
       }))
 
     return { aggregate, cases }
