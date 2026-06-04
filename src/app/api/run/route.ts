@@ -180,17 +180,21 @@ export async function POST(req: NextRequest): Promise<Response> {
   return createDataStreamResponse({
     execute: async (dataStream) => {
       try {
-        // ── 5. Token limit pre-check (12k guardrail, fail closed) ─────────
-        // Uses Anthropic countTokens API; falls back to char/4 when the API
-        // is unavailable. Reject > 12k before making any generation call.
-        const inputCount = await countInputTokens(assembledPrompt, judgeClient)
-        if (inputCount > MAX_INPUT_TOKENS) {
-          if (refundSpend) { await refundSpend(); refundSpend = null }
-          dataStream.writeData({
-            type: 'error',
-            message: `Assembled context exceeds the ${MAX_INPUT_TOKENS}-token limit (${inputCount} tokens). Reduce record size or use retrieve mode.`,
-          })
-          return
+        // ── 5. Token limit pre-check (fail closed) ────────────────────────
+        // The 12k ceiling is the FREE-TIER infra control; a BYO key LIFTS it
+        // (only the 190k model-context guard below applies to BYO) — mirroring
+        // the !isByo spend-cap gating above. Uses the Anthropic countTokens
+        // API; falls back to char/4 when the API is unavailable.
+        if (!isByo) {
+          const inputCount = await countInputTokens(assembledPrompt, judgeClient)
+          if (inputCount > MAX_INPUT_TOKENS) {
+            if (refundSpend) { await refundSpend(); refundSpend = null }
+            dataStream.writeData({
+              type: 'error',
+              message: `Assembled context exceeds the ${MAX_INPUT_TOKENS}-token limit (${inputCount} tokens). Reduce record size or use retrieve mode.`,
+            })
+            return
+          }
         }
 
         // Fallback 190k pre-check via char estimate (extra safety net)

@@ -227,6 +227,7 @@ vi.mock('@anthropic-ai/sdk', () => {
     },
     APIError,
     __mockCreate: mockCreate,
+    __mockCountTokens: mockCountTokens,
   }
 })
 
@@ -456,6 +457,50 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
         }) as never
       )
 
+      expect(res.status).toBe(200)
+    })
+  })
+
+  describe('BYO lifts the 12k free-tier input ceiling', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mockCountTokens: any
+    beforeEach(async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockCountTokens = (await import('@anthropic-ai/sdk') as any).__mockCountTokens
+    })
+
+    it('FREE-TIER: still rejects a >12k context with the 12k limit error', async () => {
+      // >12k (trips the free-tier ceiling) but a tiny record (well under the 190k guard)
+      mockCountTokens.mockResolvedValueOnce({ input_tokens: 13_000 })
+      const res = await handler(
+        makeReq({ patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: 'small record' }) as never
+      )
+      const parts = parseDataStreamParts(await res.text())
+      const errorPart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'error'
+      )
+      expect(errorPart).toBeDefined()
+      expect(String((errorPart!.value as Record<string, unknown>).message)).toContain('12000-token limit')
+    })
+
+    it('BYO: skips the 12k ceiling entirely (the BYO key lifts it)', async () => {
+      mockCountTokens.mockClear()
+      const res = await handler(
+        makeReq(
+          { patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: 'small record' },
+          { 'X-Byo-Api-Key': 'sk-ant-test-byo-key' },
+        ) as never
+      )
+      // The 12k pre-check (and its token-count call) is gated on !isByo, so BYO never hits it.
+      expect(mockCountTokens).not.toHaveBeenCalled()
+      const parts = parseDataStreamParts(await res.text())
+      const ceilingError = parts.find(
+        (p) => p.type === 'data'
+          && (p.value as Record<string, unknown>)?.type === 'error'
+          && String((p.value as Record<string, unknown>).message).includes('12000-token limit')
+      )
+      expect(ceilingError).toBeUndefined()
       expect(res.status).toBe(200)
     })
   })
