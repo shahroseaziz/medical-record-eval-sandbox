@@ -208,8 +208,11 @@ describe('scoreFaithfulness', () => {
   })
 
   describe('error handling — judge terminal failure', () => {
-    it('extract: both attempts unparseable -> errored, score is null (not a number)', async () => {
+    it('extract: ALL attempts unparseable -> errored, score is null (not a number)', async () => {
+      // 4 unparseable extract responses = the full JUDGE_PARSE_ATTEMPTS budget
       const client = makeMockClient([
+        unparseableResponse(),
+        unparseableResponse(),
         unparseableResponse(),
         unparseableResponse(),
       ])
@@ -220,11 +223,16 @@ describe('scoreFaithfulness', () => {
       expect(result.score).toBeNull()
       expect(typeof result.score).not.toBe('number')
       expect(result.errorMessage).toMatch(/extract/i)
+      // exhausts the 4-attempt extract budget (and never reaches verdict)
+      const mockCreate = (client.messages.create as ReturnType<typeof vi.fn>)
+      expect(mockCreate.mock.calls).toHaveLength(4)
     })
 
-    it('verdict: both attempts unparseable -> errored, score is null (not a number)', async () => {
+    it('verdict: ALL attempts unparseable -> errored, score is null (not a number)', async () => {
       const client = makeMockClient([
         extractResponse(['Some claim.']),
+        unparseableResponse(),
+        unparseableResponse(),
         unparseableResponse(),
         unparseableResponse(),
       ])
@@ -235,6 +243,9 @@ describe('scoreFaithfulness', () => {
       expect(result.score).toBeNull()
       expect(typeof result.score).not.toBe('number')
       expect(result.errorMessage).toMatch(/verdict/i)
+      // 1 extract + 4 verdict attempts
+      const mockCreate = (client.messages.create as ReturnType<typeof vi.fn>)
+      expect(mockCreate.mock.calls).toHaveLength(5)
     })
 
     it('extract: first attempt fails, second succeeds -> returns valid score', async () => {

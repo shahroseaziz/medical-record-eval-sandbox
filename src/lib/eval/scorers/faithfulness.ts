@@ -161,22 +161,32 @@ async function tryVerdict(
   }
 }
 
+// A structured-output call occasionally returns an unparseable response even at
+// temperature 0; that is transient noise, not a regression. Retry a few times before
+// declaring a terminal judge error. 4 attempts makes a spurious failure rare enough
+// that it stops red-X'ing otherwise-correct PRs through the build-CI eval gate.
+const JUDGE_PARSE_ATTEMPTS = 4
+
 async function extractWithRetry(
   client: Anthropic,
   prompt: string
 ): Promise<ExtractInput | null> {
-  const first = await tryExtract(client, prompt)
-  if (first !== null) return first
-  return tryExtract(client, prompt)
+  for (let i = 0; i < JUDGE_PARSE_ATTEMPTS; i++) {
+    const r = await tryExtract(client, prompt)
+    if (r !== null) return r
+  }
+  return null
 }
 
 async function verdictWithRetry(
   client: Anthropic,
   prompt: string
 ): Promise<VerdictInput | null> {
-  const first = await tryVerdict(client, prompt)
-  if (first !== null) return first
-  return tryVerdict(client, prompt)
+  for (let i = 0; i < JUDGE_PARSE_ATTEMPTS; i++) {
+    const r = await tryVerdict(client, prompt)
+    if (r !== null) return r
+  }
+  return null
 }
 
 function normalizeVerdict(v: string): FaithfulnessClaim['verdict'] {

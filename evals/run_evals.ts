@@ -42,6 +42,7 @@ export const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
 export const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
 
 const FAITHFULNESS_GATE_RUNS = 3   // fewer than baseline's k for speed; tolerance band absorbs variance
+const JUDGE_ERROR_REATTEMPTS = 2   // re-score a transient judge-errored case (API up) before failing the gate
 const ANTHROPIC_PROBE_TIMEOUT_MS = 15_000
 
 const REPO_ROOT = join(import.meta.dirname, '..')
@@ -612,8 +613,13 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
     const freshResults: FaithfulnessResult[] = []
     let caseErrored = false
     for (let i = 0; i < FAITHFULNESS_GATE_RUNS; i++) {
-      const r = await scoreFaithfulness(evalCase, client)
-      if (r.errored) {
+      let r = await scoreFaithfulness(evalCase, client)
+      // A judge run can come back errored two ways: (a) the API is genuinely down
+      // (→ inconclusive), or (b) a transient unparseable-response flake while the API
+      // is up (noise, not a regression). Distinguish them, and for (b) re-score a few
+      // times before failing — so a transient hiccup no longer red-X's a correct PR.
+      let reattempt = 0
+      while (r.errored) {
         const recheck = opts.anthropicProber ?? (() => probeAnthropic(client))
         if (await recheck() === 'down') {
           log('  INCONCLUSIVE  Claude API went down during scoring')
@@ -623,9 +629,16 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
             inconclusiveReason: `Claude API failed mid-run (run ${i + 1}/${FAITHFULNESS_GATE_RUNS}): ${r.errorMessage ?? 'unknown error'}`,
           }
         }
+        if (reattempt >= JUDGE_ERROR_REATTEMPTS) break
+        reattempt++
+        log(`  retry  transient judge error on ${bc.caseId} (run ${i + 1}), re-scoring (${reattempt}/${JUDGE_ERROR_REATTEMPTS})`)
+        r = await scoreFaithfulness(evalCase, client)
+      }
+      if (r.errored) {
+        // Still errored after re-attempts AND the API is up → a genuine judge error.
         add({
           check: 'judge-error',
-          message: `Case ${bc.caseId}: judge returned errored result (run ${i + 1}): ${r.errorMessage ?? 'unknown'}`,
+          message: `Case ${bc.caseId}: judge errored after ${reattempt + 1} attempts (run ${i + 1}): ${r.errorMessage ?? 'unknown'}`,
         })
         caseErrored = true
         break
