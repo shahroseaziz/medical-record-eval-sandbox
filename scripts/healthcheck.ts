@@ -12,9 +12,11 @@
  *       Assert: RunTrace.tokens.estCostUsd > 0. Logs full response.
  *
  *   [3] Drift canary
- *       Re-run 6 seed cases (pre-authored outputs are skipped — they would generate
- *       fresh faithful outputs which are not comparable to the baseline fail score)
- *       through the deployed /api/run endpoint.
+ *       Re-run all 7 seed cases through the deployed /api/run endpoint.
+ *       Cases with preauthoredOutput are run for MODEL-DEPRECATION checks only —
+ *       score-band checks are skipped because the deployed endpoint produces fresh
+ *       faithful output that is not comparable to the intentionally low baseline
+ *       fail score stored for those cases.
  *       Alerts when:
  *         • live faithfulness score exits baseline meanScore ± max(0.05, 3·σ)
  *         • judgeModel or embeddingModel in the trace differs from constants
@@ -341,13 +343,11 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
   const baselineMap = new Map<string, BaselineCase>(baseline.cases.map((c) => [c.caseId, c]))
 
   for (const sc of seedCases) {
-    // Skip pre-authored cases: the deployed endpoint generates fresh output, which
-    // would be faithful (high score), triggering a false-positive band alert against
-    // the intentionally low baseline score for this designed-fail case.
-    if (sc.preauthoredOutput) {
-      log(`\n[drift] SKIP ${sc.id} (preauthored output — not comparable via deployed endpoint)`)
-      continue
-    }
+    // preauthoredOutput cases are run only for MODEL-DEPRECATION checks.
+    // Score-band and faithfulness checks are skipped: the deployed endpoint generates
+    // fresh output for these designed-fail cases, which would be faithfully scored high
+    // and produce false-positive band alerts against the intentionally low baseline.
+    const preauthored = Boolean(sc.preauthoredOutput)
 
     const bc = baselineMap.get(sc.id)
     if (!bc) {
@@ -355,7 +355,7 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
       continue
     }
 
-    log(`\n[drift] Running ${sc.id} (mode=${sc.ragMode}, scorers=${sc.scorers.join(',')})`)
+    log(`\n[drift] Running ${sc.id} (mode=${sc.ragMode}, scorers=${sc.scorers.join(',')})${preauthored ? ' [model-deprecation only]' : ''}`)
 
     const requestBody: Record<string, unknown> = {
       patientId: sc.patientId,
@@ -382,6 +382,7 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
     // If Anthropic or Voyage deprecates a model and silently redirects to a
     // successor, scoring behaviour changes without any code change. Detect this
     // by comparing trace model names against pinned constants.
+    // Runs for ALL cases including preauthored ones.
     const judgeModel = result.trace.judgeModel as string | undefined
     const embeddingModel = result.trace.embeddingModel as string | undefined
 
@@ -404,6 +405,12 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
           `Case ${sc.id}: embeddingModel="${embeddingModel}" ≠ expected="${EXPECTED_EMBEDDING_MODEL}" — ` +
           'possible model deprecation; retrieval quality may have changed',
       })
+    }
+
+    // Skip score-based checks for preauthored cases (false-positive avoidance).
+    if (preauthored) {
+      ok(`${sc.id}: model-deprecation checks done (score-band skipped — preauthored case)`)
+      continue
     }
 
     // ── Faithfulness score drift ────────────────────────────────────────────
@@ -541,7 +548,7 @@ async function main(): Promise<void> {
       })
       alert('ANTHROPIC_API_KEY required for drift canary')
     } else {
-      log('\n[3] Drift canary (re-running 7 seed cases, preauthored skipped)')
+      log('\n[3] Drift canary (re-running 7 seed cases; preauthored case: model-deprecation only)')
       const driftAlerts = await driftCanary(prodUrl, byoKey)
       allAlerts.push(...driftAlerts)
       if (driftAlerts.length === 0) ok('All drift checks passed — no score band or model config drift detected')

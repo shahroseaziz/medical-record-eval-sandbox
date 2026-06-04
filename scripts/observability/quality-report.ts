@@ -151,6 +151,10 @@ async function computeQualityReport(client: Client, windowDays: number): Promise
   const unexpectedEmbeddingModels = new Set<string>()
 
   for (const t of traces) {
+    // Guard against NULL JSONB rows — a NULL `trace` column would make t itself null,
+    // causing t.judgeModel to throw TypeError before the property-level guards fire.
+    if (t == null) continue
+
     // MODEL-DEPRECATION check
     if (t.judgeModel && t.judgeModel !== EXPECTED_JUDGE_MODEL) {
       unexpectedJudgeModels.add(t.judgeModel)
@@ -247,7 +251,13 @@ async function computeQualityReport(client: Client, windowDays: number): Promise
   const faithfulnessP50 = percentile(validScores, 0.5)
   const faithfulnessP90 = percentile(validScores, 0.9)
 
-  if (faithfulnessP50 !== null && faithfulnessP50 < THRESHOLDS.faithfulnessP50Min) {
+  // Guard on validScores.length (same noise-suppression as rate metrics) so a single
+  // below-threshold run does not trigger a p50/p90 alert.
+  if (
+    validScores.length >= THRESHOLDS.minTracesForRates &&
+    faithfulnessP50 !== null &&
+    faithfulnessP50 < THRESHOLDS.faithfulnessP50Min
+  ) {
     alerts.push({
       metric: 'faithfulness-p50',
       value: fmt(faithfulnessP50),
@@ -257,7 +267,11 @@ async function computeQualityReport(client: Client, windowDays: number): Promise
         '— median faithfulness below floor; check for prompt regression or model change',
     })
   }
-  if (faithfulnessP90 !== null && faithfulnessP90 < THRESHOLDS.faithfulnessP90Min) {
+  if (
+    validScores.length >= THRESHOLDS.minTracesForRates &&
+    faithfulnessP90 !== null &&
+    faithfulnessP90 < THRESHOLDS.faithfulnessP90Min
+  ) {
     alerts.push({
       metric: 'faithfulness-p90',
       value: fmt(faithfulnessP90),
