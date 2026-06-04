@@ -6,8 +6,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { scoreFaithfulness } from '@/lib/eval/index'
-import type { EvalCase } from '@/lib/eval/index'
+import type { EvalCase, FaithfulnessResult } from '@/lib/eval/index'
 import { retrieve } from '@/lib/rag/index'
+import { withClient } from '@/lib/db/index'
+import { estimateTokens } from '@/lib/tokens'
 
 // 2 judge calls (extract + verdict): ~3.5k input + 1k output each @ Haiku pricing
 const JUDGE_SCORE_ESTIMATE_MICRO_USD = Math.ceil(7_000 * 0.8 + 2_000 * 4.0) // 13_600 µ$
@@ -16,6 +18,11 @@ const JUDGE_SCORE_ESTIMATE_MICRO_USD = Math.ceil(7_000 * 0.8 + 2_000 * 4.0) // 1
 // Extract produces a flat claim list; verdict produces one verdict block per claim.
 const SCORE_EXTRACT_MAX_TOKENS = 1_024
 const SCORE_VERDICT_MAX_TOKENS = 2_048
+
+// Haiku 4-5 pricing (USD per token) — used for trace cost estimation.
+const JUDGE_MODEL = 'claude-haiku-4-5-20251001'
+const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000   // $0.80/1M input tokens
+const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000   // $4.00/1M output tokens
 
 // ── Request discriminated union ──────────────────────────────────────────────
 
@@ -67,6 +74,56 @@ interface ScoreResponse {
   /** Present when grounding was re-fetched; warns that it may differ from the original capture. */
   groundingNote?: string
   verdictRubricMeta?: string
+}
+
+// ── Trace shape (persisted to traces table) ──────────────────────────────────
+
+interface ScoreTrace {
+  caseId: string
+  groundingSource: 'captured' | 'refetch'
+  groundingNote?: string
+  /** Assembled grounding text used for scoring. */
+  grounding: string
+  /** The model output that was scored. */
+  capturedOutput: string
+  scorerResult: FaithfulnessResult
+  judgeModel: string
+  isByo: boolean
+  tokens: {
+    /** Char/4 estimate — actual usage unavailable from scorer return value. */
+    extractInputEst: number
+    extractOutputEst: number
+    verdictInputEst: number
+    verdictOutputEst: number
+    estCostUsd: number
+  }
+  claimCount: number
+  score: number | null
+  errored: boolean
+}
+
+// ── Abort helper ─────────────────────────────────────────────────────────────
+
+// Races the given promise against the request AbortSignal. When the signal
+// fires (client disconnect) the race rejects with AbortError, which falls into
+// the outer catch block and triggers refundSpend(). The underlying calls
+// (retrieve / scoreFaithfulness) are not directly cancelled — they will
+// settle on their own — but we stop waiting for them and refund immediately.
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('Request aborted', 'AbortError'))
+        return
+      }
+      signal.addEventListener(
+        'abort',
+        () => reject(new DOMException('Request aborted', 'AbortError')),
+        { once: true },
+      )
+    }),
+  ])
 }
 
 // ── Validation helpers ───────────────────────────────────────────────────────
@@ -185,8 +242,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   // ── 3. Book free-tier spend — BYO callers are spend-cap-exempt ────────────
-  // Fix: capture the refund closure so it can be called on abort/error.
-  // The stub discarded the return value of bookSpend() — this is the repair.
+  // Capture the refund closure so it can be called on abort or error.
   let refundSpend: (() => Promise<void>) | null = null
   if (!isByo) {
     try {
@@ -205,14 +261,19 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
   }
 
-  try {
-    // ── 4. Build EvalCase (resolve grounding) ─────────────────────────────
-    let evalCase: EvalCase
-    let groundingSource: 'captured' | 'refetch'
-    let groundingNote: string | undefined
+  // ── 4. Build EvalCase + score ─────────────────────────────────────────────
+  // abortable() races each async step against req.signal so that a client
+  // disconnect causes the catch block to run and refundSpend() to be called.
+  let evalCase: EvalCase
+  let groundingSource: 'captured' | 'refetch'
+  let groundingNote: string | undefined
+  let groundingText: string
+  let faithfulnessResult: FaithfulnessResult
 
+  try {
     if (parsedReq.source === 'captured') {
       groundingSource = 'captured'
+      groundingText = parsedReq.capturedGrounding
       // Treat the assembled grounding string as a "record" in stuff mode so
       // getGrounding() in the scorer returns it verbatim as the sole truth source.
       evalCase = {
@@ -229,11 +290,13 @@ export async function POST(req: NextRequest): Promise<Response> {
       groundingNote = 'grounding re-fetched, may differ from capture'
 
       if (parsedReq.ragMode === 'retrieve') {
-        const retrieveResult = await retrieve(
-          parsedReq.patientId,
-          parsedReq.query!,
-          parsedReq.k ?? 6,
+        const retrieveResult = await abortable(
+          retrieve(parsedReq.patientId, parsedReq.query!, parsedReq.k ?? 6),
+          req.signal,
         )
+        groundingText = retrieveResult.chunks
+          .map((c) => `[${c.section}]\n${c.text}`)
+          .join('\n\n---\n\n')
         evalCase = {
           id: `score-${crypto.randomUUID().slice(0, 8)}`,
           patientId: parsedReq.patientId,
@@ -247,6 +310,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           k: parsedReq.k ?? 6,
         }
       } else {
+        groundingText = parsedReq.record!
         evalCase = {
           id: `score-${crypto.randomUUID().slice(0, 8)}`,
           patientId: parsedReq.patientId,
@@ -261,38 +325,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     // ── 5. Score (fixed extraction → user-rubric verdict) ─────────────────
     // No generation call. Per-call output token caps guard both judge calls.
     const judgeClient = new Anthropic({ apiKey: judgeKey })
-    const faithfulnessResult = await scoreFaithfulness(
-      evalCase,
-      judgeClient,
-      parsedReq.userVerdictRubric,
-      { extractMaxTokens: SCORE_EXTRACT_MAX_TOKENS, verdictMaxTokens: SCORE_VERDICT_MAX_TOKENS },
+    faithfulnessResult = await abortable(
+      scoreFaithfulness(evalCase, judgeClient, parsedReq.userVerdictRubric, {
+        extractMaxTokens: SCORE_EXTRACT_MAX_TOKENS,
+        verdictMaxTokens: SCORE_VERDICT_MAX_TOKENS,
+      }),
+      req.signal,
     )
-
-    // ── 6. Build response ─────────────────────────────────────────────────
-    const claims: ClaimBreakdown[] = faithfulnessResult.claims.map((c) => ({
-      claim: c.claim,
-      verdict: c.verdict,
-      reason: c.rationale,
-    }))
-
-    const scoreResponse: ScoreResponse = {
-      score: faithfulnessResult.score,
-      ...(faithfulnessResult.errored
-        ? { errored: true, errorMessage: faithfulnessResult.errorMessage }
-        : {}),
-      ...(faithfulnessResult.zeroClaimFlag ? { zeroClaimFlag: true } : {}),
-      claims,
-      groundingSource,
-      ...(groundingNote ? { groundingNote } : {}),
-      ...(faithfulnessResult.verdictRubricMeta
-        ? { verdictRubricMeta: faithfulnessResult.verdictRubricMeta }
-        : {}),
-    }
-
-    // Spend is consumed on success — refundSpend is intentionally NOT called here.
-    return Response.json(scoreResponse, { status: 200, headers: rlResult.headers })
   } catch (e) {
-    // Refund booked spend on any abort or error so the cap is not inflated.
+    // Abort or error before scoring completes: refund the booked spend.
     if (refundSpend) {
       await refundSpend()
       refundSpend = null
@@ -300,4 +341,73 @@ export async function POST(req: NextRequest): Promise<Response> {
     const msg = e instanceof Error ? e.message : 'An unexpected error occurred.'
     return Response.json({ error: msg }, { status: 503 })
   }
+
+  // Scoring completed — spend is consumed (no refund). Build response.
+
+  // ── 6. Build response ─────────────────────────────────────────────────────
+  const claims: ClaimBreakdown[] = faithfulnessResult.claims.map((c) => ({
+    claim: c.claim,
+    verdict: c.verdict,
+    reason: c.rationale,
+  }))
+
+  const scoreResponse: ScoreResponse = {
+    score: faithfulnessResult.score,
+    ...(faithfulnessResult.errored
+      ? { errored: true, errorMessage: faithfulnessResult.errorMessage }
+      : {}),
+    ...(faithfulnessResult.zeroClaimFlag ? { zeroClaimFlag: true } : {}),
+    claims,
+    groundingSource,
+    ...(groundingNote ? { groundingNote } : {}),
+    ...(faithfulnessResult.verdictRubricMeta
+      ? { verdictRubricMeta: faithfulnessResult.verdictRubricMeta }
+      : {}),
+  }
+
+  // ── 7. Persist trace (best-effort, non-fatal) ─────────────────────────────
+  // Token counts are char/4 estimates — scoreFaithfulness does not expose
+  // per-call usage from the SDK response, so we estimate from prompt lengths.
+  try {
+    const extractInputEst = estimateTokens(faithfulnessResult.extractPrompt)
+    const claimText = faithfulnessResult.claims.map((c) => c.claim).join(' ')
+    const extractOutputEst = estimateTokens(claimText)
+    const verdictInputEst = estimateTokens(faithfulnessResult.verdictPrompt)
+    const verdictText = faithfulnessResult.claims
+      .map((c) => `${c.verdict} ${c.rationale}`)
+      .join(' ')
+    const verdictOutputEst = estimateTokens(verdictText)
+    const estCostUsd =
+      (extractInputEst + verdictInputEst) * INPUT_COST_PER_TOKEN +
+      (extractOutputEst + verdictOutputEst) * OUTPUT_COST_PER_TOKEN
+
+    const trace: ScoreTrace = {
+      caseId: evalCase.id,
+      groundingSource,
+      ...(groundingNote ? { groundingNote } : {}),
+      grounding: groundingText,
+      capturedOutput: parsedReq.capturedOutput,
+      scorerResult: faithfulnessResult,
+      judgeModel: JUDGE_MODEL,
+      isByo,
+      tokens: {
+        extractInputEst,
+        extractOutputEst,
+        verdictInputEst,
+        verdictOutputEst,
+        estCostUsd,
+      },
+      claimCount: faithfulnessResult.claims.length,
+      score: faithfulnessResult.score,
+      errored: faithfulnessResult.errored ?? false,
+    }
+
+    await withClient(async (client) => {
+      await client.query('INSERT INTO traces (trace) VALUES ($1)', [JSON.stringify(trace)])
+    })
+  } catch {
+    // Non-fatal: scoring completed, response is correct. Log nothing (no PHI in stack traces).
+  }
+
+  return Response.json(scoreResponse, { status: 200, headers: rlResult.headers })
 }
