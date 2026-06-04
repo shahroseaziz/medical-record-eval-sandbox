@@ -2,11 +2,17 @@ name: Production Health Check
 
 # ── Triggers ──────────────────────────────────────────────────────────────────
 # weekly:      Monday 09:00 UTC — catch silent regressions between deploys
-# post-deploy: trigger manually after a Vercel deployment with workflow_dispatch
-#              (or call via GH API: gh workflow run healthcheck.yml)
+# post-deploy: deployment_status fires when Vercel updates a GitHub deployment
+#              status to "success" (requires Vercel ↔ GitHub integration to be
+#              connected in the Vercel project settings — no extra config needed
+#              once the integration is enabled).
 on:
   schedule:
     - cron: '0 9 * * 1'  # Weekly, Monday 09:00 UTC
+
+  # Fires automatically after every Vercel deployment that updates GitHub
+  # deployment status.  The job guard below skips non-success statuses.
+  deployment_status: {}
 
   workflow_dispatch:
     inputs:
@@ -32,6 +38,10 @@ jobs:
     name: Health Check
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # For deployment_status events only run on success; pass-through for all others.
+    if: >
+      github.event_name != 'deployment_status' ||
+      github.event.deployment_status.state == 'success'
 
     steps:
       - name: Checkout
@@ -91,7 +101,6 @@ jobs:
         env:
           PROD_URL: ${{ secrets.PROD_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
           SKIP_LIVE: '1'
           SKIP_DRIFT: '0'
         run: |
@@ -107,8 +116,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: healthcheck
-    # Run even when healthcheck fails so we get the quality report regardless
-    if: ${{ always() && !inputs.skip_quality_report && !inputs.dry_run }}
+    # Run even when healthcheck fails so we get the quality report regardless,
+    # but skip non-success deployment_status events to avoid DB queries on noise.
+    if: >
+      always() &&
+      (github.event_name != 'deployment_status' ||
+       github.event.deployment_status.state == 'success') &&
+      !inputs.skip_quality_report &&
+      !inputs.dry_run
 
     steps:
       - name: Checkout
@@ -141,11 +156,14 @@ jobs:
 
   # ── Job 3: Canary band self-test ─────────────────────────────────────────────
   # Verifies that an injected band-exceeding score fires the alert.
-  # Runs on every trigger to catch regressions in the monitoring logic itself.
+  # Runs on meaningful triggers; skipped for non-success deployment_status events.
   canary-self-test:
     name: Canary Band Self-Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: >
+      github.event_name != 'deployment_status' ||
+      github.event.deployment_status.state == 'success'
 
     steps:
       - name: Checkout
