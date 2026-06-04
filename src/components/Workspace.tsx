@@ -41,6 +41,10 @@ export function Workspace() {
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
   const [genPrompt, setGenPrompt] = useState('')
+  // Snapshot the patient id and gen-prompt at the moment run() is invoked so
+  // GoldenSetBuilder always sees the values that produced the last output.
+  const [runPatientId, setRunPatientId] = useState<string | null>(null)
+  const [runGenPrompt, setRunGenPrompt] = useState('')
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
@@ -55,6 +59,8 @@ export function Workspace() {
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
+    setRunPatientId(selectedPatient.id)
+    setRunGenPrompt(genPrompt)
     run({
       patientId: selectedPatient.id,
       query,
@@ -68,6 +74,8 @@ export function Workspace() {
     setQuery(uc.query)
     setMode(uc.mode)
     if (uc.record) setRecord(uc.record)
+    setRunPatientId(uc.patientId)
+    setRunGenPrompt(genPrompt)
     run({
       patientId: uc.patientId,
       query: uc.query,
@@ -81,6 +89,10 @@ export function Workspace() {
     setQuery(uc.taskPrompt)
     setMode(uc.ragMode)
     if (uc.capturedGrounding.record) setRecord(uc.capturedGrounding.record)
+    // Fix: snapshot both patient and gen-prompt at run-time so GoldenSetBuilder
+    // can capture against the correct patient and provenance hash.
+    setRunPatientId(uc.patientId)
+    setRunGenPrompt(genPrompt)
     run({
       patientId: uc.patientId,
       query: uc.taskPrompt,
@@ -314,11 +326,13 @@ export function Workspace() {
       <GoldenSetBuilder
         runOutput={text}
         retrieval={retrieval}
-        currentPatientId={selectedPatient?.id ?? null}
+        currentPatientId={runPatientId}
         currentQuery={query}
         currentMode={mode}
         currentRecord={record}
         currentGenPrompt={genPrompt}
+        runGenPrompt={runGenPrompt}
+        loading={loading}
         onRunCase={handleRunGoldenCase}
       />
     </div>

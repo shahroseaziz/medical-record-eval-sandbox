@@ -42,6 +42,10 @@ interface Props {
   currentMode: RunMode
   currentRecord: string
   currentGenPrompt: string
+  /** Gen prompt snapshotted at run() invocation — used for provenance hash. */
+  runGenPrompt: string
+  /** True while a run is in progress; blocks mid-stream captures. */
+  loading: boolean
   onRunCase: (uc: UserCaseV2) => void
 }
 
@@ -53,6 +57,8 @@ export function GoldenSetBuilder({
   currentMode,
   currentRecord,
   currentGenPrompt,
+  runGenPrompt,
+  loading,
   onRunCase,
 }: Props) {
   const [cases, setCases] = useState<UserCaseV2[]>([])
@@ -100,7 +106,7 @@ export function GoldenSetBuilder({
       intentLabel,
       designedFailReason: intentLabel === 'fail' && failReason ? failReason : undefined,
       provenance: {
-        genPromptHash: genPromptHash(currentGenPrompt),
+        genPromptHash: genPromptHash(runGenPrompt),
         patientId: currentPatientId,
         ragMode: currentMode,
         k: retrieval?.chunks.length,
@@ -119,7 +125,7 @@ export function GoldenSetBuilder({
     refresh()
   }
 
-  const canCapture = Boolean(runOutput && currentPatientId)
+  const canCapture = Boolean(runOutput && currentPatientId && !loading)
   const outOfScope = intentLabel === 'fail' && isOutOfScopeForGrounding(failReason)
 
   return (

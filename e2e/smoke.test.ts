@@ -309,13 +309,21 @@ test.describe('golden set builder: capture, label, provenance', () => {
   })
 
   test('STALE flag appears when gen prompt changes after capture', async ({ page }) => {
-    await runQuery(page)
+    // Browse and select a patient, fill the prompt
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill('What medications?')
 
-    // Open gen prompt editor and set a custom prompt
+    // Set the gen prompt BEFORE running so the run captures the right hash
     await page.locator('details:has(textarea[data-testid="gen-prompt-input"])').click()
     await page.getByTestId('gen-prompt-input').fill('You are a medical assistant v1.')
 
-    // Capture a case (provenance hashes the current gen prompt)
+    // Run — provenance will hash the gen prompt active at this moment (v1)
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toContainText('Lisinopril', { timeout: 5000 })
+
+    // Capture a case (provenance records hash of v1)
     await page.getByTestId('capture-from-run-btn').click()
     await page.getByTestId('save-capture-btn').click()
 
