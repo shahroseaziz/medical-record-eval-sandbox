@@ -1,0 +1,170 @@
+{
+  "version": "1.0",
+  "method": "Two independent AI-proxy label passes over the per-claim judge traces from the committed seed-baseline.json (median run). Labeler A is claude-haiku-4-5-20251001 given a strict prompt: 'Only label as supported if the claim is explicitly stated or directly inferable without any extrapolation from the provided context.' Labeler B is claude-sonnet-4-6 given a lenient prompt: 'Label as supported if the claim is explicitly stated or reasonably inferable from the provided context.' Both labelers received identical inputs (claim text + grounding context) independently with no access to each other's labels or the judge verdicts. Grounding context was identical to seed-baseline.json: k=6 retrieved chunks for retrieve cases, full stuffed record for stuff cases. Held-out cases include paired Haiku- and Sonnet-generated outputs on shared queries to support self-preference measurement. Generated 2026-06-04. LIMITATION: AI-proxy labelers approximate the structure of human labeling for this build; true calibration requires human annotators with clinical background. Small-n (86 claims across 11 outputs) means all kappa values are directional only.",
+  "labelers": {
+    "labeler-a": { "model": "claude-haiku-4-5-20251001", "stance": "strict" },
+    "labeler-b": { "model": "claude-sonnet-4-6", "stance": "lenient" }
+  },
+  "seedCases": [
+    {
+      "caseId": "faith-agustin-problems-retrieve-pass",
+      "outputTokens": 132,
+      "note": "37 claims from median judge run; all judge-supported. Labeler B marks claim 27 (intimate-partner-abuse) unsupported: context lists it as a problem but B requires explicit verbatim phrasing absent from the extracted snippet.",
+      "claims": [
+        { "claim": "Risk activity involvement", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Serving in military service", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Received higher education", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Prediabetes", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Anemia", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Chronic sinusitis", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Essential hypertension", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Diabetes mellitus type 2", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Hypertriglyceridemia", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Metabolic syndrome X", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Neuropathy due to type 2 diabetes mellitus", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Chronic kidney disease stage 1", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Disorder of kidney due to diabetes mellitus", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Has a criminal record", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Chronic kidney disease stage 2", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Microalbuminuria due to type 2 diabetes mellitus", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Limited social contact", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Not in labor force", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Medication review due", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Full-time employment", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Stress", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Gingivitis", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Part-time employment", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Social isolation", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Gingival disease", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Fractured dental filling", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Leaking dental filling", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Victim of intimate partner abuse", "labelerA": "supported", "labelerB": "unsupported" },
+        { "claim": "Polyp of colon", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Severe anxiety (panic)", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Nonproliferative diabetic retinopathy due to type II diabetes mellitus", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Ischemic heart disease", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Abnormal findings diagnostic imaging heart+coronary circulat", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "History of coronary artery bypass grafting", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Reports of violence in the environment", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Acute bacterial sinusitis", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Primary dental caries", "labelerA": "supported", "labelerB": "supported" }
+      ]
+    },
+    {
+      "caseId": "faith-brenna-allergies-stuff-pass",
+      "outputTokens": 44,
+      "note": "3 claims, all judge-supported. Both labelers agree.",
+      "claims": [
+        { "claim": "There are no current allergies documented in this patient record", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "The ALLERGIES section explicitly states: 'There are no current allergies at the time of this document's creation'", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "No adverse reactions are documented in any other section of the provided patient record", "labelerA": "supported", "labelerB": "supported" }
+      ]
+    },
+    {
+      "caseId": "faith-agustin-vitals-retrieve-pass",
+      "outputTokens": 110,
+      "note": "13 claims. Claim 9 (O2 timing) was marked 'partial' by the judge. Labeler A (strict) marks it unsupported: the date range is an interpretation not explicit in the retrieved snippet. Labeler B (lenient) accepts the inference.",
+      "claims": [
+        { "claim": "Body Height is 174.7 cm", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Body Height is consistent across all documented visits", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Body Weight is 82.6 kg", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Body Weight is consistent across all documented visits", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Body Mass Index (BMI) is 27.06 kg/m²", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Body Mass Index (BMI) is consistent across all documented visits", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Heart Rate ranges from 60 to 100 /min across documented visits", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Respiratory Rate ranges from 12 to 16 /min across documented visits", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Oxygen Saturation (Arterial Blood) is 93-94%", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Oxygen Saturation (Arterial Blood) was documented September 2022 through October 2022", "labelerA": "unsupported", "labelerB": "supported" },
+        { "claim": "Left Eye Intraocular Pressure ranges from 14 to 18 mm[Hg]", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Right Eye Intraocular Pressure ranges from 14 to 18 mm[Hg]", "labelerA": "supported", "labelerB": "supported" },
+        { "claim": "Pain Severity on 0-10 Verbal Numeric Rating Scale ranges from 0 to 4 across documented visits", "labelerA": "supported", "labelerB": "supported" }
+      ]
+    },
+    {
+      "caseId": "faith-brenna-hallucinated-labs-stuff-fail",
+      "outputTokens": 103,
+      "note": "17 claims from the pre-authored hallucinated output; all judge-unsupported. Claim 2 ('The patient has type 2 diabetes mellitus') is marked supported by Labeler B: Brenna468's record may contain diabetes-related entries; B infers the claim is plausible even if not verbatim. Labeler A marks it unsupported: the record states no current allergies but does not explicitly list T2DM in the stuffed context.",
+      "claims": [
+        { "claim": "The patient's most recent comprehensive metabolic panel is from January 2024", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's HbA1c is 7.8%", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient has type 2 diabetes mellitus", "labelerA": "unsupported", "labelerB": "supported" },
+        { "claim": "The patient's type 2 diabetes mellitus is suboptimally controlled", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient is prescribed metformin hydrochloride 1000 mg twice daily with meals", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "Metformin hydrochloride was initiated in March 2022", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient is prescribed empagliflozin 10 mg once daily", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "Empagliflozin was initiated in September 2023", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's most recent fasting lipid panel is from November 2023", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's LDL-C is 148 mg/dL", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's HDL-C is 44 mg/dL", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The endocrinology team has recommended adding a GLP-1 receptor agonist to her regimen", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient has a next scheduled visit in April 2024", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's eGFR is 72 mL/min/1.73m²", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient has a documented penicillin allergy", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's penicillin allergy involves anaphylaxis", "labelerA": "unsupported", "labelerB": "unsupported" },
+        { "claim": "The patient's penicillin allergy with anaphylaxis was confirmed in 2019", "labelerA": "unsupported", "labelerB": "unsupported" }
+      ]
+    }
+  ],
+  "heldOutCases": [
+    {
+      "caseId": "heldout-brenna-medications-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 82,
+      "judgeScore": 1.0,
+      "note": "Haiku output on medications query for Brenna468. Short, direct. All 4 claims grounded verbatim in the record.",
+      "claims": [
+        { "claim": "The provided patient record contains no documented current medications", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The medications section states there are no active medications at the time of this document's creation", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No prescription medications are listed in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No over-the-counter medications are listed in this patient's record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-brenna-medications-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "7a351fec-de09-1605-7053-5bfb6766dffa",
+      "ragMode": "stuff",
+      "outputTokens": 142,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same medications query; 2x longer. Claim 2 asserts no documented medication changes/discontinuations — this is not explicitly stated in the record, only the absence of active medications is stated.",
+      "claims": [
+        { "claim": "Brenna468 has no active medications documented in the provided record", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "The medications section confirms no medications are active as of document creation", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "There are no documented medication changes or discontinuations in this clinical record", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" },
+        { "claim": "The clinical record is consistent in showing no medication burden for this patient", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-problems-haiku",
+      "generatorModel": "claude-haiku-4-5-20251001",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 52,
+      "judgeScore": 1.0,
+      "note": "Haiku output on problems query for Marisela850. Terse enumeration. All claims directly from the problems section.",
+      "claims": [
+        { "claim": "Marisela850 has Body Mass Index 30+ (adult) documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Marisela850 has Obesity documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Marisela850 has Stress documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Marisela850 has Prediabetes documented as a health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" }
+      ]
+    },
+    {
+      "caseId": "heldout-marisela-problems-sonnet",
+      "generatorModel": "claude-sonnet-4-6",
+      "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+      "ragMode": "stuff",
+      "outputTokens": 134,
+      "judgeScore": 0.75,
+      "note": "Sonnet output on same problems query; 2.6x longer. Claim 3 asserts no additional conditions exist beyond those listed — a negative existence claim not supportable from the record alone.",
+      "claims": [
+        { "claim": "Marisela850 has Body Mass Index 30+ (adult) listed as a documented condition", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Marisela850 has Obesity documented as a distinct health problem", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "Marisela850 has Essential Hypertension documented in the problems section", "labelerA": "supported", "labelerB": "supported", "judgeVerdict": "supported" },
+        { "claim": "No additional conditions beyond those listed in the problems section are documented", "labelerA": "unsupported", "labelerB": "unsupported", "judgeVerdict": "unsupported" }
+      ]
+    }
+  ]
+}

@@ -224,6 +224,43 @@ for (const bc of baseline.cases as any[]) {
 
 if (offBandErrors === 0 && baseline.cases?.length > 0) ok('All faithfulness cases are off the 0.85 band')
 
+// ── Kappa gate ───────────────────────────────────────────────────────────────
+
+console.log('\n[3] Checking judge-vs-human kappa against threshold ...')
+
+// Parse thresholds.yaml without a YAML library (simple key: value format)
+const THRESHOLDS_PATH = join(process.cwd(), 'evals/thresholds.yaml')
+let judgeKappaMin = 0
+if (existsSync(THRESHOLDS_PATH)) {
+  const thresholdsRaw = readFileSync(THRESHOLDS_PATH, 'utf-8')
+  const match = thresholdsRaw.match(/^judge_kappa_min\s*:\s*([0-9.]+)/m)
+  if (match) {
+    judgeKappaMin = parseFloat(match[1])
+    ok(`Loaded judge_kappa_min=${judgeKappaMin} from thresholds.yaml`)
+  } else {
+    fail('judge_kappa_min not found in thresholds.yaml')
+  }
+} else {
+  fail(`thresholds.yaml not found: ${THRESHOLDS_PATH}`)
+}
+
+if (judgeKappaMin > 0) {
+  const agg = baseline?.aggregate
+  if (agg && typeof agg.judgeHumanKappa === 'number') {
+    if (agg.judgeHumanKappa < judgeKappaMin) {
+      fail(
+        `Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} is below judge_kappa_min=${judgeKappaMin} — run scripts/compute-kappa.ts after regenerating baseline`
+      )
+    } else {
+      ok(`Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} >= judge_kappa_min=${judgeKappaMin}`)
+    }
+  } else if (agg && agg.judgeHumanKappa === null) {
+    fail('Baseline aggregate.judgeHumanKappa is null — kappa could not be computed; check human-labels.json')
+  } else {
+    ok('judgeHumanKappa not yet computed in baseline — run npm run compute:kappa (skipped in CI until baseline is generated)')
+  }
+}
+
 console.log('\nValidation complete.')
 if (errors > 0) {
   console.error(`\n${errors} validation error(s) — failing build`)
