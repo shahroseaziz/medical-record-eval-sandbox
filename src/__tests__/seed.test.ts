@@ -80,10 +80,16 @@ describe('executeSeedSql()', () => {
       return { rows: [] }
     })
     await executeSeedSql(client, FIXTURE_SQL)
-    // First call is the DDL block; subsequent calls are INSERTs for seed_meta rows
-    expect(calls.length).toBeGreaterThanOrEqual(2) // DDL + 3 inserts
+    // First call is the DDL block; the COPY-row INSERTs are wrapped in a
+    // single BEGIN/COMMIT transaction so a partial seed can't leave the DB
+    // half-populated.
+    expect(calls.length).toBeGreaterThanOrEqual(2) // DDL + inserts
     expect(calls[0]).toContain('CREATE')
-    expect(calls.slice(1).every((s) => s.startsWith('INSERT INTO seed_meta'))).toBe(true)
+    const inserts = calls.filter((s) => s.startsWith('INSERT INTO'))
+    expect(inserts).toHaveLength(3) // one per seed_meta COPY row
+    expect(inserts.every((s) => s.startsWith('INSERT INTO seed_meta'))).toBe(true)
+    expect(calls).toContain('BEGIN')
+    expect(calls).toContain('COMMIT')
   })
 
   it('is fail-fast: stops on first SQL error', async () => {
