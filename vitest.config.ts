@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'evals/**/*.test.ts'],
     reporters: ['verbose', 'json'],
     outputFile: {
       json: 'evals/results/test-report.json',
