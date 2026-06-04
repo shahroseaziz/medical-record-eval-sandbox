@@ -1,6 +1,7 @@
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
+import { createHash } from 'crypto'
 import { NextRequest } from 'next/server'
 import { createDataStreamResponse, streamText, type JSONValue } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
@@ -39,16 +40,27 @@ function buildGroundingContext(
   return record ?? '(no record provided)'
 }
 
-function buildPrompt(query: string, groundingContext: string): string {
-  return `You are a medical record analyst. Answer the question based ONLY on the provided medical record context. Do not use outside knowledge or make assumptions beyond what is stated.
+const DEFAULT_SYSTEM_PROMPT =
+  'You are a medical record analyst. Answer the question based ONLY on the provided medical record context. Do not use outside knowledge or make assumptions beyond what is stated.'
 
-MEDICAL RECORD CONTEXT:
-${groundingContext}
+function buildPrompt(
+  query: string,
+  groundingContext: string,
+  generationPrompt?: string,
+): { systemPrompt: string; userTurnPrompt: string; isUserAuthored: boolean } {
+  return {
+    systemPrompt: generationPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    userTurnPrompt: `MEDICAL RECORD CONTEXT:\n${groundingContext}\n\nQUESTION:\n${query}\n\nProvide a thorough, accurate answer based solely on the information in the medical record context above. If the context does not contain sufficient information to answer the question, say so explicitly.`,
+    isUserAuthored: Boolean(generationPrompt),
+  }
+}
 
-QUESTION:
-${query}
-
-Provide a thorough, accurate answer based solely on the information in the medical record context above. If the context does not contain sufficient information to answer the question, say so explicitly.`
+// When the caller supplies a custom generation prompt, store a hash+length in the
+// trace rather than the text itself (privacy rule: user-authored prompt text must
+// never be persisted).
+function redactForTrace(text: string): string {
+  const hash = createHash('sha256').update(text).digest('hex')
+  return `[REDACTED sha256=${hash} length=${text.length}]`
 }
 
 function isOverContextError(error: unknown): boolean {
@@ -98,6 +110,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     model = DEFAULT_GENERATION_MODEL,
     judgeModel = DEFAULT_JUDGE_MODEL,
     judgeUsesByo = false,
+    generationPrompt,
   } = body
 
   if (!patientId || !query) {
@@ -149,7 +162,9 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // ── 3. Assemble prompt ───────────────────────────────────────────────────
   const groundingContext = buildGroundingContext(mode, chunks, record)
-  const assembledPrompt = buildPrompt(query, groundingContext)
+  const { systemPrompt, userTurnPrompt, isUserAuthored } = buildPrompt(query, groundingContext, generationPrompt)
+  // Combined string used for token counting and (when default prompt) trace storage.
+  const fullAssembledPrompt = `${systemPrompt}\n\n${userTurnPrompt}`
 
   // ── 4. Killswitch — book estimated spend (free-tier only) ────────────────
   // BYO callers (key provided via header) bypass Anthropic spend caps but still
@@ -186,7 +201,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         // the !isByo spend-cap gating above. Uses the Anthropic countTokens
         // API; falls back to char/4 when the API is unavailable.
         if (!isByo) {
-          const inputCount = await countInputTokens(assembledPrompt, judgeClient)
+          const inputCount = await countInputTokens(fullAssembledPrompt, judgeClient)
           if (inputCount > MAX_INPUT_TOKENS) {
             if (refundSpend) { await refundSpend(); refundSpend = null }
             dataStream.writeData({
@@ -198,7 +213,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         // Fallback 190k pre-check via char estimate (extra safety net)
-        const estimatedInputTokens = estimateTokens(assembledPrompt)
+        const estimatedInputTokens = estimateTokens(fullAssembledPrompt)
         if (estimatedInputTokens > MODEL_CONTEXT_LIMIT) {
           if (refundSpend) { await refundSpend(); refundSpend = null }
           dataStream.writeData({
@@ -225,7 +240,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         // ── 7. Stream generation tokens ───────────────────────────────────
         const result = streamText({
           model: aiProvider(model),
-          prompt: assembledPrompt,
+          system: systemPrompt,
+          prompt: userTurnPrompt,
           maxTokens: MAX_OUTPUT_TOKENS,
         })
 
@@ -268,9 +284,15 @@ export async function POST(req: NextRequest): Promise<Response> {
           usage.completionTokens * OUTPUT_COST_PER_TOKEN +
           embeddingTokens * EMBED_COST_PER_TOKEN
 
+        const assembledPromptForTrace = isUserAuthored
+          ? redactForTrace(fullAssembledPrompt)
+          : fullAssembledPrompt
+
         const trace: RunTrace = {
           caseId,
           ragMode: mode,
+          grounding: groundingContext,
+          generationPromptIsUserAuthored: isUserAuthored,
           retrieval:
             mode === 'retrieve'
               ? {
@@ -281,7 +303,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     similarity: c.similarity,
                   })),
                   groundingContext,
-                  assembledPrompt,
+                  assembledPrompt: assembledPromptForTrace,
                 }
               : undefined,
           sectionHit: sectionHitResult,

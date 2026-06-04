@@ -5,9 +5,14 @@ export type RunMode = 'retrieve' | 'stuff'
 export interface RunTrace {
   caseId: string
   ragMode: RunMode
+  /** Assembled grounding context used for generation (chunk text in retrieve mode, raw record in stuff mode). */
+  grounding: string
+  /** True when the generation prompt was caller-supplied; the prompt text is then redacted from all trace fields. */
+  generationPromptIsUserAuthored: boolean
   retrieval?: {
     chunks: Array<{ section: string; text: string; distance: number; similarity: number }>
     groundingContext: string
+    /** Full assembled prompt, or a "[REDACTED sha256=… length=…]" marker when the caller supplied a custom prompt. */
     assembledPrompt: string
   }
   sectionHit: SectionHitResult
@@ -42,4 +47,10 @@ export interface RunRequest {
   judgeModel?: string
   /** If true, the judge uses the caller's BYO key instead of the seeded key. Default: false. */
   judgeUsesByo?: boolean
+  /**
+   * Caller-supplied system/generation prompt. When provided it replaces the built-in
+   * medical-record-analyst template. The text is NEVER persisted — traces store only
+   * a sha256 hash + length when this field is set.
+   */
+  generationPrompt?: string
 }
