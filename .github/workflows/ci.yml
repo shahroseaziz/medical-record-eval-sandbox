@@ -91,6 +91,7 @@ jobs:
             "src/lib/db" "src/lib/claude.ts" "src/lib/voyage.ts" "src/lib/ratelimit.ts"
             "src/lib/killswitch.ts" "src/lib/tokens.ts" "evals/golden" "evals/scorers"
             "evals/results" "evals/harness" "evals/thresholds.yaml" "evals/run_evals.ts"
+            "evals/run_evals_example.ts" "src/example/eval-example.json"
             "scripts" "observability"
             "factory.json" ".env.example" "docker-compose.yml" ".github/workflows/ci.yml"
           )
@@ -117,15 +118,16 @@ jobs:
           echo "No git-LFS pointer files."
 
   eval-gate:
-    name: Eval Gate
+    name: Eval Gate (example)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: ci
-    # MANUAL ONLY (cost control): the live-judge gate makes a burst of Haiku calls
-    # (k-variance × seed cases × 2). Running it on every push/PR flooded the
-    # account's Haiku rate limit (586 limit hits/24h). It now runs ONLY on
-    # workflow_dispatch (Actions → CI → Run workflow). Non-required check, so
-    # skipping it on push/PR never blocks a merge.
+    # Reads only src/example/eval-example.json (a committed artifact) — no DB, no
+    # user eval data; gate-reds if that file is missing or the judge runtime is broken.
+    # MANUAL ONLY (cost control): this is a live-judge run (k-variance × cases × 2
+    # Haiku calls). Running it on every push/PR flooded the account's Haiku rate
+    # limit (586 hits/24h), so it now runs ONLY on workflow_dispatch (Actions → CI →
+    # Run workflow). Non-required check, so skipping it on push/PR never blocks a merge.
     if: needs.ci.result == 'success' && github.event_name == 'workflow_dispatch'
 
     steps:
@@ -141,14 +143,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run eval gate (live judge — never mocked)
+      - name: Run example eval gate (live judge — never mocked)
         id: gate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
         run: |
           exit_code=0
-          npm run eval:gate || exit_code=$?
+          npm run eval:gate:example || exit_code=$?
           echo "gate_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           if [ "$exit_code" -eq 2 ]; then
             echo "::warning::gate-inconclusive (upstream down) — Claude or Voyage temporarily unavailable; neither green nor code-red. Re-run when services recover."
