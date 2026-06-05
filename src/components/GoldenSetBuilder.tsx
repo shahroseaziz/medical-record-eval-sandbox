@@ -11,6 +11,105 @@ import {
 } from '@/lib/cases'
 import type { RetrievalData } from '@/hooks/useRun'
 import type { RunMode } from '@/app/api/run/types'
+import { DisagreementTable } from './DisagreementTable'
+import type { UserRunCaseResult } from '@/lib/eval/user-agreement'
+import {
+  loadStoredEvalRun,
+  saveEvalRun,
+  DEFAULT_PASS_THRESHOLD,
+} from '@/lib/eval/user-agreement'
+import { getByoHeaders, getJudgeUsesByo } from './ApiKeyInput'
+
+// ── Batch eval stream consumer ────────────────────────────────────────────────
+
+interface BatchRunData {
+  output: string
+  faithfulness: {
+    score: number | null
+    zeroClaimFlag: boolean
+    claims: Array<{
+      claim: string
+      verdict: 'supported' | 'unsupported' | 'partial'
+      rationale: string
+    }>
+  } | null
+}
+
+async function runCaseForEval(
+  uc: UserCaseV2,
+  genPrompt: string,
+): Promise<BatchRunData | null> {
+  const body = {
+    patientId: uc.patientId,
+    query: uc.taskPrompt,
+    mode: uc.ragMode,
+    record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
+    generationPrompt: genPrompt || undefined,
+    judgeUsesByo: getJudgeUsesByo(),
+  }
+
+  let res: Response
+  try {
+    res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getByoHeaders() },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    return null
+  }
+  if (!res.ok) return null
+
+  const reader = res.body?.getReader()
+  if (!reader) return null
+
+  const decoder = new TextDecoder()
+  let partial = ''
+  let output = ''
+  let faithfulness: BatchRunData['faithfulness'] = null
+
+  function processLine(line: string) {
+    const colonIdx = line.indexOf(':')
+    if (colonIdx < 0) return
+    const prefix = line.slice(0, colonIdx)
+    const rest = line.slice(colonIdx + 1)
+    try {
+      if (prefix === '0') {
+        output += JSON.parse(rest) as string
+      } else if (prefix === '2') {
+        const items = JSON.parse(rest) as Array<Record<string, unknown>>
+        for (const item of items) {
+          if (item.type === 'eval') {
+            const faith = item.faithfulness as Record<string, unknown>
+            faithfulness = {
+              score: (faith.score ?? null) as number | null,
+              zeroClaimFlag: Boolean(faith.zeroClaimFlag),
+              claims: (faith.claims ?? []) as Array<{
+                claim: string
+                verdict: 'supported' | 'unsupported' | 'partial'
+                rationale: string
+              }>,
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore malformed stream lines
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const chunk = decoder.decode(value, { stream: true })
+    const lines = (partial + chunk).split('\n')
+    partial = lines.pop() ?? ''
+    for (const line of lines) processLine(line)
+  }
+  if (partial) processLine(partial)
+
+  return { output, faithfulness }
+}
 
 // Patterns that signal a fail reason is out-of-scope for a grounding judge
 // (completeness, style, formatting concerns rather than factual faithfulness)
@@ -68,13 +167,52 @@ export function GoldenSetBuilder({
   const [intentLabel, setIntentLabel] = useState<'pass' | 'fail'>('pass')
   const [failReason, setFailReason] = useState('')
   const [savedFeedback, setSavedFeedback] = useState(false)
+  const [batchResults, setBatchResults] = useState<UserRunCaseResult[] | null>(null)
+  const [batchRunning, setBatchRunning] = useState(false)
+  const [batchProgress, setBatchProgress] = useState('')
+  const [batchThreshold, setBatchThreshold] = useState(DEFAULT_PASS_THRESHOLD)
 
   useEffect(() => {
     setCases(loadUserCasesV2())
+    const stored = loadStoredEvalRun()
+    if (stored) {
+      setBatchResults(stored.results)
+      setBatchThreshold(stored.threshold)
+    }
   }, [])
 
   function refresh() {
     setCases(loadUserCasesV2())
+  }
+
+  async function runBatchEval() {
+    if (batchRunning || cases.length === 0) return
+    setBatchRunning(true)
+    setBatchProgress(`0 / ${cases.length}`)
+    const results: UserRunCaseResult[] = []
+
+    for (let i = 0; i < cases.length; i++) {
+      const uc = cases[i]
+      setBatchProgress(
+        `${i + 1} / ${cases.length}: ${uc.taskPrompt.slice(0, 40)}${uc.taskPrompt.length > 40 ? '…' : ''}`,
+      )
+      const data = await runCaseForEval(uc, currentGenPrompt)
+      results.push({
+        caseId: uc.id,
+        intentLabel: uc.intentLabel,
+        faithfulnessScore: data?.faithfulness?.score ?? null,
+        zeroClaimFlag: data?.faithfulness?.zeroClaimFlag ?? false,
+        claims: data?.faithfulness?.claims ?? [],
+        output: data?.output ?? '',
+        taskPrompt: uc.taskPrompt,
+      })
+    }
+
+    setBatchResults(results)
+    setBatchThreshold(DEFAULT_PASS_THRESHOLD)
+    saveEvalRun({ timestamp: Date.now(), threshold: DEFAULT_PASS_THRESHOLD, results })
+    setBatchRunning(false)
+    setBatchProgress('')
   }
 
   function openCapture() {
@@ -160,6 +298,30 @@ export function GoldenSetBuilder({
       >
         {savedFeedback ? 'Saved!' : 'Capture from run…'}
       </button>
+
+      {' '}
+      <button
+        data-testid="batch-eval-btn"
+        onClick={runBatchEval}
+        disabled={cases.length === 0 || batchRunning}
+        style={{
+          padding: '0.3rem 0.7rem',
+          fontSize: '0.85rem',
+          marginBottom: '0.5rem',
+          opacity: cases.length === 0 || batchRunning ? 0.5 : 1,
+        }}
+      >
+        {batchRunning ? 'Running…' : `Run batch eval (${cases.length})`}
+      </button>
+
+      {batchRunning && batchProgress && (
+        <div
+          data-testid="batch-progress"
+          style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}
+        >
+          {batchProgress}
+        </div>
+      )}
 
       {showCapture && (
         <div
@@ -470,6 +632,21 @@ export function GoldenSetBuilder({
             )
           })}
         </ul>
+      )}
+
+      {batchResults && batchResults.length > 0 && (
+        <>
+          <hr style={{ margin: '1rem 0', borderColor: '#e0e0e0' }} />
+          <DisagreementTable
+            results={batchResults}
+            initialThreshold={batchThreshold}
+            onThresholdChange={(t) => {
+              setBatchThreshold(t)
+              const stored = loadStoredEvalRun()
+              if (stored) saveEvalRun({ ...stored, threshold: t })
+            }}
+          />
+        </>
       )}
     </section>
   )
