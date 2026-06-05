@@ -52,14 +52,13 @@ async function scoreOneCase(
   uc: UserCaseV2,
 ): Promise<{ data: ScoreAPIResponse | null; rateLimited: boolean }> {
   const grounding = assembleGrounding(uc.capturedGrounding)
-  if (!grounding) return { data: null, rateLimited: false }
+  if (!grounding || !uc.capturedOutput) return { data: null, rateLimited: false }
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), SCORE_TIMEOUT_MS)
 
-  let res: Response
   try {
-    res = await fetch('/api/score', {
+    const res = await fetch('/api/score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getByoHeaders() },
       body: JSON.stringify({
@@ -69,20 +68,16 @@ async function scoreOneCase(
       }),
       signal: controller.signal,
     })
-  } catch {
-    clearTimeout(timeoutId)
-    return { data: null, rateLimited: false }
-  }
-  clearTimeout(timeoutId)
 
-  if (res.status === 429) return { data: null, rateLimited: true }
-  if (!res.ok) return { data: null, rateLimited: false }
+    if (res.status === 429) return { data: null, rateLimited: true }
+    if (!res.ok) return { data: null, rateLimited: false }
 
-  try {
     const data = (await res.json()) as ScoreAPIResponse
     return { data, rateLimited: false }
   } catch {
     return { data: null, rateLimited: false }
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
