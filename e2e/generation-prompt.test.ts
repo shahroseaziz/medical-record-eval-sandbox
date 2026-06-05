@@ -120,7 +120,7 @@ test.describe('generation prompt editor', () => {
     await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
 
     expect(capturedBody).not.toBeNull()
-    expect(capturedBody?.generationPrompt).toBe(customPrompt)
+    expect((capturedBody as Record<string, unknown> | null)?.generationPrompt).toBe(customPrompt)
   })
 
   test('reset → run omits generationPrompt from the request body', async ({ page }) => {
@@ -163,6 +163,6 @@ test.describe('generation prompt editor', () => {
     await page.getByTestId('run-btn').click()
     await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
 
-    expect(capturedBody?.generationPrompt).toBeUndefined()
+    expect((capturedBody as Record<string, unknown> | null)?.generationPrompt).toBeUndefined()
   })
 })
