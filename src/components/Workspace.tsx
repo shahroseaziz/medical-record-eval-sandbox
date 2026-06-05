@@ -59,6 +59,7 @@ export function Workspace() {
   // Stage tracking for the loop diagram
   const [goldenCaseCount, setGoldenCaseCount] = useState(0)
   const [hasEvalRun, setHasEvalRun] = useState(false)
+  const [isLabeling, setIsLabeling] = useState(false)
 
   // Seed count from localStorage so the diagram reflects prior work on reload
   useEffect(() => {
@@ -72,6 +73,7 @@ export function Workspace() {
 
   function computeCurrentStage(): EvalStage {
     if (hasEvalRun) return 'agreement'
+    if (isLabeling) return 'label'
     if (goldenCaseCount > 0) return 'judge'
     if (trace != null || text.length > 0) return 'output'
     if (selectedPatient != null) return 'prompt'
@@ -477,6 +479,7 @@ export function Workspace() {
         onRunCase={handleRunGoldenCase}
         onCaseSaved={(count) => setGoldenCaseCount(count)}
         onEvalComplete={() => setHasEvalRun(true)}
+        onCapturePanelChange={setIsLabeling}
       />
     </div>
   )

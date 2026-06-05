@@ -151,6 +151,8 @@ interface Props {
   onCaseSaved?: (count: number) => void
   /** Called when a batch eval completes. */
   onEvalComplete?: () => void
+  /** Called when the capture panel opens or closes — lets the parent light the label stage. */
+  onCapturePanelChange?: (isOpen: boolean) => void
 }
 
 export function GoldenSetBuilder({
@@ -166,6 +168,7 @@ export function GoldenSetBuilder({
   onRunCase,
   onCaseSaved,
   onEvalComplete,
+  onCapturePanelChange,
 }: Props) {
   const [cases, setCases] = useState<UserCaseV2[]>([])
   const [showCapture, setShowCapture] = useState(false)
@@ -232,6 +235,7 @@ export function GoldenSetBuilder({
     setIntentLabel(cases.length === 0 ? 'fail' : 'pass')
     setFailReason('')
     setShowCapture(true)
+    onCapturePanelChange?.(true)
   }
 
   function handleCapture() {
@@ -265,6 +269,7 @@ export function GoldenSetBuilder({
     saveUserCaseV2(uc)
     const updated = refresh()
     setShowCapture(false)
+    onCapturePanelChange?.(false)
     setSavedFeedback(true)
     setTimeout(() => setSavedFeedback(false), 2000)
     onCaseSaved?.(updated.length)
@@ -399,7 +404,10 @@ export function GoldenSetBuilder({
 
           {/* Reference output source */}
           <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-            Reference output source
+            <Term
+              term="reference label"
+              definition="The ideal output you declare for this query — either the model output promoted verbatim, a corrected version, or something written from scratch. The judge compares its verdict to this when you run batch eval."
+            />
           </div>
           <div
             style={{
@@ -501,7 +509,10 @@ export function GoldenSetBuilder({
                 onChange={() => setIntentLabel('pass')}
                 data-testid="intent-label-pass"
               />
-              designed-pass
+              <Term
+                term="designed-pass"
+                definition="You declare this output faithful — the judge should pass it. If the judge fails it instead, your rubric may be too strict or your threshold too low."
+              />
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <input
@@ -512,7 +523,10 @@ export function GoldenSetBuilder({
                 onChange={() => setIntentLabel('fail')}
                 data-testid="intent-label-fail"
               />
-              designed-fail
+              <Term
+                term="designed-fail"
+                definition="You deliberately chose an output with a faithfulness error or built a trap. If the judge passes it, your rubric isn't strict enough or your threshold is too high."
+              />
             </label>
           </div>
 
@@ -565,7 +579,7 @@ export function GoldenSetBuilder({
             </button>
             <button
               data-testid="cancel-capture-btn"
-              onClick={() => setShowCapture(false)}
+              onClick={() => { setShowCapture(false); onCapturePanelChange?.(false) }}
               style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem', color: '#666' }}
             >
               Cancel

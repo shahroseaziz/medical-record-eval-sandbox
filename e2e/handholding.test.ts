@@ -123,6 +123,29 @@ test.describe('eval loop diagram', () => {
     await expect(page.getByTestId('loop-stage-prompt')).toContainText('✓')
   })
 
+  test('stage advances to label when capture panel is open', async ({ page }) => {
+    await setupMocks(page)
+    await page.goto('/')
+
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill('What medications?')
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+
+    // label stage should now be active
+    const labelStage = page.getByTestId('loop-stage-label')
+    await expect(labelStage).toHaveAttribute('data-active', 'true')
+    // data, prompt, output should be past
+    await expect(page.getByTestId('loop-stage-data')).toContainText('✓')
+    await expect(page.getByTestId('loop-stage-prompt')).toContainText('✓')
+    await expect(page.getByTestId('loop-stage-output')).toContainText('✓')
+  })
+
   test('stage advances to agreement after batch eval', async ({ page }) => {
     await page.addInitScript((cases: unknown[]) => {
       localStorage.setItem('user_cases_v2', JSON.stringify(cases))
@@ -186,6 +209,45 @@ test.describe('terms of art tooltips', () => {
     await page.getByTestId('capture-from-run-btn').click()
     await expect(page.getByTestId('capture-panel')).toBeVisible()
     await expect(page.getByTestId('term-intent-label')).toBeVisible()
+  })
+
+  test('reference-label term is present in the capture panel', async ({ page }) => {
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill('What medications?')
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+    await expect(page.getByTestId('term-reference-label')).toBeVisible()
+  })
+
+  test('designed-pass term is present as a tooltip on the radio button label', async ({ page }) => {
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill('What medications?')
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+    await expect(page.getByTestId('term-designed-pass')).toBeVisible()
+  })
+
+  test('designed-fail term is present as a tooltip on the radio button label', async ({ page }) => {
+    await page.getByTestId('get-patients-btn').click()
+    await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
+    await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
+    await page.getByTestId('prompt-input').fill('What medications?')
+    await page.getByTestId('run-btn').click()
+    await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
+
+    await page.getByTestId('capture-from-run-btn').click()
+    await expect(page.getByTestId('capture-panel')).toBeVisible()
+    await expect(page.getByTestId('term-designed-fail')).toBeVisible()
   })
 })
 
