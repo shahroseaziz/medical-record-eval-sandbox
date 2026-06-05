@@ -5,6 +5,14 @@ import type { EvalCase, FaithfulnessResult, FaithfulnessClaim } from '../types'
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_TOKENS = 4096
 
+// Hard wall-clock timeout per judge API call. A hung call is bounded and surfaced rather
+// than blocking the scorer indefinitely. The timeout triggers a parse-error retry.
+const JUDGE_TIMEOUT_MS = 30_000
+
+// Approximate Haiku 4-5 pricing: $0.80/1M input, $4.00/1M output.
+const JUDGE_INPUT_COST_PER_TOKEN = 0.8 / 1_000_000
+const JUDGE_OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000
+
 const EXTRACT_TOOL: Anthropic.Tool = {
   name: 'extract_claims',
   description: 'Extract every atomic factual claim from the text as a flat list',
@@ -141,19 +149,48 @@ async function tryExtract(
   prompt: string,
   maxTokens: number = MAX_TOKENS,
 ): Promise<ExtractInput | null> {
+  const estInputTokens = Math.ceil(prompt.length / 4)
+  const startMs = Date.now()
   try {
-    const response = await client.messages.create({
+    const response = await client.messages.create(
+      {
+        model: HAIKU_MODEL,
+        max_tokens: maxTokens,
+        temperature: 0,
+        tools: [EXTRACT_TOOL],
+        tool_choice: { type: 'tool', name: 'extract_claims' },
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { timeout: JUDGE_TIMEOUT_MS },
+    )
+    const latencyMs = Date.now() - startMs
+    const usage = response.usage
+    // Structured trace log — prompt text not logged here (logged at route level).
+    console.log(JSON.stringify({
+      judge_call: 'extract',
       model: HAIKU_MODEL,
-      max_tokens: maxTokens,
-      temperature: 0,
-      tools: [EXTRACT_TOOL],
-      tool_choice: { type: 'tool', name: 'extract_claims' },
-      messages: [{ role: 'user', content: prompt }],
-    })
+      input_tokens: usage?.input_tokens ?? estInputTokens,
+      output_tokens: usage?.output_tokens ?? 0,
+      est_cost_usd: +((
+        (usage?.input_tokens ?? estInputTokens) * JUDGE_INPUT_COST_PER_TOKEN +
+        (usage?.output_tokens ?? 0) * JUDGE_OUTPUT_COST_PER_TOKEN
+      ).toFixed(8)),
+      latency_ms: latencyMs,
+      status: 'ok',
+    }))
     const block = response.content.find((c) => c.type === 'tool_use')
     if (!block || block.type !== 'tool_use') return null
     return isExtractInput(block.input) ? block.input : null
-  } catch {
+  } catch (err) {
+    const latencyMs = Date.now() - startMs
+    console.log(JSON.stringify({
+      judge_call: 'extract',
+      model: HAIKU_MODEL,
+      est_input_tokens: estInputTokens,
+      latency_ms: latencyMs,
+      status: 'error',
+      error: err instanceof Error ? err.constructor.name : String(err),
+    }))
     return null
   }
 }
@@ -163,19 +200,47 @@ async function tryVerdict(
   prompt: string,
   maxTokens: number = MAX_TOKENS,
 ): Promise<VerdictInput | null> {
+  const estInputTokens = Math.ceil(prompt.length / 4)
+  const startMs = Date.now()
   try {
-    const response = await client.messages.create({
+    const response = await client.messages.create(
+      {
+        model: HAIKU_MODEL,
+        max_tokens: maxTokens,
+        temperature: 0,
+        tools: [VERDICT_TOOL],
+        tool_choice: { type: 'tool', name: 'verdict_claims' },
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { timeout: JUDGE_TIMEOUT_MS },
+    )
+    const latencyMs = Date.now() - startMs
+    const usage = response.usage
+    console.log(JSON.stringify({
+      judge_call: 'verdict',
       model: HAIKU_MODEL,
-      max_tokens: maxTokens,
-      temperature: 0,
-      tools: [VERDICT_TOOL],
-      tool_choice: { type: 'tool', name: 'verdict_claims' },
-      messages: [{ role: 'user', content: prompt }],
-    })
+      input_tokens: usage?.input_tokens ?? estInputTokens,
+      output_tokens: usage?.output_tokens ?? 0,
+      est_cost_usd: +((
+        (usage?.input_tokens ?? estInputTokens) * JUDGE_INPUT_COST_PER_TOKEN +
+        (usage?.output_tokens ?? 0) * JUDGE_OUTPUT_COST_PER_TOKEN
+      ).toFixed(8)),
+      latency_ms: latencyMs,
+      status: 'ok',
+    }))
     const block = response.content.find((c) => c.type === 'tool_use')
     if (!block || block.type !== 'tool_use') return null
     return isVerdictInput(block.input) ? block.input : null
-  } catch {
+  } catch (err) {
+    const latencyMs = Date.now() - startMs
+    console.log(JSON.stringify({
+      judge_call: 'verdict',
+      model: HAIKU_MODEL,
+      est_input_tokens: estInputTokens,
+      latency_ms: latencyMs,
+      status: 'error',
+      error: err instanceof Error ? err.constructor.name : String(err),
+    }))
     return null
   }
 }

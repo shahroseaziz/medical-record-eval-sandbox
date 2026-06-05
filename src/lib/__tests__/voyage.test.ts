@@ -61,4 +61,30 @@ describe('embed()', () => {
     await embed(['q'], 'query')
     expect((capturedBody as { input_type: string }).input_type).toBe('query')
   })
+
+  it('propagates fetch abort / timeout error', async () => {
+    // Regression test for the VOYAGE_TIMEOUT_MS AbortSignal guard.
+    // When fetch is cancelled (timeout or caller abort), the error surfaces rather
+    // than being silently swallowed.
+    vi.stubGlobal('fetch', async () => {
+      const err = new DOMException('The operation was aborted.', 'AbortError')
+      throw err
+    })
+
+    await expect(embed(['hello'], 'query')).rejects.toThrow()
+  })
+
+  it('attaches an AbortSignal to the fetch call', async () => {
+    const fakeVec = new Array(1024).fill(0.1)
+    let capturedSignal: AbortSignal | null = null
+    vi.stubGlobal('fetch', async (_url: string, opts: RequestInit & { signal?: AbortSignal }) => {
+      capturedSignal = opts.signal ?? null
+      return { ok: true, json: async () => ({ data: [{ embedding: fakeVec }] }) }
+    })
+
+    await embed(['hello'], 'document')
+    expect(capturedSignal).not.toBeNull()
+    // Verify the signal is an AbortSignal (timeout-based)
+    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+  })
 })

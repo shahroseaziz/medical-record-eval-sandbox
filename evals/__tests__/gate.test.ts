@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os'
 import {
   EXPECTED_JUDGE_MODEL,
   EXPECTED_EMBEDDING_MODEL,
+  JUDGE_ERROR_REATTEMPTS,
   checkModelGuards,
   checkKappaFloor,
   checkScoreTolerance,
@@ -35,7 +36,9 @@ import {
   isUpstreamOutage,
   runGate,
   type GateViolation,
+  type GateOptions,
 } from '../run_evals.js'
+import type { EvalCase, FaithfulnessResult } from '../../src/lib/eval/types.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -489,5 +492,164 @@ describe('runGate — injected model mismatch', () => {
       try { unlinkSync(casesPath) } catch { /* ignore */ }
       try { rmdirSync(tmpDir) } catch { /* ignore */ }
     }
+  })
+})
+
+// ── [11] Eval-gate flake hardening — scoreFn injection ────────────────────────
+//
+// Regression tests for the flake-hardening logic:
+//   a) A judge that errors on the first scoring attempt but succeeds on a reattempt
+//      must NOT red-gate a correct PR (it passes within the JUDGE_ERROR_REATTEMPTS budget).
+//   b) A judge that errors on every attempt (all reattempts exhausted, API is up)
+//      must produce a judge-error violation → gate-red.
+//   c) A genuinely low faithfulness score on a 'pass' seed case must still produce
+//      an in-band violation → gate-red.  A real regression must never be masked.
+
+function makeHardeningBaseline() {
+  return {
+    judgeModel: EXPECTED_JUDGE_MODEL,
+    embeddingModel: EXPECTED_EMBEDDING_MODEL,
+    k: 5,
+    cases: [
+      {
+        caseId: 'hardening-case-retrieve-pass',
+        trace: {
+          output: 'The patient takes Lisinopril 10mg daily.',
+          retrievedChunks: [{ section: 'medications', text: 'Lisinopril 10mg daily — hypertension.' }],
+        },
+        scorerResults: [{ scorer: 'faithfulness', score: 0.95 }],
+        meanScore: 0.95,
+        scoreStdDev: 0.0,
+        referenceLabel: 'pass',
+      },
+    ],
+    aggregate: { passRate: 1.0, n: 1, judgeHumanKappa: 0.9, note: 'hardening test' },
+  }
+}
+
+function makeHardeningSeedCases() {
+  return [
+    {
+      id: 'hardening-case-retrieve-pass',
+      taskPrompt: 'What medications is the patient on?',
+      patientId: 'hardening-patient',
+      ragMode: 'retrieve',
+      expectedOutput: 'Lisinopril',
+      referenceLabel: 'pass',
+      scorers: ['faithfulness'],
+      rationale: 'hardening regression test',
+    },
+  ]
+}
+
+function makeErrResult(msg = 'UNPARSEABLE-RESPONSE'): FaithfulnessResult {
+  return {
+    scorer: 'faithfulness',
+    score: null,
+    errored: true,
+    errorMessage: msg,
+    claims: [],
+    extractPrompt: '',
+    verdictPrompt: '',
+  }
+}
+
+function makeOkResult(score: number): FaithfulnessResult {
+  return {
+    scorer: 'faithfulness',
+    score,
+    claims: score > 0
+      ? [{ claim: 'Patient takes Lisinopril.', verdict: 'supported', rationale: 'explicit' }]
+      : [{ claim: 'Fabricated claim.', verdict: 'unsupported', rationale: 'not in context' }],
+    extractPrompt: 'extract prompt',
+    verdictPrompt: 'verdict prompt',
+  }
+}
+
+async function runHardeningGate(
+  scoreFn: GateOptions['scoreFn'],
+  baselineOverride: object = {}
+): Promise<import('../run_evals.js').GateResult> {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'gate-hardening-'))
+  const baselinePath = join(tmpDir, 'baseline.json')
+  const casesPath = join(tmpDir, 'cases.json')
+
+  writeFileSync(
+    baselinePath,
+    JSON.stringify({ ...makeHardeningBaseline(), ...baselineOverride })
+  )
+  writeFileSync(casesPath, JSON.stringify(makeHardeningSeedCases()))
+
+  const prevVoyage = process.env.VOYAGE_API_KEY
+  const prevAnthropic = process.env.ANTHROPIC_API_KEY
+  process.env.VOYAGE_API_KEY = 'test-stub'
+  process.env.ANTHROPIC_API_KEY = 'test-stub'
+
+  try {
+    return await runGate({
+      voyageProber: async () => 'ok',
+      anthropicProber: async () => 'ok',
+      baselinePath,
+      casesPath,
+      scoreFn,
+    })
+  } finally {
+    process.env.VOYAGE_API_KEY = prevVoyage
+    process.env.ANTHROPIC_API_KEY = prevAnthropic
+    try { unlinkSync(baselinePath) } catch { /* ignore */ }
+    try { unlinkSync(casesPath) } catch { /* ignore */ }
+    try { rmdirSync(tmpDir) } catch { /* ignore */ }
+  }
+}
+
+describe('eval-gate flake hardening — scoreFn injection', () => {
+  it('JUDGE_ERROR_REATTEMPTS is exported and is a positive integer', () => {
+    expect(typeof JUDGE_ERROR_REATTEMPTS).toBe('number')
+    expect(JUDGE_ERROR_REATTEMPTS).toBeGreaterThan(0)
+  })
+
+  it('[11a] errored-then-ok within reattempt budget → gate-green (not a spurious red)', async () => {
+    // Simulates the real flake: the judge API returns an unparseable response once,
+    // then succeeds on the reattempt.  Gate must be green — the case was scored.
+    let callCount = 0
+    const scoreFn = async (_evalCase: EvalCase): Promise<FaithfulnessResult> => {
+      callCount++
+      // First call errored → triggers the JUDGE_ERROR_REATTEMPTS reattempt loop
+      if (callCount === 1) return makeErrResult()
+      // Subsequent calls succeed with a high score (pass case)
+      return makeOkResult(0.95)
+    }
+
+    const result = await runHardeningGate(scoreFn)
+
+    expect(result.status).toBe('green')
+    expect(result.violations).toHaveLength(0)
+    // At least 2 calls: 1 errored + at least 1 successful reattempt
+    expect(callCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('[11b] always-errored judge (all reattempts exhausted, API up) → gate-red with judge-error', async () => {
+    // Simulates a persistent parse failure that exhausts the retry budget.
+    // This must still gate-red so persistent judge breakage is caught.
+    const scoreFn = async (_evalCase: EvalCase): Promise<FaithfulnessResult> => makeErrResult()
+
+    const result = await runHardeningGate(scoreFn)
+
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'judge-error')).toBe(true)
+    // Aggregate n drops to 0 because the case was never scored successfully
+    expect(result.violations.some((v) => v.check === 'passrate-exact')).toBe(true)
+  })
+
+  it('[11c] genuinely low faithfulness score on a pass case → gate-red (regression not masked)', async () => {
+    // A real quality regression where faithfulness drops to 0.0 on a 'pass' seed case
+    // must still fire the in-band violation.  Hardening retries must not hide it.
+    const scoreFn = async (_evalCase: EvalCase): Promise<FaithfulnessResult> => makeOkResult(0.0)
+
+    const result = await runHardeningGate(scoreFn)
+
+    expect(result.status).toBe('red')
+    // The in-band invariant must fire: a 'pass' case scored below the faithfulness threshold
+    expect(result.violations.some((v) => v.check === 'in-band')).toBe(true)
   })
 })

@@ -411,6 +411,78 @@ describe('scoreFaithfulness', () => {
       expect(result.errorMessage).toMatch(/verdict/i)
     })
   })
+
+  describe('judge timeout / JUDGE_TIMEOUT_MS guard', () => {
+    it('passes JUDGE_TIMEOUT_MS (30 s) as timeout option to every extract and verdict call', async () => {
+      // Verify the timeout is wired into the Anthropic SDK call options on every
+      // model invocation — both extract and verdict phases.
+      const create = vi.fn()
+        .mockResolvedValueOnce(extractResponse(['Claim.']))
+        .mockResolvedValueOnce(verdictResponse([{ claim: 'Claim.', verdict: 'supported', rationale: 'ok' }]))
+      const client = { messages: { create } } as unknown as Anthropic
+
+      await scoreFaithfulness(makeRetrieveCase(), client)
+
+      expect(create).toHaveBeenCalledTimes(2)
+      for (const call of create.mock.calls) {
+        const opts = (call as [unknown, { timeout?: number }])[1]
+        expect(opts?.timeout).toBe(30_000)
+      }
+    })
+
+    it('extract timeout (thrown error) retries up to JUDGE_PARSE_ATTEMPTS times then returns errored', async () => {
+      // JUDGE_TIMEOUT_MS fires → SDK throws; tryExtract catches it and returns null;
+      // extractWithRetry exhausts 4 attempts → scoreFaithfulness returns errored.
+      const timeoutErr = Object.assign(new Error('Request timed out'), { name: 'APITimeoutError' })
+      const create = vi.fn().mockRejectedValue(timeoutErr)
+      const client = { messages: { create } } as unknown as Anthropic
+
+      const result = await scoreFaithfulness(makeRetrieveCase(), client)
+
+      expect(result.errored).toBe(true)
+      expect(result.score).toBeNull()
+      expect(result.errorMessage).toMatch(/extract/i)
+      // 4 extract attempts (JUDGE_PARSE_ATTEMPTS = 4); never reaches verdict
+      expect(create).toHaveBeenCalledTimes(4)
+    })
+
+    it('verdict timeout retries verdict calls then returns errored, preserving error distinction', async () => {
+      // Extract succeeds; all verdict calls time out → errored with verdict error message.
+      // Ensures the timeout path is distinct from extract-error (error message specificity).
+      const timeoutErr = Object.assign(new Error('Request timed out'), { name: 'APITimeoutError' })
+      const create = vi.fn()
+        .mockResolvedValueOnce(extractResponse(['A claim.']))
+        .mockRejectedValue(timeoutErr)
+      const client = { messages: { create } } as unknown as Anthropic
+
+      const result = await scoreFaithfulness(makeRetrieveCase(), client)
+
+      expect(result.errored).toBe(true)
+      expect(result.score).toBeNull()
+      expect(result.errorMessage).toMatch(/verdict/i)
+      // 1 extract success + 4 verdict timeout attempts
+      expect(create).toHaveBeenCalledTimes(5)
+    })
+
+    it('extract timeout then success within retry budget -> valid score returned', async () => {
+      // One timeout on extract, then a successful response — confirms the retry loop
+      // treats thrown errors the same as unparseable responses (both return null from tryExtract).
+      const timeoutErr = Object.assign(new Error('Request timed out'), { name: 'APITimeoutError' })
+      const create = vi.fn()
+        .mockRejectedValueOnce(timeoutErr)
+        .mockResolvedValueOnce(extractResponse(['Recovered claim.']))
+        .mockResolvedValueOnce(verdictResponse([
+          { claim: 'Recovered claim.', verdict: 'supported', rationale: 'found' },
+        ]))
+      const client = { messages: { create } } as unknown as Anthropic
+
+      const result = await scoreFaithfulness(makeRetrieveCase(), client)
+
+      expect(result.errored).toBeUndefined()
+      expect(result.score).toBe(1.0)
+      expect(create).toHaveBeenCalledTimes(3)
+    })
+  })
 })
 
 describe('buildExtractPrompt', () => {
