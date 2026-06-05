@@ -56,6 +56,12 @@ export interface StoredEvalRun {
   timestamp: number
   threshold: number
   results: UserRunCaseResult[]
+  /** Present when the run was stopped before all cases were scored. */
+  partial?: {
+    scored: number
+    total: number
+    rateLimited: boolean
+  }
 }
 
 const STORAGE_KEY_EVAL_RUN = 'user_eval_run_v1'

@@ -9,12 +9,15 @@ interface Props {
   results: UserRunCaseResult[]
   initialThreshold?: number
   onThresholdChange?: (t: number) => void
+  /** Present when the run was stopped before scoring all cases. */
+  partial?: { scored: number; total: number; rateLimited: boolean }
 }
 
 export function DisagreementTable({
   results,
   initialThreshold = DEFAULT_PASS_THRESHOLD,
   onThresholdChange,
+  partial,
 }: Props) {
   const [threshold, setThreshold] = useState(initialThreshold)
 
@@ -42,6 +45,26 @@ export function DisagreementTable({
         <Term term="intent label" definition="Your declaration of what the judge ought to decide: pass (output is faithful) or fail (output contains something unfaithful or you designed it to trip the judge)." />{' '}
         don&apos;t match.
       </p>
+
+      {/* Partial-run banner */}
+      {partial && (
+        <div
+          data-testid="partial-run-banner"
+          style={{
+            padding: '0.4rem 0.6rem',
+            background: '#fff3cd',
+            border: '1px solid #e8a000',
+            borderRadius: 4,
+            fontSize: '0.8rem',
+            color: '#5c3c00',
+            marginBottom: '0.5rem',
+          }}
+        >
+          {partial.rateLimited
+            ? `Rate-limited — ${partial.scored} of ${partial.total} scored. Results below are partial. Click “Resume eval” to continue when the rate-limit window resets.`
+            : `Partial run — ${partial.scored} of ${partial.total} scored.`}
+        </div>
+      )}
 
       {/* Calibration note */}
       <div

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import type { UserCaseV2 } from '@/lib/cases'
+import type { UserCaseV2, CapturedGrounding } from '@/lib/cases'
 import {
   loadUserCasesV2,
   saveUserCaseV2,
@@ -18,98 +18,67 @@ import {
   saveEvalRun,
   DEFAULT_PASS_THRESHOLD,
 } from '@/lib/eval/user-agreement'
-import { getByoHeaders, getJudgeUsesByo } from './ApiKeyInput'
+import { getByoHeaders } from './ApiKeyInput'
 import { Term } from './Term'
 
-// ── Batch eval stream consumer ────────────────────────────────────────────────
+// ── Score API response shape ──────────────────────────────────────────────────
 
-interface BatchRunData {
-  output: string
-  faithfulness: {
-    score: number | null
-    zeroClaimFlag: boolean
-    claims: Array<{
-      claim: string
-      verdict: 'supported' | 'unsupported' | 'partial'
-      rationale: string
-    }>
-  } | null
+interface ScoreAPIResponse {
+  score: number | null
+  zeroClaimFlag?: boolean
+  claims: Array<{
+    claim: string
+    verdict: 'supported' | 'unsupported' | 'partial'
+    reason: string
+  }>
+  errored?: boolean
+  errorMessage?: string
 }
 
-async function runCaseForEval(
-  uc: UserCaseV2,
-  genPrompt: string,
-): Promise<BatchRunData | null> {
-  const body = {
-    patientId: uc.patientId,
-    query: uc.taskPrompt,
-    mode: uc.ragMode,
-    record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
-    generationPrompt: genPrompt || undefined,
-    judgeUsesByo: getJudgeUsesByo(),
-  }
+// ── Grounding assembly ────────────────────────────────────────────────────────
 
-  let res: Response
+function assembleGrounding(cg: CapturedGrounding): string {
+  if (cg.mode === 'retrieve' && cg.chunks) {
+    return cg.chunks.map((c) => `[${c.section}]\n${c.text}`).join('\n\n---\n\n')
+  }
+  return cg.record ?? ''
+}
+
+// ── Per-case scorer (POST /api/score with captured output + grounding) ────────
+
+const SCORE_TIMEOUT_MS = 30_000
+
+async function scoreOneCase(
+  uc: UserCaseV2,
+): Promise<{ data: ScoreAPIResponse | null; rateLimited: boolean }> {
+  const grounding = assembleGrounding(uc.capturedGrounding)
+  if (!grounding || !uc.capturedOutput) return { data: null, rateLimited: false }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), SCORE_TIMEOUT_MS)
+
   try {
-    res = await fetch('/api/run', {
+    const res = await fetch('/api/score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getByoHeaders() },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        source: 'captured',
+        capturedOutput: uc.capturedOutput,
+        capturedGrounding: grounding,
+      }),
+      signal: controller.signal,
     })
+
+    if (res.status === 429) return { data: null, rateLimited: true }
+    if (!res.ok) return { data: null, rateLimited: false }
+
+    const data = (await res.json()) as ScoreAPIResponse
+    return { data, rateLimited: false }
   } catch {
-    return null
+    return { data: null, rateLimited: false }
+  } finally {
+    clearTimeout(timeoutId)
   }
-  if (!res.ok) return null
-
-  const reader = res.body?.getReader()
-  if (!reader) return null
-
-  const decoder = new TextDecoder()
-  let partial = ''
-  let output = ''
-  let faithfulness: BatchRunData['faithfulness'] = null
-
-  function processLine(line: string) {
-    const colonIdx = line.indexOf(':')
-    if (colonIdx < 0) return
-    const prefix = line.slice(0, colonIdx)
-    const rest = line.slice(colonIdx + 1)
-    try {
-      if (prefix === '0') {
-        output += JSON.parse(rest) as string
-      } else if (prefix === '2') {
-        const items = JSON.parse(rest) as Array<Record<string, unknown>>
-        for (const item of items) {
-          if (item.type === 'eval') {
-            const faith = item.faithfulness as Record<string, unknown>
-            faithfulness = {
-              score: (faith.score ?? null) as number | null,
-              zeroClaimFlag: Boolean(faith.zeroClaimFlag),
-              claims: (faith.claims ?? []) as Array<{
-                claim: string
-                verdict: 'supported' | 'unsupported' | 'partial'
-                rationale: string
-              }>,
-            }
-          }
-        }
-      }
-    } catch {
-      // ignore malformed stream lines
-    }
-  }
-
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    const chunk = decoder.decode(value, { stream: true })
-    const lines = (partial + chunk).split('\n')
-    partial = lines.pop() ?? ''
-    for (const line of lines) processLine(line)
-  }
-  if (partial) processLine(partial)
-
-  return { output, faithfulness }
 }
 
 // Patterns that signal a fail reason is out-of-scope for a grounding judge
@@ -181,6 +150,11 @@ export function GoldenSetBuilder({
   const [batchRunning, setBatchRunning] = useState(false)
   const [batchProgress, setBatchProgress] = useState('')
   const [batchThreshold, setBatchThreshold] = useState(DEFAULT_PASS_THRESHOLD)
+  const [evalPartial, setEvalPartial] = useState<{
+    scored: number
+    total: number
+    rateLimited: boolean
+  } | null>(null)
 
   useEffect(() => {
     setCases(loadUserCasesV2())
@@ -188,6 +162,7 @@ export function GoldenSetBuilder({
     if (stored) {
       setBatchResults(stored.results)
       setBatchThreshold(stored.threshold)
+      if (stored.partial) setEvalPartial(stored.partial)
     }
   }, [])
 
@@ -197,32 +172,69 @@ export function GoldenSetBuilder({
     return updated
   }
 
-  async function runBatchEval() {
+  async function runEval() {
     if (batchRunning || cases.length === 0) return
     setBatchRunning(true)
-    setBatchProgress(`0 / ${cases.length}`)
-    const results: UserRunCaseResult[] = []
 
-    for (let i = 0; i < cases.length; i++) {
-      const uc = cases[i]
+    // Resume from a prior partial run, or start fresh
+    const stored = loadStoredEvalRun()
+    const existingResults: UserRunCaseResult[] = stored?.partial ? stored.results : []
+    const scoredIds = new Set(existingResults.map((r) => r.caseId))
+    const pending = cases.filter((c) => !scoredIds.has(c.id))
+    const totalCases = cases.length
+    let scored = existingResults.length
+
+    const results: UserRunCaseResult[] = [...existingResults]
+    setEvalPartial(null)
+    setBatchProgress(`${scored} / ${totalCases}`)
+
+    for (let i = 0; i < pending.length; i++) {
+      const uc = pending[i]
       setBatchProgress(
-        `${i + 1} / ${cases.length}: ${uc.taskPrompt.slice(0, 40)}${uc.taskPrompt.length > 40 ? '…' : ''}`,
+        `Scoring ${scored + 1} / ${totalCases}: ${uc.taskPrompt.slice(0, 40)}${uc.taskPrompt.length > 40 ? '…' : ''}`,
       )
-      const data = await runCaseForEval(uc, currentGenPrompt)
+
+      const { data, rateLimited } = await scoreOneCase(uc)
+
+      if (rateLimited) {
+        // Stop gracefully — save partial results so the run is resumable
+        const partialInfo = { scored, total: totalCases, rateLimited: true }
+        saveEvalRun({ timestamp: Date.now(), threshold: DEFAULT_PASS_THRESHOLD, results, partial: partialInfo })
+        setBatchResults(results.length > 0 ? results : null)
+        setBatchThreshold(DEFAULT_PASS_THRESHOLD)
+        setEvalPartial(partialInfo)
+        setBatchRunning(false)
+        setBatchProgress('')
+        return
+      }
+
       results.push({
         caseId: uc.id,
         intentLabel: uc.intentLabel,
-        faithfulnessScore: data?.faithfulness?.score ?? null,
-        zeroClaimFlag: data?.faithfulness?.zeroClaimFlag ?? false,
-        claims: data?.faithfulness?.claims ?? [],
-        output: data?.output ?? '',
+        faithfulnessScore: data?.score ?? null,
+        zeroClaimFlag: data?.zeroClaimFlag ?? false,
+        claims: (data?.claims ?? []).map((c) => ({
+          claim: c.claim,
+          verdict: c.verdict,
+          rationale: c.reason,
+        })),
+        output: uc.capturedOutput,
         taskPrompt: uc.taskPrompt,
+      })
+      scored++
+
+      // Save after every case — partial until all done
+      saveEvalRun({
+        timestamp: Date.now(),
+        threshold: DEFAULT_PASS_THRESHOLD,
+        results,
+        partial: scored < totalCases ? { scored, total: totalCases, rateLimited: false } : undefined,
       })
     }
 
     setBatchResults(results)
     setBatchThreshold(DEFAULT_PASS_THRESHOLD)
-    saveEvalRun({ timestamp: Date.now(), threshold: DEFAULT_PASS_THRESHOLD, results })
+    setEvalPartial(null)
     setBatchRunning(false)
     setBatchProgress('')
     onEvalComplete?.()
@@ -351,7 +363,7 @@ export function GoldenSetBuilder({
       {' '}
       <button
         data-testid="batch-eval-btn"
-        onClick={runBatchEval}
+        onClick={runEval}
         disabled={cases.length === 0 || batchRunning}
         style={{
           padding: '0.3rem 0.7rem',
@@ -360,7 +372,11 @@ export function GoldenSetBuilder({
           opacity: cases.length === 0 || batchRunning ? 0.5 : 1,
         }}
       >
-        {batchRunning ? 'Running…' : `Run batch eval (${cases.length})`}
+        {batchRunning
+          ? 'Running…'
+          : evalPartial
+            ? `Resume eval (${evalPartial.scored}/${evalPartial.total})`
+            : `Run eval (${cases.length})`}
       </button>
 
       {batchRunning && batchProgress && (
@@ -369,6 +385,24 @@ export function GoldenSetBuilder({
           style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}
         >
           {batchProgress}
+        </div>
+      )}
+
+      {/* Standalone rate-limit banner — shown when rate-limited before any results exist */}
+      {evalPartial?.rateLimited && (!batchResults || batchResults.length === 0) && (
+        <div
+          data-testid="partial-run-banner"
+          style={{
+            padding: '0.4rem 0.6rem',
+            background: '#fff3cd',
+            border: '1px solid #e8a000',
+            borderRadius: 4,
+            fontSize: '0.8rem',
+            color: '#5c3c00',
+            marginBottom: '0.5rem',
+          }}
+        >
+          {`Rate-limited — ${evalPartial.scored} of ${evalPartial.total} scored. Click "Resume eval" to continue when the rate-limit window resets.`}
         </div>
       )}
 
@@ -725,6 +759,7 @@ export function GoldenSetBuilder({
           <DisagreementTable
             results={batchResults}
             initialThreshold={batchThreshold}
+            partial={evalPartial ?? undefined}
             onThresholdChange={(t) => {
               setBatchThreshold(t)
               const stored = loadStoredEvalRun()
