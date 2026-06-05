@@ -7,10 +7,11 @@ import { RagModeToggle } from './RagModeToggle'
 import { TransformInspector } from './TransformInspector'
 import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
+import { GoldenSetBuilder } from './GoldenSetBuilder'
 import { ApiKeyInput } from './ApiKeyInput'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { useRun } from '@/hooks/useRun'
-import type { UserCase } from '@/lib/cases'
+import type { UserCase, UserCaseV2 } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -40,6 +41,14 @@ export function Workspace() {
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
   const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
+  // Snapshot the patient id, gen-prompt, query, mode, and record at the moment
+  // run() is invoked so GoldenSetBuilder always sees the values that produced
+  // the last output — never live UI state that may have changed since.
+  const [runPatientId, setRunPatientId] = useState<string | null>(null)
+  const [runGenPrompt, setRunGenPrompt] = useState('')
+  const [runQuery, setRunQuery] = useState('')
+  const [runMode, setRunMode] = useState<RunMode>('retrieve')
+  const [runRecord, setRunRecord] = useState('')
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
@@ -48,6 +57,11 @@ export function Workspace() {
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
+    setRunPatientId(selectedPatient.id)
+    setRunGenPrompt(generationPrompt)
+    setRunQuery(query)
+    setRunMode(mode)
+    setRunRecord(record)
     run({
       patientId: selectedPatient.id,
       query,
@@ -61,11 +75,34 @@ export function Workspace() {
     setQuery(uc.query)
     setMode(uc.mode)
     if (uc.record) setRecord(uc.record)
+    setRunPatientId(uc.patientId)
+    setRunGenPrompt(generationPrompt)
+    setRunQuery(uc.query)
+    setRunMode(uc.mode)
+    setRunRecord(uc.mode === 'stuff' ? (uc.record ?? '') : '')
     run({
       patientId: uc.patientId,
       query: uc.query,
       mode: uc.mode,
       record: uc.mode === 'stuff' ? uc.record : undefined,
+      generationPrompt: customGenerationPrompt,
+    })
+  }
+
+  function handleRunGoldenCase(uc: UserCaseV2) {
+    setQuery(uc.taskPrompt)
+    setMode(uc.ragMode)
+    if (uc.capturedGrounding.record) setRecord(uc.capturedGrounding.record)
+    setRunPatientId(uc.patientId)
+    setRunGenPrompt(generationPrompt)
+    setRunQuery(uc.taskPrompt)
+    setRunMode(uc.ragMode)
+    setRunRecord(uc.ragMode === 'stuff' ? (uc.capturedGrounding.record ?? '') : '')
+    run({
+      patientId: uc.patientId,
+      query: uc.taskPrompt,
+      mode: uc.ragMode,
+      record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
       generationPrompt: customGenerationPrompt,
     })
   }
@@ -255,13 +292,29 @@ export function Workspace() {
 
       <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
 
-      {/* User case manager */}
+      {/* User case manager (V1) */}
       <UserCaseManager
         currentPatientId={selectedPatient?.id ?? null}
         currentQuery={query}
         currentMode={mode}
         currentRecord={record}
         onRunCase={handleRunCase}
+      />
+
+      <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
+
+      {/* Golden set builder (V2) */}
+      <GoldenSetBuilder
+        runOutput={text}
+        retrieval={retrieval}
+        currentPatientId={runPatientId}
+        currentQuery={runQuery}
+        currentMode={runMode}
+        currentRecord={runRecord}
+        currentGenPrompt={generationPrompt}
+        runGenPrompt={runGenPrompt}
+        loading={loading}
+        onRunCase={handleRunGoldenCase}
       />
     </div>
   )
