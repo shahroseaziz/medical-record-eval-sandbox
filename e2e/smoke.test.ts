@@ -216,7 +216,9 @@ test.describe('golden set builder: capture, label, provenance', () => {
     // Edit the output
     await refOutput.fill('Lisinopril 10mg daily.')
 
-    // Intent label: designed-pass is default
+    // Guided path: first case defaults to 'fail' (trap-first guidance).
+    // Explicitly switch to designed-pass to test saving a pass case.
+    await page.getByTestId('intent-label-pass').click()
     await expect(page.getByTestId('intent-label-pass')).toBeChecked()
 
     // Save

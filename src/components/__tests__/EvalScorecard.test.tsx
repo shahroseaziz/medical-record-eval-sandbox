@@ -63,17 +63,16 @@ describe('EvalScorecard', () => {
     expect(row).toHaveTextContent('0.00')
   })
 
-  it('renders honesty note', () => {
+  it('renders honesty note mentioning judge mistakes', () => {
     render(<EvalScorecard aggregate={AGG} cases={CASES} />)
-    expect(screen.getByTestId('scorecard-honesty-note')).toHaveTextContent(
-      'LLM judge — can be wrong; threshold chosen, not calibrated; human labels are a small proxy set',
-    )
+    expect(screen.getByTestId('scorecard-honesty-note')).toHaveTextContent('makes mistakes')
   })
 
-  it('renders scope note', () => {
+  it('renders scope note with browser-only storage disclosure', () => {
     render(<EvalScorecard aggregate={AGG} cases={CASES} />)
-    expect(screen.getByTestId('scorecard-scope-note')).toHaveTextContent(
-      'v1 sandbox; custom scorers, full golden-set builder, and cohort RAG are roadmapped',
-    )
+    const note = screen.getByTestId('scorecard-scope-note')
+    expect(note).toHaveTextContent('browser only')
+    expect(note).toHaveTextContent('accounts')
+    expect(note).toHaveTextContent('scorer code')
   })
 })

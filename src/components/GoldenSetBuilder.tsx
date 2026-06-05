@@ -19,6 +19,7 @@ import {
   DEFAULT_PASS_THRESHOLD,
 } from '@/lib/eval/user-agreement'
 import { getByoHeaders, getJudgeUsesByo } from './ApiKeyInput'
+import { Term } from './Term'
 
 // ── Batch eval stream consumer ────────────────────────────────────────────────
 
@@ -146,6 +147,12 @@ interface Props {
   /** True while a run is in progress; blocks mid-stream captures. */
   loading: boolean
   onRunCase: (uc: UserCaseV2) => void
+  /** Called after a case is successfully saved — receives the new case count. */
+  onCaseSaved?: (count: number) => void
+  /** Called when a batch eval completes. */
+  onEvalComplete?: () => void
+  /** Called when the capture panel opens or closes — lets the parent light the label stage. */
+  onCapturePanelChange?: (isOpen: boolean) => void
 }
 
 export function GoldenSetBuilder({
@@ -159,6 +166,9 @@ export function GoldenSetBuilder({
   runGenPrompt,
   loading,
   onRunCase,
+  onCaseSaved,
+  onEvalComplete,
+  onCapturePanelChange,
 }: Props) {
   const [cases, setCases] = useState<UserCaseV2[]>([])
   const [showCapture, setShowCapture] = useState(false)
@@ -182,7 +192,9 @@ export function GoldenSetBuilder({
   }, [])
 
   function refresh() {
-    setCases(loadUserCasesV2())
+    const updated = loadUserCasesV2()
+    setCases(updated)
+    return updated
   }
 
   async function runBatchEval() {
@@ -213,14 +225,17 @@ export function GoldenSetBuilder({
     saveEvalRun({ timestamp: Date.now(), threshold: DEFAULT_PASS_THRESHOLD, results })
     setBatchRunning(false)
     setBatchProgress('')
+    onEvalComplete?.()
   }
 
   function openCapture() {
     setEditedOutput(runOutput)
     setCaptureMode('promote')
-    setIntentLabel('pass')
+    // Default to 'fail' on the first case — the guided path starts with a trap
+    setIntentLabel(cases.length === 0 ? 'fail' : 'pass')
     setFailReason('')
     setShowCapture(true)
+    onCapturePanelChange?.(true)
   }
 
   function handleCapture() {
@@ -252,19 +267,23 @@ export function GoldenSetBuilder({
       createdAt: Date.now(),
     }
     saveUserCaseV2(uc)
-    refresh()
+    const updated = refresh()
     setShowCapture(false)
+    onCapturePanelChange?.(false)
     setSavedFeedback(true)
     setTimeout(() => setSavedFeedback(false), 2000)
+    onCaseSaved?.(updated.length)
   }
 
   function handleDelete(id: string) {
     deleteUserCaseV2(id)
-    refresh()
+    const updated = refresh()
+    onCaseSaved?.(updated.length)
   }
 
   const canCapture = Boolean(runOutput && currentPatientId && !loading)
   const outOfScope = intentLabel === 'fail' && isOutOfScopeForGrounding(failReason)
+  const isFirstCase = cases.length === 0
 
   return (
     <section
@@ -280,10 +299,40 @@ export function GoldenSetBuilder({
       <h3 style={{ fontSize: '0.95rem', marginTop: 0, marginBottom: '0.25rem' }}>
         Golden Set Builder
       </h3>
-      <p style={{ fontSize: '0.78rem', color: '#666', margin: '0 0 0.75rem' }}>
-        Capture run outputs as hand-labeled golden cases (
-        <code>localStorage</code>, never included in seeded metrics).
+
+      {/* What a golden set is */}
+      <p style={{ fontSize: '0.8rem', color: '#555', margin: '0 0 0.6rem' }}>
+        A{' '}
+        <Term
+          term="golden set"
+          definition="A small collection of hand-labeled test cases. Each case is a (query, grounding context, output) triple plus your declaration of whether the judge ought to pass or fail it. Running the batch eval shows you how often the judge agrees."
+        />{' '}
+        is your benchmark for the judge. Build it by running queries, capturing the outputs, and
+        labeling each one. Then run batch eval — if the judge disagrees with your labels, something
+        needs tuning: the rubric, the threshold, or the label itself. Cases live in{' '}
+        <code>localStorage</code> — they are never included in the seeded aggregate metrics.
       </p>
+
+      {/* First-case trap guidance */}
+      {isFirstCase && !showCapture && (
+        <div
+          data-testid="first-case-trap-guidance"
+          style={{
+            padding: '0.5rem 0.75rem',
+            background: '#fff8e8',
+            border: '1px solid #e8b800',
+            borderRadius: 4,
+            fontSize: '0.82rem',
+            color: '#5c3c00',
+            marginBottom: '0.6rem',
+          }}
+        >
+          <strong>Start with a trap.</strong> Run a query that asks about something not in the
+          record — a medication the patient doesn&apos;t take, a condition not documented — then
+          capture the output as <strong>designed-fail</strong>. A judge that can&apos;t catch an
+          obvious failure isn&apos;t ready to gate anything.
+        </div>
+      )}
 
       <button
         data-testid="capture-from-run-btn"
@@ -334,9 +383,31 @@ export function GoldenSetBuilder({
             background: '#f0f7ff',
           }}
         >
+          {/* First-case reminder inside capture panel */}
+          {isFirstCase && (
+            <div
+              data-testid="capture-first-case-hint"
+              style={{
+                padding: '0.4rem 0.6rem',
+                background: '#fff8e8',
+                border: '1px solid #e8b800',
+                borderRadius: 3,
+                fontSize: '0.78rem',
+                color: '#5c3c00',
+                marginBottom: '0.6rem',
+              }}
+            >
+              First case — consider keeping it as <strong>designed-fail</strong> to build a
+              trap for your judge.
+            </div>
+          )}
+
           {/* Reference output source */}
           <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-            Reference output source
+            <Term
+              term="reference label"
+              definition="The ideal output you declare for this query — either the model output promoted verbatim, a corrected version, or something written from scratch. The judge compares its verdict to this when you run batch eval."
+            />
           </div>
           <div
             style={{
@@ -415,8 +486,11 @@ export function GoldenSetBuilder({
           )}
 
           {/* Intent label */}
-          <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-            Intent label
+          <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.2rem' }}>
+            <Term
+              term="Intent label"
+              definition="Your declaration of what the judge ought to decide. Designed-pass: the output is faithful and the judge should pass it. Designed-fail: the output contains something wrong or you deliberately constructed a trap."
+            />
           </div>
           <div
             style={{
@@ -435,7 +509,10 @@ export function GoldenSetBuilder({
                 onChange={() => setIntentLabel('pass')}
                 data-testid="intent-label-pass"
               />
-              designed-pass
+              <Term
+                term="designed-pass"
+                definition="You declare this output faithful — the judge should pass it. If the judge fails it instead, your rubric may be too strict or your threshold too low."
+              />
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <input
@@ -446,7 +523,10 @@ export function GoldenSetBuilder({
                 onChange={() => setIntentLabel('fail')}
                 data-testid="intent-label-fail"
               />
-              designed-fail
+              <Term
+                term="designed-fail"
+                definition="You deliberately chose an output with a faithfulness error or built a trap. If the judge passes it, your rubric isn't strict enough or your threshold is too high."
+              />
             </label>
           </div>
 
@@ -478,7 +558,12 @@ export function GoldenSetBuilder({
                     color: '#7a5a00',
                   }}
                 >
-                  This looks like a completeness or style concern — a grounding judge won&apos;t catch it.
+                  This looks like a completeness or style concern — a{' '}
+                  <Term
+                    term="grounding judge"
+                    definition="A faithfulness judge checks whether what was stated is supported by the grounding context. It doesn't check whether enough was stated, or whether the style was correct."
+                  />{' '}
+                  won&apos;t catch it.
                 </div>
               )}
             </div>
@@ -494,7 +579,7 @@ export function GoldenSetBuilder({
             </button>
             <button
               data-testid="cancel-capture-btn"
-              onClick={() => setShowCapture(false)}
+              onClick={() => { setShowCapture(false); onCapturePanelChange?.(false) }}
               style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem', color: '#666' }}
             >
               Cancel
