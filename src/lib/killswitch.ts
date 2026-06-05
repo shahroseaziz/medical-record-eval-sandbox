@@ -10,7 +10,8 @@ export const HOURLY_CAP_MICRO_USD = 1_000_000 // $1.00 per hour
 //   Voyage:      ~500 query tokens @ $0.02/1M                    → ~10 µ$
 const GENERATION_ESTIMATE_MICRO = Math.ceil((12_000 * 0.8 + 1_000 * 4.0)) // 13600
 const JUDGE_ESTIMATE_MICRO = Math.ceil((7_000 * 0.8 + 2_000 * 4.0)) // 13600
-const VOYAGE_ESTIMATE_MICRO = 10
+// Exported so /api/retrieve can meter Voyage calls independently of the full run cost.
+export const VOYAGE_ESTIMATE_MICRO = 10
 
 export const ESTIMATED_RUN_COST_MICRO_USD =
   GENERATION_ESTIMATE_MICRO + JUDGE_ESTIMATE_MICRO + VOYAGE_ESTIMATE_MICRO

@@ -42,7 +42,8 @@ export const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
 export const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
 
 const FAITHFULNESS_GATE_RUNS = 3   // fewer than baseline's k for speed; tolerance band absorbs variance
-const JUDGE_ERROR_REATTEMPTS = 2   // re-score a transient judge-errored case (API up) before failing the gate
+// Exported so tests can verify the retry budget without relying on a magic number.
+export const JUDGE_ERROR_REATTEMPTS = 2   // re-score a transient judge-errored case (API up) before failing the gate
 const ANTHROPIC_PROBE_TIMEOUT_MS = 15_000
 
 const REPO_ROOT = join(import.meta.dirname, '..')
@@ -134,6 +135,8 @@ export interface GateOptions {
   casesPath?: string
   /** Override thresholds path for tests */
   thresholdsPath?: string
+  /** Override scoreFaithfulness for tests — lets tests inject controlled judge responses. */
+  scoreFn?: (evalCase: EvalCase, client?: Anthropic) => Promise<FaithfulnessResult>
 }
 
 // ── Exported check helpers (unit-testable) ────────────────────────────────────
@@ -610,10 +613,11 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
 
     // scoreFaithfulness swallows all API exceptions internally; detect mid-run outage
     // by re-probing Claude whenever a result comes back errored.
+    const runScore = opts.scoreFn ?? scoreFaithfulness
     const freshResults: FaithfulnessResult[] = []
     let caseErrored = false
     for (let i = 0; i < FAITHFULNESS_GATE_RUNS; i++) {
-      let r = await scoreFaithfulness(evalCase, client)
+      let r = await runScore(evalCase, client)
       // A judge run can come back errored two ways: (a) the API is genuinely down
       // (→ inconclusive), or (b) a transient unparseable-response flake while the API
       // is up (noise, not a regression). Distinguish them, and for (b) re-score a few
@@ -632,7 +636,7 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
         if (reattempt >= JUDGE_ERROR_REATTEMPTS) break
         reattempt++
         log(`  retry  transient judge error on ${bc.caseId} (run ${i + 1}), re-scoring (${reattempt}/${JUDGE_ERROR_REATTEMPTS})`)
-        r = await scoreFaithfulness(evalCase, client)
+        r = await runScore(evalCase, client)
       }
       if (r.errored) {
         // Still errored after re-attempts AND the API is up → a genuine judge error.

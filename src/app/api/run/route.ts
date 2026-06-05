@@ -148,6 +148,10 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!judgeKey) {
     return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
   }
+  // Derive the stored flag from the actual key used, not from the requested flag.
+  // When envKey is absent the fallback to byoKey is invisible to effectiveJudgeUsesByo,
+  // causing the stored flag to misreport false even though the BYO key was used.
+  const judgeKeyIsByo = Boolean(byoKey && judgeKey === byoKey)
 
   const judgeClient = new Anthropic({ apiKey: judgeKey })
   const aiProvider = createAnthropic({ apiKey: generationKey })
@@ -320,7 +324,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           },
           claimCount: faithfulnessResult.claims.length,
           outputLength: output.length,
-          judgeUsesByo: effectiveJudgeUsesByo,
+          judgeUsesByo: judgeKeyIsByo,
         }
 
         dataStream.writeData({ type: 'trace', trace } as unknown as JSONValue)
