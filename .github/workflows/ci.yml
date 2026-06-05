@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_dispatch:   # the live-judge eval gate runs ONLY on manual dispatch (see eval-gate job)
 
 jobs:
   ci:
@@ -120,11 +121,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: ci
-    # Always run when CI succeeds — the gate itself returns red when the baseline
-    # is absent, so deleting seed-baseline.json in a PR fails the gate rather than
-    # silently skipping it (hashFiles('...') == '' causes GitHub to skip the job,
-    # which branch protection treats as passing).
-    if: needs.ci.result == 'success'
+    # MANUAL ONLY (cost control): the live-judge gate makes a burst of Haiku calls
+    # (k-variance × seed cases × 2). Running it on every push/PR flooded the
+    # account's Haiku rate limit (586 limit hits/24h). It now runs ONLY on
+    # workflow_dispatch (Actions → CI → Run workflow). Non-required check, so
+    # skipping it on push/PR never blocks a merge.
+    if: needs.ci.result == 'success' && github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
