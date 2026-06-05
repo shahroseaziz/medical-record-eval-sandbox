@@ -89,6 +89,7 @@ export function EvalLoopDiagram({ currentStage }: Props) {
             <div key={stage.key} style={{ display: 'flex', alignItems: 'center' }}>
               <span
                 data-testid={`loop-stage-${stage.key}`}
+                data-active={isActive ? 'true' : undefined}
                 title={stage.desc}
                 style={{
                   padding: '3px 9px',

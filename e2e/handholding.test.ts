@@ -73,8 +73,8 @@ test.describe('eval loop diagram', () => {
     await page.goto('/')
     const dataStage = page.getByTestId('loop-stage-data')
     await expect(dataStage).toBeVisible()
-    // Active stage has blue border — check it's present
-    await expect(dataStage).toBeVisible()
+    // Active stage has data-active="true" — verify the attribute, not just visibility
+    await expect(dataStage).toHaveAttribute('data-active', 'true')
   })
 
   test('all six stages are rendered', async ({ page }) => {
@@ -96,15 +96,15 @@ test.describe('eval loop diagram', () => {
     await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
     await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
 
-    // prompt stage should now be active (has the blue highlight)
+    // prompt stage should now be active (blue border = data-active="true")
     const promptStage = page.getByTestId('loop-stage-prompt')
-    await expect(promptStage).toBeVisible()
-    // Data stage should be "past" (green)
+    await expect(promptStage).toHaveAttribute('data-active', 'true')
+    // Data stage should be "past" (green, ✓ prefix)
     const dataStage = page.getByTestId('loop-stage-data')
     await expect(dataStage).toContainText('✓')
   })
 
-  test('stage advances to label after a run completes', async ({ page }) => {
+  test('stage advances to output after a run completes', async ({ page }) => {
     await setupMocks(page)
     await page.goto('/')
 
@@ -115,10 +115,10 @@ test.describe('eval loop diagram', () => {
     await page.getByTestId('run-btn').click()
     await expect(page.getByTestId('run-output')).toBeVisible({ timeout: 5000 })
 
-    // label stage should now be active
-    const labelStage = page.getByTestId('loop-stage-label')
-    await expect(labelStage).toBeVisible()
-    // prompt and data should be past
+    // output stage should now be active (blue border = data-active="true")
+    const outputStage = page.getByTestId('loop-stage-output')
+    await expect(outputStage).toHaveAttribute('data-active', 'true')
+    // data and prompt should be past (✓ prefix)
     await expect(page.getByTestId('loop-stage-data')).toContainText('✓')
     await expect(page.getByTestId('loop-stage-prompt')).toContainText('✓')
   })
@@ -134,9 +134,9 @@ test.describe('eval loop diagram', () => {
     await page.getByTestId('batch-eval-btn').click()
     await expect(page.getByTestId('disagreement-table')).toBeVisible({ timeout: 15000 })
 
-    // agreement stage should be active
+    // agreement stage should be active (blue border = data-active="true")
     const agreementStage = page.getByTestId('loop-stage-agreement')
-    await expect(agreementStage).toBeVisible()
+    await expect(agreementStage).toHaveAttribute('data-active', 'true')
   })
 })
 

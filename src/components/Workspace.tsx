@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { PatientBrowser, type PatientRow } from './PatientBrowser'
 import { PromptEditor } from './PromptEditor'
 import { RagModeToggle } from './RagModeToggle'
@@ -14,7 +14,7 @@ import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from '.
 import { EvalLoopDiagram, type EvalStage } from './EvalLoopDiagram'
 import { Term } from './Term'
 import { useRun } from '@/hooks/useRun'
-import type { UserCase, UserCaseV2 } from '@/lib/cases'
+import { loadUserCasesV2, type UserCase, type UserCaseV2 } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -60,6 +60,11 @@ export function Workspace() {
   const [goldenCaseCount, setGoldenCaseCount] = useState(0)
   const [hasEvalRun, setHasEvalRun] = useState(false)
 
+  // Seed count from localStorage so the diagram reflects prior work on reload
+  useEffect(() => {
+    setGoldenCaseCount(loadUserCasesV2().length)
+  }, [])
+
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
   const customGenerationPrompt =
@@ -68,7 +73,7 @@ export function Workspace() {
   function computeCurrentStage(): EvalStage {
     if (hasEvalRun) return 'agreement'
     if (goldenCaseCount > 0) return 'judge'
-    if (trace != null || text.length > 0) return 'label'
+    if (trace != null || text.length > 0) return 'output'
     if (selectedPatient != null) return 'prompt'
     return 'data'
   }
