@@ -15,6 +15,7 @@ import { estimateTokens, countInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS }
 import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
+import { resolveJudgeKey } from './judge-key'
 import type { RunTrace, RunRequest } from './types'
 
 const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
@@ -143,15 +144,12 @@ export async function POST(req: NextRequest): Promise<Response> {
   // Judge uses the seeded env key by default so scores stay comparable to the baseline.
   // If judgeUsesByo is true the judge uses the caller's key (scores are non-comparable).
   // If no env key exists, fall back to the BYO key regardless (only available option).
-  const effectiveJudgeUsesByo = Boolean(judgeUsesByo && byoKey)
-  const judgeKey = effectiveJudgeUsesByo ? byoKey! : (envKey ?? byoKey!)
+  // resolveJudgeKey derives judgeKeyIsByo from the ACTUAL key used, not from the
+  // requested flag — important when envKey is absent and the judge silently falls back.
+  const { judgeKey, judgeKeyIsByo } = resolveJudgeKey(byoKey, envKey, judgeUsesByo ?? false)
   if (!judgeKey) {
     return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
   }
-  // Derive the stored flag from the actual key used, not from the requested flag.
-  // When envKey is absent the fallback to byoKey is invisible to effectiveJudgeUsesByo,
-  // causing the stored flag to misreport false even though the BYO key was used.
-  const judgeKeyIsByo = Boolean(byoKey && judgeKey === byoKey)
 
   const judgeClient = new Anthropic({ apiKey: judgeKey })
   const aiProvider = createAnthropic({ apiKey: generationKey })

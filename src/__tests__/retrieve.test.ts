@@ -8,10 +8,13 @@
  *      with VOYAGE_ESTIMATE_MICRO=10).
  *   3. SpendCapError from killswitch → 429.
  *   4. Upstash unreachable in killswitch → 503 (fail closed).
+ *   5. refundSpend throws (Upstash goes down between booking and retrieval failure)
+ *      → original retrieval error is still returned (not masked by the rollback error).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextRequest } from 'next/server'
+import { retrieve } from '@/lib/rag/index'
 
 // ── Mock setup ────────────────────────────────────────────────────────────────
 
@@ -135,5 +138,22 @@ describe('/api/retrieve', () => {
     const res = await POST(makeReq({ patientId: 'p1', query: 'what medications?' }))
 
     expect(res.status).toBe(503)
+  })
+
+  it('[RETRIEVE-REFUND-THROWS] returns 500 with original error even when refundSpend also throws', async () => {
+    // Scenario: bookSpend succeeds, retrieve() fails, then refundSpend() (redis.decrby) also throws
+    // because Upstash went down between the initial booking and the retrieval failure.
+    // Without the try-catch around refundSpend, the rollback exception would propagate
+    // and mask the original retrieval error; the caller would get no meaningful response.
+    vi.mocked(retrieve).mockRejectedValueOnce(new Error('RAG retrieval failed'))
+    mockDecrby.mockRejectedValueOnce(new Error('Upstash decrby: connection refused'))
+
+    const { POST } = await import('@/app/api/retrieve/route')
+    const res = await POST(makeReq({ patientId: 'p1', query: 'what medications?' }))
+
+    // The route must return 500 with the ORIGINAL retrieval error, not an unhandled exception
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body.error).toMatch(/RAG retrieval failed/)
   })
 })
