@@ -138,12 +138,13 @@ function rubricRedactionMarker(rubric: string): string {
 
 async function tryExtract(
   client: Anthropic,
-  prompt: string
+  prompt: string,
+  maxTokens: number = MAX_TOKENS,
 ): Promise<ExtractInput | null> {
   try {
     const response = await client.messages.create({
       model: HAIKU_MODEL,
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       temperature: 0,
       tools: [EXTRACT_TOOL],
       tool_choice: { type: 'tool', name: 'extract_claims' },
@@ -159,12 +160,13 @@ async function tryExtract(
 
 async function tryVerdict(
   client: Anthropic,
-  prompt: string
+  prompt: string,
+  maxTokens: number = MAX_TOKENS,
 ): Promise<VerdictInput | null> {
   try {
     const response = await client.messages.create({
       model: HAIKU_MODEL,
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       temperature: 0,
       tools: [VERDICT_TOOL],
       tool_choice: { type: 'tool', name: 'verdict_claims' },
@@ -186,10 +188,11 @@ const JUDGE_PARSE_ATTEMPTS = 4
 
 async function extractWithRetry(
   client: Anthropic,
-  prompt: string
+  prompt: string,
+  maxTokens: number = MAX_TOKENS,
 ): Promise<ExtractInput | null> {
   for (let i = 0; i < JUDGE_PARSE_ATTEMPTS; i++) {
-    const r = await tryExtract(client, prompt)
+    const r = await tryExtract(client, prompt, maxTokens)
     if (r !== null) return r
   }
   return null
@@ -197,10 +200,11 @@ async function extractWithRetry(
 
 async function verdictWithRetry(
   client: Anthropic,
-  prompt: string
+  prompt: string,
+  maxTokens: number = MAX_TOKENS,
 ): Promise<VerdictInput | null> {
   for (let i = 0; i < JUDGE_PARSE_ATTEMPTS; i++) {
-    const r = await tryVerdict(client, prompt)
+    const r = await tryVerdict(client, prompt, maxTokens)
     if (r !== null) return r
   }
   return null
@@ -214,10 +218,14 @@ function normalizeVerdict(v: string): FaithfulnessClaim['verdict'] {
 export async function scoreFaithfulness(
   evalCase: EvalCase,
   client?: Anthropic,
-  judgePrompt?: string
+  judgePrompt?: string,
+  options?: { extractMaxTokens?: number; verdictMaxTokens?: number },
 ): Promise<FaithfulnessResult> {
   const anthropicClient =
     client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+  const extractMax = options?.extractMaxTokens ?? MAX_TOKENS
+  const verdictMax = options?.verdictMaxTokens ?? MAX_TOKENS
 
   // Compute rubricMeta up-front so ALL return paths (including early returns for
   // zero-claim and extract-error) carry the fingerprint when a rubric was supplied.
@@ -228,7 +236,7 @@ export async function scoreFaithfulness(
   const groundingContext = getGrounding(evalCase)
   const extractPrompt = buildExtractPrompt(evalCase.output)
 
-  const extractResult = await extractWithRetry(anthropicClient, extractPrompt)
+  const extractResult = await extractWithRetry(anthropicClient, extractPrompt, extractMax)
 
   if (extractResult === null) {
     return {
@@ -258,7 +266,7 @@ export async function scoreFaithfulness(
   // Call (2): build the verdict prompt with the caller-supplied rubric (or the default).
   // The rubric controls HOW each claim is judged; the fixed tool schema enforces the output shape.
   const verdictPromptFull = buildVerdictPrompt(extractResult.claims, groundingContext, judgePrompt)
-  const verdictResult = await verdictWithRetry(anthropicClient, verdictPromptFull)
+  const verdictResult = await verdictWithRetry(anthropicClient, verdictPromptFull, verdictMax)
 
   const verdictPromptLogged = rubricMeta
     ? buildVerdictPrompt(extractResult.claims, groundingContext, rubricMeta)

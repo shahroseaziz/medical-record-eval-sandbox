@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { PatientBrowser, type PatientRow } from './PatientBrowser'
 import { PromptEditor } from './PromptEditor'
 import { RagModeToggle } from './RagModeToggle'
@@ -9,9 +9,9 @@ import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
 import { GoldenSetBuilder } from './GoldenSetBuilder'
 import { ApiKeyInput } from './ApiKeyInput'
+import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { useRun } from '@/hooks/useRun'
 import type { UserCase, UserCaseV2 } from '@/lib/cases'
-import { loadGenPrompt, saveGenPrompt } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -40,7 +40,7 @@ export function Workspace() {
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
-  const [genPrompt, setGenPrompt] = useState('')
+  const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
   // Snapshot the patient id, gen-prompt, query, mode, and record at the moment
   // run() is invoked so GoldenSetBuilder always sees the values that produced
   // the last output — never live UI state that may have changed since.
@@ -52,19 +52,13 @@ export function Workspace() {
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
-  useEffect(() => {
-    setGenPrompt(loadGenPrompt())
-  }, [])
-
-  function handleGenPromptChange(v: string) {
-    setGenPrompt(v)
-    saveGenPrompt(v)
-  }
+  const customGenerationPrompt =
+    generationPrompt !== DEFAULT_GENERATION_PROMPT ? generationPrompt : undefined
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
     setRunPatientId(selectedPatient.id)
-    setRunGenPrompt(genPrompt)
+    setRunGenPrompt(generationPrompt)
     setRunQuery(query)
     setRunMode(mode)
     setRunRecord(record)
@@ -73,7 +67,7 @@ export function Workspace() {
       query,
       mode,
       record: mode === 'stuff' ? record : undefined,
-      generationPrompt: genPrompt || undefined,
+      generationPrompt: customGenerationPrompt,
     })
   }
 
@@ -82,7 +76,7 @@ export function Workspace() {
     setMode(uc.mode)
     if (uc.record) setRecord(uc.record)
     setRunPatientId(uc.patientId)
-    setRunGenPrompt(genPrompt)
+    setRunGenPrompt(generationPrompt)
     setRunQuery(uc.query)
     setRunMode(uc.mode)
     setRunRecord(uc.mode === 'stuff' ? (uc.record ?? '') : '')
@@ -91,7 +85,7 @@ export function Workspace() {
       query: uc.query,
       mode: uc.mode,
       record: uc.mode === 'stuff' ? uc.record : undefined,
-      generationPrompt: genPrompt || undefined,
+      generationPrompt: customGenerationPrompt,
     })
   }
 
@@ -100,7 +94,7 @@ export function Workspace() {
     setMode(uc.ragMode)
     if (uc.capturedGrounding.record) setRecord(uc.capturedGrounding.record)
     setRunPatientId(uc.patientId)
-    setRunGenPrompt(genPrompt)
+    setRunGenPrompt(generationPrompt)
     setRunQuery(uc.taskPrompt)
     setRunMode(uc.ragMode)
     setRunRecord(uc.ragMode === 'stuff' ? (uc.capturedGrounding.record ?? '') : '')
@@ -109,7 +103,7 @@ export function Workspace() {
       query: uc.taskPrompt,
       mode: uc.ragMode,
       record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
-      generationPrompt: genPrompt || undefined,
+      generationPrompt: customGenerationPrompt,
     })
   }
 
@@ -157,35 +151,11 @@ export function Workspace() {
 
           <PromptEditor value={query} onChange={setQuery} disabled={loading} />
 
-          <details style={{ marginTop: '0.75rem' }}>
-            <summary
-              style={{ fontSize: '0.82rem', color: '#666', cursor: 'pointer', userSelect: 'none' }}
-            >
-              Generation prompt (advanced)
-            </summary>
-            <div style={{ marginTop: '0.4rem' }}>
-              <textarea
-                data-testid="gen-prompt-input"
-                value={genPrompt}
-                onChange={(e) => handleGenPromptChange(e.target.value)}
-                disabled={loading}
-                rows={4}
-                placeholder="Leave blank to use the built-in medical-record-analyst template."
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  fontFamily: 'inherit',
-                  fontSize: '0.82rem',
-                  padding: '0.4rem 0.6rem',
-                  resize: 'vertical',
-                }}
-              />
-              <p style={{ fontSize: '0.75rem', color: '#888', margin: '0.2rem 0 0' }}>
-                Overrides the built-in system prompt. The text is never persisted in traces
-                (only a hash is stored for provenance).
-              </p>
-            </div>
-          </details>
+          <GenerationPromptEditor
+            value={generationPrompt}
+            onChange={setGenerationPrompt}
+            disabled={loading}
+          />
 
           <div style={{ marginTop: '0.75rem' }}>
             <RagModeToggle
@@ -341,7 +311,7 @@ export function Workspace() {
         currentQuery={runQuery}
         currentMode={runMode}
         currentRecord={runRecord}
-        currentGenPrompt={genPrompt}
+        currentGenPrompt={generationPrompt}
         runGenPrompt={runGenPrompt}
         loading={loading}
         onRunCase={handleRunGoldenCase}
