@@ -218,6 +218,58 @@ describe('GoldenSetBuilder — runEval with /api/score', () => {
     expect(stored.results[0].caseId).toBe('c1')
   })
 
+  it('rate-limited on the very first case shows a visible banner with N of M message', async () => {
+    const user = userEvent.setup()
+
+    const cases = [makeCase('c1', 'pass'), makeCase('c2', 'fail'), makeCase('c3', 'pass')]
+    mockLocalStorage['user_cases_v2'] = JSON.stringify(cases)
+
+    const fetchMock = vi
+      .fn()
+      // c1 is rate-limited immediately — 0 cases scored
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: 'Rate limit exceeded.' }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<GoldenSetBuilder {...DEFAULT_PROPS} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-eval-btn')).toHaveTextContent('Run eval (3)')
+    })
+
+    await user.click(screen.getByTestId('batch-eval-btn'))
+
+    // Banner must appear even though 0 cases were scored
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('partial-run-banner')).toBeInTheDocument()
+      },
+      { timeout: 5000 },
+    )
+
+    const banner = screen.getByTestId('partial-run-banner')
+    expect(banner).toHaveTextContent('Rate-limited')
+    expect(banner).toHaveTextContent('0 of 3')
+
+    // Only 1 fetch call — stopped at first case
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Button offers resume
+    expect(screen.getByTestId('batch-eval-btn')).toHaveTextContent('Resume eval (0/3)')
+
+    // Stored run has partial flag with 0 scored
+    const storedRaw = mockLocalStorage['user_eval_run_v1']
+    expect(storedRaw).toBeTruthy()
+    const stored = JSON.parse(storedRaw) as StoredEvalRun
+    expect(stored.partial?.rateLimited).toBe(true)
+    expect(stored.partial?.scored).toBe(0)
+    expect(stored.partial?.total).toBe(3)
+    expect(stored.results).toHaveLength(0)
+  })
+
   it('resume run continues from prior partial results without re-scoring completed cases', async () => {
     const user = userEvent.setup()
 

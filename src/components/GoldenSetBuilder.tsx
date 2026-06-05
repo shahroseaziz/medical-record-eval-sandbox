@@ -46,11 +46,16 @@ function assembleGrounding(cg: CapturedGrounding): string {
 
 // ── Per-case scorer (POST /api/score with captured output + grounding) ────────
 
+const SCORE_TIMEOUT_MS = 30_000
+
 async function scoreOneCase(
   uc: UserCaseV2,
 ): Promise<{ data: ScoreAPIResponse | null; rateLimited: boolean }> {
   const grounding = assembleGrounding(uc.capturedGrounding)
   if (!grounding) return { data: null, rateLimited: false }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), SCORE_TIMEOUT_MS)
 
   let res: Response
   try {
@@ -62,10 +67,13 @@ async function scoreOneCase(
         capturedOutput: uc.capturedOutput,
         capturedGrounding: grounding,
       }),
+      signal: controller.signal,
     })
   } catch {
+    clearTimeout(timeoutId)
     return { data: null, rateLimited: false }
   }
+  clearTimeout(timeoutId)
 
   if (res.status === 429) return { data: null, rateLimited: true }
   if (!res.ok) return { data: null, rateLimited: false }
@@ -382,6 +390,24 @@ export function GoldenSetBuilder({
           style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}
         >
           {batchProgress}
+        </div>
+      )}
+
+      {/* Standalone rate-limit banner — shown when rate-limited before any results exist */}
+      {evalPartial?.rateLimited && (!batchResults || batchResults.length === 0) && (
+        <div
+          data-testid="partial-run-banner"
+          style={{
+            padding: '0.4rem 0.6rem',
+            background: '#fff3cd',
+            border: '1px solid #e8a000',
+            borderRadius: 4,
+            fontSize: '0.8rem',
+            color: '#5c3c00',
+            marginBottom: '0.5rem',
+          }}
+        >
+          {`Rate-limited — ${evalPartial.scored} of ${evalPartial.total} scored. Click "Resume eval" to continue when the rate-limit window resets.`}
         </div>
       )}
 
