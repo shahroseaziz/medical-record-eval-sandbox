@@ -51,10 +51,10 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
           Judge-vs-reference: <strong>{(judgeReferenceAgreement * 100).toFixed(1)}%</strong>
         </span>
         <span data-testid="scorecard-kappa-judge-human">
-          Cohen&apos;s κ (judge-human): <strong>{fmtKappa(judgeHumanKappa)}</strong>
+          Judge–human agreement: <strong>{fmtKappa(judgeHumanKappa)}</strong>
         </span>
         <span data-testid="scorecard-kappa-inter-human">
-          Cohen&apos;s κ (inter-human): <strong>{fmtKappa(interHumanKappa)}</strong>
+          Inter-human agreement: <strong>{fmtKappa(interHumanKappa)}</strong>
         </span>
         <span style={{ color: '#888', fontSize: '0.82rem' }}>n={n}</span>
       </div>

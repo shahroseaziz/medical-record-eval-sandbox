@@ -7,8 +7,9 @@ import { RagModeToggle } from './RagModeToggle'
 import { TransformInspector } from './TransformInspector'
 import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
-import { ApiKeyInput } from './ApiKeyInput'
+import { ApiKeyInput, getByoHeaders } from './ApiKeyInput'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
+import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from './JudgeRubricEditor'
 import { useRun } from '@/hooks/useRun'
 import type { UserCase } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
@@ -40,6 +41,10 @@ export function Workspace() {
   const [mode, setMode] = useState<RunMode>('retrieve')
   const [record, setRecord] = useState('')
   const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
+  const [judgeRubric, setJudgeRubric] = useState(DEFAULT_VERDICT_RUBRIC)
+  const [rescoring, setRescoring] = useState(false)
+  const [rescoreResult, setRescoreResult] = useState<RescoreResult | null>(null)
+  const [rescoreError, setRescoreError] = useState<string | null>(null)
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
@@ -48,6 +53,8 @@ export function Workspace() {
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
+    setRescoreResult(null)
+    setRescoreError(null)
     run({
       patientId: selectedPatient.id,
       query,
@@ -61,6 +68,8 @@ export function Workspace() {
     setQuery(uc.query)
     setMode(uc.mode)
     if (uc.record) setRecord(uc.record)
+    setRescoreResult(null)
+    setRescoreError(null)
     run({
       patientId: uc.patientId,
       query: uc.query,
@@ -68,6 +77,37 @@ export function Workspace() {
       record: uc.mode === 'stuff' ? uc.record : undefined,
       generationPrompt: customGenerationPrompt,
     })
+  }
+
+  async function handleRescore() {
+    if (!trace) return
+    setRescoring(true)
+    setRescoreError(null)
+    setRescoreResult(null)
+    try {
+      const customRubric =
+        judgeRubric !== DEFAULT_VERDICT_RUBRIC ? judgeRubric : undefined
+      const res = await fetch('/api/score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getByoHeaders() },
+        body: JSON.stringify({
+          source: 'captured',
+          capturedOutput: trace.output,
+          capturedGrounding: trace.grounding,
+          ...(customRubric ? { userVerdictRubric: customRubric } : {}),
+        }),
+      })
+      const data = (await res.json()) as RescoreResult & { error?: string }
+      if (!res.ok) {
+        setRescoreError(data.error ?? 'Re-score failed')
+        return
+      }
+      setRescoreResult(data)
+    } catch (e) {
+      setRescoreError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setRescoring(false)
+    }
   }
 
   const canRun = Boolean(selectedPatient && query.trim() && !loading)
@@ -107,8 +147,14 @@ export function Workspace() {
                 fontSize: '0.9rem',
               }}
             >
-              Selected: <strong>{selectedPatient.summary.demographics.firstName} {selectedPatient.summary.demographics.lastName}</strong>{' '}
-              <span style={{ color: '#666', fontSize: '0.8rem' }}>({selectedPatient.id.slice(0, 12)}…)</span>
+              Selected:{' '}
+              <strong>
+                {selectedPatient.summary.demographics.firstName}{' '}
+                {selectedPatient.summary.demographics.lastName}
+              </strong>{' '}
+              <span style={{ color: '#666', fontSize: '0.8rem' }}>
+                ({selectedPatient.id.slice(0, 12)}…)
+              </span>
             </div>
           )}
 
@@ -118,6 +164,17 @@ export function Workspace() {
             value={generationPrompt}
             onChange={setGenerationPrompt}
             disabled={loading}
+          />
+
+          <JudgeRubricEditor
+            value={judgeRubric}
+            onChange={setJudgeRubric}
+            disabled={loading}
+            canRescore={Boolean(trace)}
+            onRescore={handleRescore}
+            rescoring={rescoring}
+            rescoreResult={rescoreResult}
+            rescoreError={rescoreError}
           />
 
           <div style={{ marginTop: '0.75rem' }}>
@@ -130,7 +187,14 @@ export function Workspace() {
             />
           </div>
 
-          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div
+            style={{
+              marginTop: '0.75rem',
+              display: 'flex',
+              gap: '0.5rem',
+              alignItems: 'center',
+            }}
+          >
             <button
               data-testid="run-btn"
               onClick={handleRun}
@@ -195,7 +259,9 @@ export function Workspace() {
 
           {evalResult && (
             <div data-testid="eval-results" style={{ marginBottom: '0.75rem' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>Eval scores:</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>
+                Eval scores:
+              </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <EvalBadge label="faithfulness" score={evalResult.faithfulness.score} />
                 <EvalBadge label="section-hit" score={evalResult.sectionHit.score} />
@@ -208,7 +274,16 @@ export function Workspace() {
                   <ul style={{ marginTop: 4, paddingLeft: 16 }}>
                     {evalResult.faithfulness.claims.map((c, i) => (
                       <li key={i} style={{ marginBottom: 4 }}>
-                        <span style={{ color: c.verdict === 'supported' ? '#2a7' : c.verdict === 'unsupported' ? '#c00' : '#a80' }}>
+                        <span
+                          style={{
+                            color:
+                              c.verdict === 'supported'
+                                ? '#2a7'
+                                : c.verdict === 'unsupported'
+                                  ? '#c00'
+                                  : '#a80',
+                          }}
+                        >
                           [{c.verdict}]
                         </span>{' '}
                         {c.claim}

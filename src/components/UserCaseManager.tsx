@@ -61,7 +61,7 @@ export function UserCaseManager({
 
       <p style={{ fontSize: '0.78rem', color: '#666', margin: '0 0 0.5rem' }}>
         User cases are stored in <code>localStorage</code> only. They never contribute to the
-        seeded aggregate, agreement, or kappa metrics.
+        seeded aggregate, agreement, or calibration metrics.
       </p>
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>

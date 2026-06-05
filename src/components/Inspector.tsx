@@ -76,11 +76,48 @@ export function Inspector({ trace, baselineEntry }: InspectorProps) {
         </section>
       )}
 
-      {/* ── Judge rubric ── */}
+      {/* ── Extracted Claims (call 1) ── */}
+      {faithfulness && (
+        <section data-testid="extracted-claims" style={{ marginBottom: '1rem' }}>
+          <div style={{ fontWeight: 600, marginBottom: '0.35rem' }}>Extracted Claims</div>
+          <div
+            style={{
+              fontSize: '0.8rem',
+              color: '#555',
+              marginBottom: '0.4rem',
+              padding: '0.3rem 0.6rem',
+              background: '#f0f7ff',
+              border: '1px solid #aaccff',
+              borderRadius: 4,
+            }}
+          >
+            Your answer made {faithfulness.claims.length} claim
+            {faithfulness.claims.length !== 1 ? 's' : ''} — the judge checks each against the
+            record
+          </div>
+          {faithfulness.claims.length > 0 ? (
+            <ol style={{ paddingLeft: 20, margin: 0, lineHeight: 1.6 }}>
+              {faithfulness.claims.map((claim, i) => (
+                <li key={i} data-testid={`extracted-claim-${i}`} style={{ marginBottom: '0.15rem' }}>
+                  {claim.claim}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div style={{ color: '#888', fontStyle: 'italic', fontSize: '0.8rem' }}>
+              No claims extracted.
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Judge rubric & verdict detail ── */}
       {faithfulness && (
         <section style={{ marginBottom: '1rem' }}>
           <details>
-            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Judge rubric</summary>
+            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+              Judge rubric &amp; verdict detail
+            </summary>
             <div style={{ marginTop: '0.25rem' }}>
               <div style={{ fontWeight: 600, marginBottom: 2 }}>Extract prompt:</div>
               <pre
