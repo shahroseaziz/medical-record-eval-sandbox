@@ -90,8 +90,12 @@ export async function bookSpend(
   const refund: Refund = async () => {
     try {
       await Promise.all([redis.decrby(dk, amountMicroUsd), redis.decrby(hk, amountMicroUsd)])
-    } catch {
+    } catch (err) {
       // Best-effort — a failed refund is a conservative overcount, not a security issue.
+      console.log(JSON.stringify({
+        event: 'refund_spend_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }))
     }
   }
 

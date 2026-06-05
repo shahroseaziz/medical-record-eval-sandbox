@@ -52,17 +52,15 @@ describe('judge-BYO telemetry — resolveJudgeKey()', () => {
   })
 
   it('BYO not requested, BYO available, env absent — correctly reports BYO used (the regression case)', () => {
-    // This is the key regression: previously effectiveJudgeUsesByo was stored directly,
-    // which gave false here even though the judge ran with the BYO key.
+    // The bug: when judgeUsesByo=false but envKey is absent the judge fell back to the BYO key,
+    // yet the stored flag was derived from `Boolean(judgeUsesByo && byoKey)` = false — wrong.
+    // The fix derives judgeKeyIsByo from whether judgeKey === byoKey (the actual key used).
     const byoKey = 'caller-key'
     const envKey = undefined
 
-    // Pre-fix behavior (shows the old bug): effectiveJudgeUsesByo = false even though BYO key used
-    const effectiveJudgeUsesByo = Boolean(false && byoKey) // = false (the buggy stored value)
-    expect(effectiveJudgeUsesByo).toBe(false)
-
-    // Post-fix behavior: resolveJudgeKey correctly reflects what actually happened
+    // resolveJudgeKey must report that the BYO key was actually used, even though the
+    // caller did not explicitly request BYO judge scoring.
     const { judgeKeyIsByo } = resolveJudgeKey(byoKey, envKey, false)
-    expect(judgeKeyIsByo).toBe(true) // correctly reflects what actually happened
+    expect(judgeKeyIsByo).toBe(true)
   })
 })

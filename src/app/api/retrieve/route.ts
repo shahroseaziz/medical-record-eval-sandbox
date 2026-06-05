@@ -70,16 +70,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(result)
   } catch (err) {
     if (refundSpend) {
-      try {
-        await refundSpend()
-      } catch (refundErr) {
-        // Upstash may be unavailable between the initial booking and this rollback.
-        // Log and ignore — the original retrieval error must still be returned.
-        console.error(JSON.stringify({
-          event: 'refund_spend_failed',
-          error: refundErr instanceof Error ? refundErr.message : String(refundErr),
-        }))
-      }
+      // bookSpend's closure already catches and logs decrby failures internally (best-effort).
+      await refundSpend()
       refundSpend = null
     }
     const message = err instanceof Error ? err.message : 'Unknown error'

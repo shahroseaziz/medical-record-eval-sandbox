@@ -140,18 +140,18 @@ describe('/api/retrieve', () => {
     expect(res.status).toBe(503)
   })
 
-  it('[RETRIEVE-REFUND-THROWS] returns 500 with original error even when refundSpend also throws', async () => {
-    // Scenario: bookSpend succeeds, retrieve() fails, then refundSpend() (redis.decrby) also throws
-    // because Upstash went down between the initial booking and the retrieval failure.
-    // Without the try-catch around refundSpend, the rollback exception would propagate
-    // and mask the original retrieval error; the caller would get no meaningful response.
+  it('[RETRIEVE-REFUND-OBSERVABLE] returns 500 with original error even when Upstash decrby fails during refund', async () => {
+    // Scenario: bookSpend succeeds, retrieve() fails, then redis.decrby inside the refund
+    // closure throws because Upstash went down between the booking and retrieval failure.
+    // The refund closure in bookSpend catches and logs that error internally (best-effort),
+    // so the route always returns the original retrieval error — never a redis error.
     vi.mocked(retrieve).mockRejectedValueOnce(new Error('RAG retrieval failed'))
     mockDecrby.mockRejectedValueOnce(new Error('Upstash decrby: connection refused'))
 
     const { POST } = await import('@/app/api/retrieve/route')
     const res = await POST(makeReq({ patientId: 'p1', query: 'what medications?' }))
 
-    // The route must return 500 with the ORIGINAL retrieval error, not an unhandled exception
+    // The route must return 500 with the ORIGINAL retrieval error, not a redis error
     expect(res.status).toBe(500)
     const body = await res.json()
     expect(body.error).toMatch(/RAG retrieval failed/)
