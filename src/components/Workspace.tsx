@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { PatientBrowser, type PatientRow } from './PatientBrowser'
 import { PromptEditor } from './PromptEditor'
 import { RagModeToggle } from './RagModeToggle'
@@ -11,8 +11,10 @@ import { GoldenSetBuilder } from './GoldenSetBuilder'
 import { ApiKeyInput, getByoHeaders } from './ApiKeyInput'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from './JudgeRubricEditor'
+import { EvalLoopDiagram, type EvalStage } from './EvalLoopDiagram'
+import { Term } from './Term'
 import { useRun } from '@/hooks/useRun'
-import type { UserCase, UserCaseV2 } from '@/lib/cases'
+import { loadUserCasesV2, type UserCase, type UserCaseV2 } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -54,11 +56,29 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
   const [runQuery, setRunQuery] = useState('')
   const [runMode, setRunMode] = useState<RunMode>('retrieve')
   const [runRecord, setRunRecord] = useState('')
+  // Stage tracking for the loop diagram
+  const [goldenCaseCount, setGoldenCaseCount] = useState(0)
+  const [hasEvalRun, setHasEvalRun] = useState(false)
+  const [isLabeling, setIsLabeling] = useState(false)
+
+  // Seed count from localStorage so the diagram reflects prior work on reload
+  useEffect(() => {
+    setGoldenCaseCount(loadUserCasesV2().length)
+  }, [])
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
 
   const customGenerationPrompt =
     generationPrompt !== DEFAULT_GENERATION_PROMPT ? generationPrompt : undefined
+
+  function computeCurrentStage(): EvalStage {
+    if (hasEvalRun) return 'agreement'
+    if (isLabeling) return 'label'
+    if (goldenCaseCount > 0) return 'judge'
+    if (trace != null || text.length > 0) return 'output'
+    if (selectedPatient != null) return 'prompt'
+    return 'data'
+  }
 
   function handleRun() {
     if (!selectedPatient || !query.trim()) return
@@ -152,15 +172,36 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem', fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: '1.4rem', marginBottom: '0.25rem' }}>Medical Record Eval Sandbox</h1>
-      <p style={{ color: '#555', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-        Browse synthetic C-CDA patients, craft prompts, toggle RAG mode, run evaluations.
+      <p style={{ color: '#555', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+        Build and calibrate a{' '}
+        <Term
+          term="faithfulness judge"
+          definition="A second model call that checks every factual claim in the generation against the grounding context — the patient record that was actually retrieved. Faithfulness is not the same as correctness: it only checks whether what was said is backed by the provided context."
+        />{' '}
+        for medical-record question answering. All data is synthetic.
       </p>
+
+      {/* Persistent eval loop diagram */}
+      <EvalLoopDiagram currentStage={computeCurrentStage()} />
 
       <ApiKeyInput />
 
       <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
 
       {/* Patient browser */}
+      <div style={{ marginBottom: '0.4rem' }}>
+        <h2 style={{ fontSize: '1rem', margin: '0 0 0.25rem' }}>Data</h2>
+        <p style={{ fontSize: '0.8rem', color: '#666', margin: '0 0 0.5rem' }}>
+          These are synthetic C-CDA records generated from fictional demographics. No real patient
+          data.{' '}
+          <Term
+            term="Chunks"
+            definition="Sections of the C-CDA record split into smaller pieces and embedded as vectors. In retrieve mode, the k most similar chunks to your query are fetched and used as the grounding context."
+          />{' '}
+          are the unit the retriever returns; in stuff mode you provide the full record text
+          directly.
+        </p>
+      </div>
       <PatientBrowser
         selectedId={selectedPatient?.id ?? null}
         onSelect={(p) => setSelectedPatient(p)}
@@ -197,11 +238,51 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
 
           <PromptEditor value={query} onChange={setQuery} disabled={loading} />
 
+          {/* Generation prompt exposition */}
+          <div
+            style={{
+              fontSize: '0.78rem',
+              color: '#666',
+              margin: '0.4rem 0 0',
+              paddingLeft: '2px',
+            }}
+          >
+            The{' '}
+            <Term
+              term="generation prompt"
+              definition="The system-level instruction given to the model before every query. It shapes how the model reads the record and formats its answer. Treat it as the job description for your analyst: change it, run it, see what breaks."
+            />{' '}
+            is the instruction your model follows for every query. Edit it to explore different
+            analyst behaviors.
+          </div>
+
           <GenerationPromptEditor
             value={generationPrompt}
             onChange={setGenerationPrompt}
             disabled={loading}
           />
+
+          {/* Judge rubric exposition */}
+          <div
+            style={{
+              fontSize: '0.78rem',
+              color: '#666',
+              margin: '0.75rem 0 0',
+              paddingLeft: '2px',
+            }}
+          >
+            The{' '}
+            <Term
+              term="judge rubric"
+              definition="Plain-text instructions that tell the judge how to classify each extracted claim: supported, unsupported, or partial. The rubric is the knob you turn when the judge is too strict or too lenient."
+            />{' '}
+            controls how the judge classifies each{' '}
+            <Term
+              term="claim"
+              definition="An atomic factual assertion extracted from the model's output. For example, 'The patient takes lisinopril 10mg' is one claim. Each claim is independently checked against the grounding context."
+            />{' '}
+            in the output — change it to recalibrate without re-running the generation.
+          </div>
 
           <JudgeRubricEditor
             value={judgeRubric}
@@ -340,7 +421,13 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
               <ul style={{ paddingLeft: 16, marginTop: 4 }}>
                 {retrieval.chunks.map((c, i) => (
                   <li key={i} style={{ marginBottom: 4 }}>
-                    <strong>{c.section}</strong> (sim: {c.similarity.toFixed(3)})
+                    <strong>{c.section}</strong>{' '}
+                    (
+                    <Term
+                      term="sim"
+                      definition="Cosine similarity between the query embedding and the chunk embedding. Ranges 0–1; higher means more semantically similar. The retriever returns the k chunks with the highest similarity."
+                    />
+                    : {c.similarity.toFixed(3)})
                     <div style={{ color: '#555', marginTop: 2 }}>{c.text.slice(0, 120)}…</div>
                   </li>
                 ))}
@@ -391,6 +478,9 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
         runGenPrompt={runGenPrompt}
         loading={loading}
         onRunCase={handleRunGoldenCase}
+        onCaseSaved={(count) => setGoldenCaseCount(count)}
+        onEvalComplete={() => setHasEvalRun(true)}
+        onCapturePanelChange={setIsLabeling}
       />
     </div>
   )
