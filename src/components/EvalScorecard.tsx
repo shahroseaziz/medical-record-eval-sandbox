@@ -114,7 +114,10 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
           marginBottom: '0.5rem',
         }}
       >
-        <strong>Honesty:</strong> LLM judge — can be wrong; threshold chosen, not calibrated; human labels are a small proxy set
+        <strong>Honesty:</strong> The judge is an LLM — it makes mistakes. The 0.85 pass
+        threshold was chosen against this seeded set, not calibrated to your use case. The
+        human-label comparison uses a small AI-proxy set (strict Haiku vs. lenient Sonnet),
+        not a clinical panel. Treat these numbers as orientation, not ground truth.
       </div>
 
       <div
@@ -128,7 +131,12 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
           color: '#555',
         }}
       >
-        <strong>Scope:</strong> v1 sandbox; custom scorers, full golden-set builder, and cohort RAG are roadmapped
+        <strong>What this sandbox does and doesn&apos;t do:</strong> Your eval cases live in
+        your browser only — nothing is stored server-side or shared between users. Two things
+        are deliberately absent: <em>accounts</em> (close the tab and the session ends unless
+        you export), and <em>custom scorer code</em> (you author rubrics in plain text, not
+        code). The judge prompts and the seeded case set are both visible in the Inspector and
+        in the open source.
       </div>
     </section>
   )
