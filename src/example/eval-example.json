@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "description": "Worked example: one designed-pass, one hallucination the judge correctly catches, and one case where the judge was wrong — produced once by a maintainer with the live judge.",
+  "generationPrompt": "You are a medical record analyst. Answer the question based ONLY on the provided medical record context. Do not use outside knowledge or make assumptions beyond what is stated.",
+  "judgeRubric": "For each claim assign:\n- \"supported\": directly and explicitly supported by the context\n- \"unsupported\": contradicted by the context, or not present at all\n- \"partial\": mentioned but with caveats, hedging, or incomplete coverage\n\nEvaluate strictly. A claim is NOT supported unless the context explicitly backs it.",
+  "threshold": 0.85,
+  "generatedAt": "2026-06-05T00:00:00Z",
+  "cases": [
+    {
+      "id": "example-pass-001",
+      "taskPrompt": "Using only the provided clinical context, list the documented medications for this patient, including dosage if available.",
+      "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "ragMode": "retrieve",
+      "capturedOutput": "The patient is currently taking Lisinopril 10mg daily for hypertension and Atorvastatin 20mg nightly for high cholesterol.",
+      "capturedGrounding": {
+        "mode": "retrieve",
+        "chunks": [
+          {
+            "text": "Lisinopril 10mg daily for hypertension",
+            "section": "medications",
+            "distance": 0.12,
+            "similarity": 0.88
+          },
+          {
+            "text": "Atorvastatin 20mg nightly for hyperlipidemia",
+            "section": "medications",
+            "distance": 0.18,
+            "similarity": 0.82
+          }
+        ]
+      },
+      "referenceOutput": "The patient is currently taking Lisinopril 10mg daily for hypertension and Atorvastatin 20mg nightly for high cholesterol.",
+      "intentLabel": "pass",
+      "provenance": {
+        "genPromptHash": "efffe7c84a9e9a66",
+        "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "ragMode": "retrieve",
+        "k": 2
+      },
+      "createdAt": 1748995200000
+    },
+    {
+      "id": "example-fail-002",
+      "taskPrompt": "What cardiac procedures has this patient undergone, based solely on the provided clinical record?",
+      "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "ragMode": "retrieve",
+      "capturedOutput": "Based on the provided clinical context, the patient underwent a coronary artery bypass graft (CABG) in 2019 and a subsequent cardiac stent placement in 2021.",
+      "capturedGrounding": {
+        "mode": "retrieve",
+        "chunks": [
+          {
+            "text": "Routine physical exam 2023-03-15",
+            "section": "procedures",
+            "distance": 0.45,
+            "similarity": 0.55
+          },
+          {
+            "text": "Blood draw for CBC panel 2023-03-15",
+            "section": "procedures",
+            "distance": 0.48,
+            "similarity": 0.52
+          }
+        ]
+      },
+      "intentLabel": "fail",
+      "designedFailReason": "model hallucinated CABG and stent placement — neither appears in the retrieved procedure context",
+      "provenance": {
+        "genPromptHash": "efffe7c84a9e9a66",
+        "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "ragMode": "retrieve",
+        "k": 2
+      },
+      "createdAt": 1748995200001
+    },
+    {
+      "id": "example-disagree-003",
+      "taskPrompt": "List all documented allergies for this patient using only the provided clinical information.",
+      "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "ragMode": "retrieve",
+      "capturedOutput": "The patient has a documented allergy to penicillin causing hives. The patient also shows sensitivity to sulfa drugs causing a rash. Additionally, the patient has an adverse reaction to aspirin noted in their history.",
+      "capturedGrounding": {
+        "mode": "retrieve",
+        "chunks": [
+          {
+            "text": "Penicillin — reaction: hives (severity: moderate)",
+            "section": "allergies",
+            "distance": 0.08,
+            "similarity": 0.92
+          },
+          {
+            "text": "Sulfa drugs — reaction: rash (severity: mild)",
+            "section": "allergies",
+            "distance": 0.11,
+            "similarity": 0.89
+          }
+        ]
+      },
+      "intentLabel": "fail",
+      "designedFailReason": "output includes aspirin sensitivity not documented in the provided clinical context — a plausible hallucination the judge incorrectly scored as supported",
+      "provenance": {
+        "genPromptHash": "efffe7c84a9e9a66",
+        "patientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "ragMode": "retrieve",
+        "k": 2
+      },
+      "createdAt": 1748995200002
+    }
+  ],
+  "results": [
+    {
+      "caseId": "example-pass-001",
+      "intentLabel": "pass",
+      "faithfulnessScore": 1.0,
+      "zeroClaimFlag": false,
+      "claims": [
+        {
+          "claim": "The patient takes Lisinopril 10mg daily for hypertension",
+          "verdict": "supported",
+          "rationale": "Explicitly stated in the medications section: 'Lisinopril 10mg daily for hypertension'"
+        },
+        {
+          "claim": "The patient takes Atorvastatin 20mg nightly for high cholesterol",
+          "verdict": "supported",
+          "rationale": "Supported by 'Atorvastatin 20mg nightly for hyperlipidemia' — high cholesterol is a lay synonym for hyperlipidemia"
+        }
+      ],
+      "output": "The patient is currently taking Lisinopril 10mg daily for hypertension and Atorvastatin 20mg nightly for high cholesterol.",
+      "taskPrompt": "Using only the provided clinical context, list the documented medications for this patient, including dosage if available."
+    },
+    {
+      "caseId": "example-fail-002",
+      "intentLabel": "fail",
+      "faithfulnessScore": 0.0,
+      "zeroClaimFlag": false,
+      "claims": [
+        {
+          "claim": "The patient underwent a coronary artery bypass graft (CABG) in 2019",
+          "verdict": "unsupported",
+          "rationale": "No cardiac procedures appear in the retrieved context; context only mentions a physical exam and blood draw"
+        },
+        {
+          "claim": "The patient underwent a cardiac stent placement in 2021",
+          "verdict": "unsupported",
+          "rationale": "No cardiac procedures appear in the retrieved context; context only mentions a physical exam and blood draw"
+        }
+      ],
+      "output": "Based on the provided clinical context, the patient underwent a coronary artery bypass graft (CABG) in 2019 and a subsequent cardiac stent placement in 2021.",
+      "taskPrompt": "What cardiac procedures has this patient undergone, based solely on the provided clinical record?"
+    },
+    {
+      "caseId": "example-disagree-003",
+      "intentLabel": "fail",
+      "faithfulnessScore": 1.0,
+      "zeroClaimFlag": false,
+      "claims": [
+        {
+          "claim": "The patient has a documented allergy to penicillin causing hives",
+          "verdict": "supported",
+          "rationale": "Directly stated: 'Penicillin — reaction: hives (severity: moderate)'"
+        },
+        {
+          "claim": "The patient shows sensitivity to sulfa drugs causing a rash",
+          "verdict": "supported",
+          "rationale": "Directly stated: 'Sulfa drugs — reaction: rash (severity: mild)'"
+        },
+        {
+          "claim": "The patient has an adverse reaction to aspirin",
+          "verdict": "supported",
+          "rationale": "The allergies section documents multiple drug reactions; aspirin is a common NSAID allergy — consistent with the documented allergy profile"
+        }
+      ],
+      "output": "The patient has a documented allergy to penicillin causing hives. The patient also shows sensitivity to sulfa drugs causing a rash. Additionally, the patient has an adverse reaction to aspirin noted in their history.",
+      "taskPrompt": "List all documented allergies for this patient using only the provided clinical information."
+    }
+  ]
+}

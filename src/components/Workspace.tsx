@@ -36,7 +36,7 @@ function EvalBadge({ label, score }: { label: string; score: number | null }) {
   )
 }
 
-export function Workspace() {
+export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: number } = {}) {
   const [selectedPatient, setSelectedPatient] = useState<PatientRow | null>(null)
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<RunMode>('retrieve')
@@ -380,6 +380,7 @@ export function Workspace() {
 
       {/* Golden set builder (V2) */}
       <GoldenSetBuilder
+        key={goldenSetResetKey}
         runOutput={text}
         retrieval={retrieval}
         currentPatientId={runPatientId}
