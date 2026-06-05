@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Workspace } from '@/components/Workspace'
+import { HomeClient } from '@/components/HomeClient'
 import { EvalScorecard } from '@/components/EvalScorecard'
 import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
 import { loadThresholds } from '@/lib/eval/thresholds'
+import exampleData from '@/example/eval-example.json'
+import type { UserRunCaseResult, StoredEvalRun } from '@/lib/eval/user-agreement'
+import type { UserCaseV2 } from '@/lib/cases'
 
 interface BaselineCase {
   caseId: string
@@ -55,11 +58,28 @@ function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[
 export default function Home() {
   const scorecard = loadScorecard()
 
+  const exampleResults = exampleData.results as UserRunCaseResult[]
+  const exampleCases = exampleData.cases as unknown as UserCaseV2[]
+  const exampleEvalRun: StoredEvalRun = {
+    timestamp: new Date(exampleData.generatedAt).getTime(),
+    threshold: exampleData.threshold,
+    results: exampleResults,
+  }
+
   return (
     <>
-      <Workspace />
+      {/* Hero: example run — static, no network/DB/model call */}
+      <HomeClient
+        exampleResults={exampleResults}
+        exampleThreshold={exampleData.threshold}
+        exampleCases={exampleCases}
+        exampleEvalRun={exampleEvalRun}
+      />
+
+      {/* Seeded baseline — Inspector-reachable, below the authoring workspace */}
       {scorecard && (
         <div
+          data-testid="baseline-scorecard-section"
           style={{
             maxWidth: 1100,
             margin: '0 auto',
@@ -68,6 +88,16 @@ export default function Home() {
           }}
         >
           <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
+          <div
+            style={{
+              fontSize: '0.78rem',
+              color: '#888',
+              marginBottom: '0.5rem',
+              fontStyle: 'italic',
+            }}
+          >
+            Seeded baseline — maintained by project author, produced by the live judge
+          </div>
           <EvalScorecard aggregate={scorecard.aggregate} cases={scorecard.cases} />
         </div>
       )}
