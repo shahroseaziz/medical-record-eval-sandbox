@@ -1,7 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { computeUserAgreement, DEFAULT_PASS_THRESHOLD } from '@/lib/eval/user-agreement'
+import {
+  computeUserAgreement,
+  caseScore,
+  caseExcluded,
+  DEFAULT_PASS_THRESHOLD,
+} from '@/lib/eval/user-agreement'
 import type { UserRunCaseResult } from '@/lib/eval/user-agreement'
 import { Term } from './Term'
 
@@ -284,9 +289,11 @@ export function DisagreementTable({
           </thead>
           <tbody>
             {results.map((r) => {
-              const judgePass =
-                !r.zeroClaimFlag && r.faithfulnessScore !== null && r.faithfulnessScore >= threshold
-              const verdictLabel = r.zeroClaimFlag ? null : judgePass ? 'pass' : 'fail'
+              const score = caseScore(r)
+              const excluded = caseExcluded(r)
+              const claims = r.claims ?? []
+              const judgePass = !excluded && score !== null && score >= threshold
+              const verdictLabel = excluded ? null : judgePass ? 'pass' : 'fail'
               const disagrees = verdictLabel !== null && verdictLabel !== r.intentLabel
 
               return (
@@ -308,8 +315,8 @@ export function DisagreementTable({
 
                   {/* Judge verdict */}
                   <td style={TD}>
-                    {r.zeroClaimFlag ? (
-                      <span style={{ color: '#888', fontSize: '0.75rem' }}>zero-claim</span>
+                    {excluded ? (
+                      <span style={{ color: '#888', fontSize: '0.75rem' }}>excluded</span>
                     ) : (
                       <span style={verdictBadge(judgePass)}>{judgePass ? 'PASS' : 'FAIL'}</span>
                     )}
@@ -317,22 +324,22 @@ export function DisagreementTable({
 
                   {/* Score */}
                   <td style={{ ...TD, fontFamily: 'monospace' }}>
-                    {r.faithfulnessScore !== null ? r.faithfulnessScore.toFixed(2) : 'N/A'}
+                    {score !== null ? score.toFixed(2) : 'N/A'}
                   </td>
 
                   {/* Claims */}
                   <td style={TD}>
-                    {r.claims.length === 0 ? (
+                    {claims.length === 0 ? (
                       <span style={{ color: '#aaa' }}>—</span>
                     ) : (
                       <details>
                         <summary style={{ cursor: 'pointer' }}>
-                          {r.claims.length} claim{r.claims.length > 1 ? 's' : ''}
+                          {claims.length} claim{claims.length > 1 ? 's' : ''}
                         </summary>
                         <ul
                           style={{ margin: '4px 0', padding: '0 0 0 10px', listStyle: 'none' }}
                         >
-                          {r.claims.map((c, i) => (
+                          {claims.map((c, i) => (
                             <li key={i} style={{ marginBottom: 3 }}>
                               <span style={claimVerdictColor(c.verdict)}>[{c.verdict}]</span>{' '}
                               <span>{c.claim}</span>

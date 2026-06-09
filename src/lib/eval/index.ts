@@ -15,6 +15,8 @@ export type {
   SectionHitResult,
   StructuredFieldDiff,
   StructuredDiffResult,
+  FieldResultState,
+  FieldResult,
 } from './types'
 
 export { loadThresholds } from './thresholds'
@@ -44,3 +46,25 @@ export type {
 } from './scorers/structured-diff-normalization'
 export { computeMeanScore, computeStdDev, medianRunIndex, computeAggregate } from './aggregate'
 export type { FaithfulnessRunResult, CaseAggregateInput, AggregateResult } from './aggregate'
+export {
+  classifyField,
+  rollUpRow,
+  scoreRow,
+  scorerThreshold,
+  isScoreableState,
+  rowScorers,
+  rowFields,
+} from './row-aggregate'
+export type { FieldScoreOutcome, RowResult } from './row-aggregate'
+export {
+  computeUserAgreement,
+  caseScore,
+  caseExcluded,
+  toUserRunCaseResult,
+  DEFAULT_PASS_THRESHOLD,
+} from './user-agreement'
+export type {
+  UserRunCaseResult,
+  UserAgreementResult,
+  StoredEvalRun,
+} from './user-agreement'
