@@ -5,6 +5,7 @@ import { Container, Heading, Stack, Text } from '@/components/ui'
 import { LessonView } from '@/components/LessonView'
 import { loadLesson } from '@/lib/lesson'
 import { LessonBeat1 } from '@/components/LessonBeat1'
+import { LessonBeat2 } from '@/components/LessonBeat2'
 import { LessonBeat3 } from '@/components/LessonBeat3'
 import { loadThresholds } from '@/lib/eval/thresholds'
 import { DEFAULT_PASS_THRESHOLD } from '@/lib/eval/user-agreement'
@@ -34,12 +35,12 @@ export default function LessonPage() {
         </div>
 
         <Stack gap={1}>
-          <Heading level={1}>Correctness lesson: catching a dose error</Heading>
+          <Heading level={1}>Correctness lesson: from a dose error to a judgment call</Heading>
           <Text as="p" size="sm" tone="muted">
-            A guided, three-beat walkthrough of how a structured diff and a reference judge surface
-            a real extraction error, then how a faithfulness judge grades when there is no answer
-            key. Read-only and deterministic — runs on committed generation, no database or model
-            calls.
+            A guided, three-beat walkthrough: a structured diff catches a real extraction error
+            (Beat 1); a prose question defeats that diff and a reference judge resolves it (Beat 2);
+            and a faithfulness judge grades when there is no answer key at all (Beat 3). Read-only
+            and deterministic — runs on committed generation, no database or model calls.
           </Text>
         </Stack>
 
@@ -66,6 +67,9 @@ export default function LessonPage() {
             <code>npm run generate:baseline:replay</code> to produce it.
           </Text>
         )}
+
+        {/* Beat 2 — prose contrast (R9): the structured diff fails, the reference judge resolves */}
+        <LessonBeat2 />
 
         {/* Beat 3 — faithfulness capstone (R10): no answer key, grounded-claim check */}
         <Stack gap={1}>

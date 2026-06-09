@@ -11,33 +11,27 @@ const STATUS_TONE: Record<StructuredFieldDiff['status'], BadgeTone> = {
   extra: 'warning',
 }
 
-const VERDICT_TONE: Record<string, BadgeTone> = {
-  equivalent: 'success',
-  partial: 'warning',
-  divergent: 'danger',
-}
-
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`
 }
 
 /**
- * Guided correctness lesson — two beats, both driven by COMMITTED data
- * (`LessonData` from `loadLesson()`). Renders no inputs, performs no model call,
- * and is fully determined by its props, so the same `data` renders identically on
- * every load. This is the surface that makes the acceptance criterion verifiable.
+ * Guided correctness lesson — Beat 1, driven by COMMITTED data (`LessonData` from
+ * `loadLesson()`). Renders no inputs, performs no model call, and is fully
+ * determined by its props, so the same `data` renders identically on every load.
+ * Beat 2 (the prose contrast) and Beat 3 (faithfulness) are separate components
+ * rendered after this one on the lesson page.
  */
 export function LessonView({ data }: { data: LessonData }) {
-  const { beat1, beat2 } = data
+  const { beat1 } = data
 
   return (
     <Stack gap={5} data-testid="lesson-view">
       <Card tone="info" padding="sm" data-testid="lesson-intro">
         <Text as="p" size="sm">
           <strong>Why this is stable:</strong> the model output below is <em>committed</em>, not
-          generated on load. Beat-1&apos;s structured diff is deterministic and Beat-2&apos;s
-          reference-judge verdict is replayed from a committed fixture — so both beats produce
-          identical results every time, and the diff can never flap on formatting drift.
+          generated on load, and Beat&nbsp;1&apos;s structured diff is deterministic — so it
+          produces identical results every time and can never flap on formatting drift.
         </Text>
       </Card>
 
@@ -116,57 +110,6 @@ export function LessonView({ data }: { data: LessonData }) {
               </Stack>
             </Card>
           )}
-        </Stack>
-      </section>
-
-      {/* ── Beat 2 — reference-judge verdict (committed / replayed) ─────────── */}
-      <section data-testid="lesson-beat-2">
-        <Stack gap={3}>
-          <Stack gap={1}>
-            <Heading level={3}>Reference judge — committed verdict</Heading>
-            <Text as="p" size="sm" tone="muted">
-              The same output, compared in meaning against the expected prose. The verdict is a
-              committed record-replay fixture — never re-judged live.
-            </Text>
-          </Stack>
-
-          <div className={styles.metrics} data-testid="lesson-beat-2-metrics">
-            <span data-testid="lesson-verdict">
-              Verdict:{' '}
-              <Badge tone={VERDICT_TONE[beat2.verdict] ?? 'neutral'}>{beat2.verdict}</Badge>
-            </span>
-            <span>
-              score: <strong>{beat2.score.toFixed(2)}</strong>
-            </span>
-          </div>
-
-          <Card padding="sm" tone="neutral">
-            <Stack gap={2}>
-              <Stack gap={1}>
-                <Badge tone="neutral">Judge reason</Badge>
-                <Text as="p" size="sm" data-testid="lesson-judge-reason">
-                  {beat2.reason}
-                </Text>
-              </Stack>
-              <Stack gap={1}>
-                <Badge tone="neutral">Expected prose</Badge>
-                <Text as="p" size="sm" data-testid="lesson-expected-prose">
-                  {beat2.expectedProse}
-                </Text>
-              </Stack>
-            </Stack>
-          </Card>
-
-          <details className={styles.prompt}>
-            <summary className={styles.summary}>
-              <Text size="sm" weight="semibold">
-                Redacted judge prompt (no PHI/PII persisted)
-              </Text>
-            </summary>
-            <pre className={styles.pre} data-testid="lesson-judge-prompt">
-              {beat2.judgePrompt}
-            </pre>
-          </details>
         </Stack>
       </section>
     </Stack>
