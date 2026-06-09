@@ -1,0 +1,70 @@
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.segment {
+  appearance: none;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-primary-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+.segment + .segment {
+  border-left: 1px solid var(--color-primary-border);
+}
+.segment:hover {
+  background: var(--color-primary-subtle);
+}
+.segmentActive {
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+.segmentActive:hover {
+  background: var(--color-primary-hover);
+}
+
+.rubricText {
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+.meanScore {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+}
+
+.groundingList {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.pre {
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+.summary {
+  cursor: pointer;
+}

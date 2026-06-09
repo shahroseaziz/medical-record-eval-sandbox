@@ -85,6 +85,18 @@ export function ExampleHero({ results, threshold, onResetToExample }: Props) {
           >
             Share this run →
           </Link>
+          <Link
+            href="/lesson"
+            data-testid="lesson-link"
+            style={{
+              fontSize: '0.78rem',
+              color: '#2563eb',
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Faithfulness capstone lesson →
+          </Link>
         </div>
       </div>
 

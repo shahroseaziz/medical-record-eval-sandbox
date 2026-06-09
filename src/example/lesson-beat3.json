@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "description": "Beat 3 — faithfulness capstone. No answer key: the judge only checks whether each atomic claim is grounded in the retrieved context. Two committed rubric variants (strict / lenient) let the same outputs re-score deterministically, so the lesson runs offline with no model call. Synthetic patient data only.",
+  "rubrics": {
+    "strict": "For each claim assign:\n- \"supported\": directly and explicitly supported by the context\n- \"unsupported\": contradicted by the context, or not present at all\n- \"partial\": mentioned but with caveats, hedging, or incomplete coverage\n\nEvaluate strictly. A claim is NOT supported unless the context explicitly backs it.",
+    "lenient": "For each claim assign:\n- \"supported\": explicitly stated OR a clinically reasonable inference from the context\n- \"unsupported\": contradicted by the context, or with no plausible basis in it\n- \"partial\": mentioned but with caveats, hedging, or incomplete coverage\n\nGive the benefit of the doubt: a plausible, clinically sensible reading of the context counts as supported."
+  },
+  "cases": [
+    {
+      "caseId": "beat3-medications-pass",
+      "intentLabel": "pass",
+      "taskPrompt": "Using only the provided clinical context, list the documented medications for this patient, including dosage if available.",
+      "output": "The patient is currently taking Lisinopril 10mg daily for hypertension and Atorvastatin 20mg nightly for high cholesterol.",
+      "designedReason": "Every medication and dose is taken verbatim from the retrieved medications chunks. Designed to pass under any reasonable rubric.",
+      "grounding": [
+        { "section": "medications", "text": "Lisinopril 10mg daily for hypertension" },
+        { "section": "medications", "text": "Atorvastatin 20mg nightly for hyperlipidemia" }
+      ],
+      "claims": {
+        "strict": [
+          {
+            "claim": "The patient takes Lisinopril 10mg daily for hypertension",
+            "verdict": "supported",
+            "rationale": "Explicitly stated: 'Lisinopril 10mg daily for hypertension'"
+          },
+          {
+            "claim": "The patient takes Atorvastatin 20mg nightly for high cholesterol",
+            "verdict": "supported",
+            "rationale": "Explicitly stated: 'Atorvastatin 20mg nightly for hyperlipidemia' (high cholesterol is the lay synonym)"
+          }
+        ],
+        "lenient": [
+          {
+            "claim": "The patient takes Lisinopril 10mg daily for hypertension",
+            "verdict": "supported",
+            "rationale": "Explicitly stated: 'Lisinopril 10mg daily for hypertension'"
+          },
+          {
+            "claim": "The patient takes Atorvastatin 20mg nightly for high cholesterol",
+            "verdict": "supported",
+            "rationale": "Explicitly stated: 'Atorvastatin 20mg nightly for hyperlipidemia' (high cholesterol is the lay synonym)"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "beat3-cardiac-hallucination-fail",
+      "intentLabel": "fail",
+      "taskPrompt": "What cardiac procedures has this patient undergone, based solely on the provided clinical record?",
+      "output": "Based on the provided clinical context, the patient underwent a coronary artery bypass graft (CABG) in 2019 and a subsequent cardiac stent placement in 2021.",
+      "designedReason": "Both procedures are invented — the retrieved context contains only a routine exam and a blood draw. A blatant hallucination that no rubric should rescue.",
+      "grounding": [
+        { "section": "procedures", "text": "Routine physical exam 2023-03-15" },
+        { "section": "procedures", "text": "Blood draw for CBC panel 2023-03-15" }
+      ],
+      "claims": {
+        "strict": [
+          {
+            "claim": "The patient underwent a coronary artery bypass graft (CABG) in 2019",
+            "verdict": "unsupported",
+            "rationale": "No cardiac procedure appears in the context; only a physical exam and a blood draw are documented"
+          },
+          {
+            "claim": "The patient underwent a cardiac stent placement in 2021",
+            "verdict": "unsupported",
+            "rationale": "No cardiac procedure appears in the context; only a physical exam and a blood draw are documented"
+          }
+        ],
+        "lenient": [
+          {
+            "claim": "The patient underwent a coronary artery bypass graft (CABG) in 2019",
+            "verdict": "unsupported",
+            "rationale": "Even under a generous reading there is no basis: the context documents only a physical exam and a blood draw"
+          },
+          {
+            "claim": "The patient underwent a cardiac stent placement in 2021",
+            "verdict": "unsupported",
+            "rationale": "Even under a generous reading there is no basis: the context documents only a physical exam and a blood draw"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "beat3-allergies-rubric-sensitive-fail",
+      "intentLabel": "fail",
+      "taskPrompt": "List all documented allergies for this patient using only the provided clinical information.",
+      "output": "The patient has a documented allergy to penicillin causing hives. The patient also shows sensitivity to sulfa drugs causing a rash. Additionally, the patient has an adverse reaction to aspirin noted in their history.",
+      "designedReason": "The aspirin reaction is not in the context — a plausible-sounding hallucination. You labeled this FAIL. Watch whether the judge agrees: the lenient rubric is fooled, the strict one is not.",
+      "grounding": [
+        { "section": "allergies", "text": "Penicillin — reaction: hives (severity: moderate)" },
+        { "section": "allergies", "text": "Sulfa drugs — reaction: rash (severity: mild)" }
+      ],
+      "claims": {
+        "strict": [
+          {
+            "claim": "The patient has a documented allergy to penicillin causing hives",
+            "verdict": "supported",
+            "rationale": "Directly stated: 'Penicillin — reaction: hives (severity: moderate)'"
+          },
+          {
+            "claim": "The patient shows sensitivity to sulfa drugs causing a rash",
+            "verdict": "supported",
+            "rationale": "Directly stated: 'Sulfa drugs — reaction: rash (severity: mild)'"
+          },
+          {
+            "claim": "The patient has an adverse reaction to aspirin",
+            "verdict": "unsupported",
+            "rationale": "Aspirin does not appear anywhere in the allergies context — there is no basis for this claim"
+          }
+        ],
+        "lenient": [
+          {
+            "claim": "The patient has a documented allergy to penicillin causing hives",
+            "verdict": "supported",
+            "rationale": "Directly stated: 'Penicillin — reaction: hives (severity: moderate)'"
+          },
+          {
+            "claim": "The patient shows sensitivity to sulfa drugs causing a rash",
+            "verdict": "supported",
+            "rationale": "Directly stated: 'Sulfa drugs — reaction: rash (severity: mild)'"
+          },
+          {
+            "claim": "The patient has an adverse reaction to aspirin",
+            "verdict": "supported",
+            "rationale": "The context documents multiple drug allergies; an aspirin/NSAID reaction is clinically plausible alongside them"
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "beat3-problems-threshold-sensitive-pass",
+      "intentLabel": "pass",
+      "taskPrompt": "Summarize this patient's active problems using only the provided clinical context.",
+      "output": "The patient has type 2 diabetes, hypertension, and hyperlipidemia. Their diabetes appears well-controlled.",
+      "designedReason": "Three diagnoses are explicit; 'well-controlled' is an interpretation the HbA1c (6.4%) supports. You labeled it PASS. Under the strict rubric the interpretive claim drops the score below 0.85 — a threshold problem, not a rubric one.",
+      "grounding": [
+        { "section": "problems", "text": "Active problems: Type 2 diabetes mellitus" },
+        { "section": "problems", "text": "Active problems: Essential hypertension" },
+        { "section": "problems", "text": "Active problems: Hyperlipidemia" },
+        { "section": "labs", "text": "Most recent HbA1c: 6.4% (2023-02-10)" }
+      ],
+      "claims": {
+        "strict": [
+          {
+            "claim": "The patient has type 2 diabetes",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Type 2 diabetes mellitus'"
+          },
+          {
+            "claim": "The patient has hypertension",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Essential hypertension'"
+          },
+          {
+            "claim": "The patient has hyperlipidemia",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Hyperlipidemia'"
+          },
+          {
+            "claim": "The patient's diabetes appears well-controlled",
+            "verdict": "partial",
+            "rationale": "The HbA1c of 6.4% is consistent with control, but the context never states 'well-controlled' explicitly"
+          }
+        ],
+        "lenient": [
+          {
+            "claim": "The patient has type 2 diabetes",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Type 2 diabetes mellitus'"
+          },
+          {
+            "claim": "The patient has hypertension",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Essential hypertension'"
+          },
+          {
+            "claim": "The patient has hyperlipidemia",
+            "verdict": "supported",
+            "rationale": "Explicitly listed: 'Hyperlipidemia'"
+          },
+          {
+            "claim": "The patient's diabetes appears well-controlled",
+            "verdict": "supported",
+            "rationale": "An HbA1c of 6.4% is within the controlled range, so 'well-controlled' is a reasonable inference"
+          }
+        ]
+      }
+    }
+  ]
+}
