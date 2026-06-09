@@ -1,0 +1,13 @@
+.container {
+  width: 100%;
+  max-width: var(--layout-max-width);
+  margin-inline: auto;
+  padding-inline: var(--layout-gutter);
+}
+
+/* Tighten the side gutter on small screens. */
+@media (max-width: 640px) {
+  .container {
+    padding-inline: var(--space-4);
+  }
+}
