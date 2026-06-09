@@ -9,7 +9,13 @@ import {
 } from '../row-aggregate'
 import type { FieldScoreOutcome } from '../row-aggregate'
 import type { Thresholds } from '../thresholds'
-import { computeUserAgreement, toUserRunCaseResult, caseScore, caseExcluded } from '../user-agreement'
+import {
+  computeUserAgreement,
+  toUserRunCaseResult,
+  caseScore,
+  caseExcluded,
+  caseVerdict,
+} from '../user-agreement'
 
 const THRESHOLDS: Thresholds = {
   faithfulness: 0.85,
@@ -253,6 +259,59 @@ describe('mixed rows feed scorer-agnostic agreement', () => {
     expect(agreement.nExcluded).toBe(1)
     expect(agreement.agreeCount).toBe(2)
     expect(agreement.agreement).toBeCloseTo(1.0)
+  })
+
+  it('honors the row state, not the row mean, for a mixed row that straddles the global threshold', () => {
+    // The contradiction case: structured-diff 1.0 (matched, ≥0.7) + reference-judge
+    // 0.79 (mismatched, <0.8) → row state 'mismatched', but the mean is 0.895, which
+    // is ≥ the 0.85 global threshold. A mean-vs-global verdict would call this a PASS;
+    // the per-field roll-up says FAIL. Agreement must follow the state.
+    const row = scoreRow(
+      'mix1',
+      [
+        { field: 'structured', scorer: 'structured-diff', score: 1.0 },
+        { field: 'prose', scorer: 'reference-judge', score: 0.79 },
+      ],
+      THRESHOLDS,
+    )
+    expect(row.state).toBe('mismatched')
+    expect(row.score).toBeCloseTo(0.895) // mean ≥ 0.85 — would be PASS under mean-vs-global
+
+    const passResult = toUserRunCaseResult(row, {
+      intentLabel: 'pass',
+      output: 'o',
+      taskPrompt: 't',
+    })
+    // Verdict follows the frozen state (FAIL), ignoring the global slider value.
+    expect(caseVerdict(passResult, 0.85)).toBe('fail')
+    expect(caseVerdict(passResult, 0.5)).toBe('fail') // slider does not move a mixed row
+
+    // designed-pass + FAIL verdict → DISAGREE (a mean-based verdict would have agreed).
+    const disagree = computeUserAgreement([passResult], 0.85)
+    expect(disagree.n).toBe(1)
+    expect(disagree.agreeCount).toBe(0)
+
+    // designed-fail + FAIL verdict → AGREE.
+    const failResult = toUserRunCaseResult(row, {
+      intentLabel: 'fail',
+      output: 'o',
+      taskPrompt: 't',
+    })
+    const agree = computeUserAgreement([failResult], 0.85)
+    expect(agree.agreeCount).toBe(1)
+  })
+
+  it('keeps the threshold slider live for a pure-faithfulness row', () => {
+    // A single faithfulness field is the one threshold-calibratable case: the slider
+    // still moves its verdict, so the calibration workflow is preserved.
+    const row = scoreRow(
+      'f-only',
+      [{ field: 'prose', scorer: 'faithfulness', score: 0.7 }],
+      THRESHOLDS,
+    )
+    const r = toUserRunCaseResult(row, { intentLabel: 'pass', output: 'o', taskPrompt: 't' })
+    expect(caseVerdict(r, 0.85)).toBe('fail') // 0.7 < 0.85
+    expect(caseVerdict(r, 0.5)).toBe('pass') // 0.7 ≥ 0.5
   })
 
   it('bridge: caseScore/caseExcluded read generalized fields when present', () => {

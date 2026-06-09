@@ -5,6 +5,7 @@ import {
   computeUserAgreement,
   caseScore,
   caseExcluded,
+  caseVerdict,
   DEFAULT_PASS_THRESHOLD,
 } from '@/lib/eval/user-agreement'
 import type { UserRunCaseResult } from '@/lib/eval/user-agreement'
@@ -292,8 +293,11 @@ export function DisagreementTable({
               const score = caseScore(r)
               const excluded = caseExcluded(r)
               const claims = r.claims ?? []
-              const judgePass = !excluded && score !== null && score >= threshold
-              const verdictLabel = excluded ? null : judgePass ? 'pass' : 'fail'
+              // Single source of truth shared with computeUserAgreement: honors a
+              // field-graded row's roll-up state, falls back to score-vs-threshold
+              // for legacy / pure-faithfulness rows.
+              const verdictLabel = caseVerdict(r, threshold)
+              const judgePass = verdictLabel === 'pass'
               const disagrees = verdictLabel !== null && verdictLabel !== r.intentLabel
 
               return (

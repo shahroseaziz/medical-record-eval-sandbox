@@ -60,6 +60,7 @@ export {
   computeUserAgreement,
   caseScore,
   caseExcluded,
+  caseVerdict,
   toUserRunCaseResult,
   DEFAULT_PASS_THRESHOLD,
 } from './user-agreement'

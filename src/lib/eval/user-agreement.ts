@@ -1,4 +1,4 @@
-import type { FieldResult, ScorerName } from './types'
+import type { FieldResult, FieldResultState, ScorerName } from './types'
 import type { RowResult } from './row-aggregate'
 import { rowScorers } from './row-aggregate'
 
@@ -31,6 +31,15 @@ export interface UserRunCaseResult {
   fields?: FieldResult[]
   /** Distinct scorers that contributed to `score` (provenance / display). */
   scorers?: ScorerName[]
+  /**
+   * Row-level state rolled up from the per-field results (see row-aggregate.ts).
+   * This is the AUTHORITATIVE verdict for a field-graded row: each field was
+   * classified against its own scorer's configured threshold, so the row's
+   * matched/mismatched verdict must NOT be re-derived from the row mean against a
+   * single global threshold. Absent on legacy faithfulness results (`caseVerdict`
+   * falls back to score-vs-threshold there). See `caseVerdict`.
+   */
+  state?: FieldResultState
   // ── Legacy faithfulness detail (optional; still written by the prose path) ──
   /** @deprecated faithfulness-specific alias for `score`. Read via `caseScore`. */
   faithfulnessScore?: number | null
@@ -80,10 +89,54 @@ export function toUserRunCaseResult(
     excluded: row.excluded,
     fields: row.fields,
     scorers: rowScorers(row.fields),
+    state: row.state,
     output: meta.output,
     taskPrompt: meta.taskPrompt,
     claims: meta.claims,
   }
+}
+
+/**
+ * Whether the global pass-threshold slider applies to this result's verdict.
+ *
+ * The slider is a FAITHFULNESS-calibration control: it answers "what faithfulness
+ * cutoff best matches my labels?". It is meaningful only for rows whose verdict is
+ * a single faithfulness score against one threshold — i.e. legacy results (no
+ * per-field `state`) and pure-faithfulness field rows. A row graded by
+ * structured-diff or a reference judge (or any mix) was classified field-by-field
+ * against per-scorer config thresholds; sliding one global threshold over its mean
+ * would override those and is incoherent, so such rows read their frozen `state`.
+ */
+function isThresholdCalibratable(c: UserRunCaseResult): boolean {
+  if (c.state === undefined) return true
+  const scorers = c.scorers ?? []
+  return scorers.length > 0 && scorers.every((s) => s === 'faithfulness')
+}
+
+/**
+ * The pass/fail verdict for one result, or null when it is excluded (nothing
+ * cleanly scoreable). This is the single source of truth shared by the agreement
+ * metric and the disagreement table, so the two can never diverge.
+ *
+ * - Field-graded, non-faithfulness/mixed rows: read the authoritative roll-up
+ *   `state` (matched→pass, mismatched→fail). The threshold argument is ignored —
+ *   per-field thresholds already decided this at scoring time.
+ * - Legacy / pure-faithfulness rows: compare the score to `threshold` so the
+ *   calibration slider keeps working.
+ */
+export function caseVerdict(
+  c: UserRunCaseResult,
+  threshold: number,
+): 'pass' | 'fail' | null {
+  if (caseExcluded(c)) return null
+  if (!isThresholdCalibratable(c) && c.state !== undefined) {
+    if (c.state === 'matched') return 'pass'
+    if (c.state === 'mismatched') return 'fail'
+    return null
+  }
+  const score = caseScore(c)
+  if (score === null) return null
+  return score >= threshold ? 'pass' : 'fail'
 }
 
 export interface UserAgreementResult {
@@ -105,11 +158,13 @@ export interface UserAgreementResult {
  * rows are treated identically. The score's origin is irrelevant here.
  *
  * Inclusion rules:
- * - Excluded cases (nothing scoreable: zero-claim / skipped / no score) are
- *   EXCLUDED from the denominator.
+ * - Excluded cases (nothing scoreable: zero-claim / skipped / judge-errored /
+ *   rate-limited / no score) are EXCLUDED from the denominator.
  * - Designed-fail cases (intentLabel='fail') are RETAINED in the denominator.
- * - A case agrees when score >= threshold AND intentLabel='pass',
- *   OR score < threshold AND intentLabel='fail'.
+ * - A case agrees when its verdict (see `caseVerdict`) equals its intentLabel.
+ *   The verdict honors a field-graded row's roll-up `state` and only falls back
+ *   to score-vs-threshold for legacy / pure-faithfulness rows, so a mixed row's
+ *   per-field classification is never overridden by the global threshold.
  *
  * Deliberately NOT a chance-corrected statistic: Cohen's κ (aggregate.ts) is for
  * the seeded judge-calibration set, not user evals. At user N (≈6-8 cases) κ is
@@ -127,8 +182,8 @@ export function computeUserAgreement(
   if (n === 0) return { agreement: null, n: 0, nExcluded, agreeCount: 0 }
 
   const agreeCount = eligible.filter((c) => {
-    const judgePass = (caseScore(c) as number) >= threshold
-    return (judgePass && c.intentLabel === 'pass') || (!judgePass && c.intentLabel === 'fail')
+    const verdict = caseVerdict(c, threshold)
+    return verdict !== null && verdict === c.intentLabel
   }).length
 
   return { agreement: agreeCount / n, n, nExcluded, agreeCount }

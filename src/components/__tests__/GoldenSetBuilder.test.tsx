@@ -34,7 +34,7 @@ Object.defineProperty(window, 'sessionStorage', {
 // ── Component imports (after storage mocks) ───────────────────────────────────
 
 import { GoldenSetBuilder } from '../GoldenSetBuilder'
-import type { UserCaseV2 } from '@/lib/cases'
+import type { UserCaseV2, UserCaseV3 } from '@/lib/cases'
 import { DEFAULT_PASS_THRESHOLD } from '@/lib/eval/user-agreement'
 import type { StoredEvalRun } from '@/lib/eval/user-agreement'
 
@@ -340,5 +340,94 @@ describe('GoldenSetBuilder — runEval with /api/score', () => {
 
     // Button back to "Run eval"
     expect(screen.getByTestId('batch-eval-btn')).toHaveTextContent('Run eval (3)')
+  })
+})
+
+// ── Per-field scorer dispatch (mixed diff + judge row) ────────────────────────
+
+function makeV3MixedCase(id: string, intentLabel: 'pass' | 'fail' = 'pass'): UserCaseV3 {
+  const meds = { medications: [{ name: 'Lisinopril', dose: '10mg' }] }
+  return {
+    version: 3,
+    id,
+    taskPrompt: `What medications does patient ${id} take?`,
+    patientId: 'patient-001',
+    ragMode: 'stuff',
+    // Captured output is structured JSON so structured-diff can parse it.
+    capturedOutput: JSON.stringify(meds),
+    capturedGrounding: { mode: 'stuff', record: `${id}: Lisinopril 10mg daily.` },
+    expectedStructured: meds,
+    expectedProse: `${id} takes Lisinopril 10mg daily.`,
+    // structured field graded by the deterministic diff; prose by the reference judge.
+    fieldScorers: { structured: 'structured-diff', prose: 'reference-judge' },
+    intentLabel,
+    provenance: {
+      genPromptHash: 'aabbccddeeff0011',
+      patientId: 'patient-001',
+      ragMode: 'stuff',
+    },
+    createdAt: 1700000000000,
+  }
+}
+
+describe('GoldenSetBuilder — per-field scorer dispatch', () => {
+  beforeEach(() => {
+    Object.keys(mockLocalStorage).forEach((k) => delete mockLocalStorage[k])
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('dispatches reference-judge to /api/score-reference and composes a mixed diff+judge row', async () => {
+    const user = userEvent.setup()
+
+    mockLocalStorage['user_cases_v3'] = JSON.stringify([makeV3MixedCase('c1', 'pass')])
+
+    // Only the reference-judge field hits the network — structured-diff is
+    // deterministic and runs client-side, so exactly one fetch is expected.
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        score: 0.9,
+        verdict: 'equivalent',
+        reason: 'same meaning',
+        threshold: 0.8,
+        passed: true,
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<GoldenSetBuilder {...DEFAULT_PROPS} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-eval-btn')).toHaveTextContent('Run eval (1)')
+    })
+
+    await user.click(screen.getByTestId('batch-eval-btn'))
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('disagreement-table')).toBeInTheDocument()
+      },
+      { timeout: 5000 },
+    )
+
+    // Reference judge dispatched to the R5 route — NOT faithfulness /api/score.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/score-reference')
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(init.body as string)
+    expect(typeof body.actual).toBe('string')
+    expect(typeof body.expected).toBe('string')
+
+    // The mixed row scored cleanly (structured-diff 1.0 + reference-judge 0.9) and
+    // renders a verdict — designed-pass + both fields matched → agreement (no
+    // disagreement highlight).
+    const row = screen.getByTestId('disagreement-row-c1')
+    expect(row).toHaveAttribute('data-disagrees', 'false')
   })
 })
