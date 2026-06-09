@@ -650,6 +650,131 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       expect(trace!.grounding).toContain('Lisinopril')
     })
   })
+
+  // ── R1: generate-only mode (live-generation fan-out) ────────────────────────
+
+  describe('generate-only mode (R1)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mockCreate: any
+
+    beforeAll(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockCreate = ((await import('@anthropic-ai/sdk')) as any).__mockCreate
+    })
+
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      mockCreate.mockReset()
+    })
+
+    function makeReq(body: object): Request {
+      return new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    }
+
+    it('streams generation but emits NO eval part', async () => {
+      const res = await handler(
+        makeReq({
+          patientId: 'p1',
+          query: 'What medications is the patient on?',
+          mode: 'stuff',
+          record: 'Patient takes Lisinopril 10mg daily for hypertension.',
+          generateOnly: true,
+        }) as never,
+      )
+
+      const parts = parseDataStreamParts(await res.text())
+      const textIdx = parts.findIndex((p) => p.type === 'text')
+      const evalPart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'eval',
+      )
+
+      expect(textIdx).toBeGreaterThanOrEqual(0) // generation still streams
+      expect(evalPart).toBeUndefined() // but no faithfulness eval
+    })
+
+    it('never calls the faithfulness judge', async () => {
+      const res = await handler(
+        makeReq({
+          patientId: 'p1',
+          query: 'What medications is the patient on?',
+          mode: 'stuff',
+          record: 'Patient takes Lisinopril 10mg daily for hypertension.',
+          generateOnly: true,
+        }) as never,
+      )
+      await res.text() // drain so execute() completes
+
+      // The judge client's messages.create is the only Anthropic call besides
+      // generation (which is mocked separately via streamText). Zero calls means
+      // the faithfulness judge was skipped.
+      expect(mockCreate).not.toHaveBeenCalled()
+    })
+
+    it('still persists a trace with section-hit and zero claims', async () => {
+      const res = await handler(
+        makeReq({
+          patientId: 'p1',
+          query: 'What medications is the patient on?',
+          mode: 'stuff',
+          record: 'Patient takes Lisinopril 10mg daily for hypertension.',
+          generateOnly: true,
+        }) as never,
+      )
+
+      const parts = parseDataStreamParts(await res.text())
+      const tracePart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace',
+      )
+      expect(tracePart).toBeDefined()
+      const trace = (tracePart!.value as Record<string, unknown>).trace as RunTrace
+      expect(trace.output.length).toBeGreaterThan(0)
+      expect(trace.sectionHit).toHaveProperty('scorer', 'section-hit')
+      expect(trace.claimCount).toBe(0)
+      expect(trace.scorerResults).toHaveLength(1)
+    })
+
+    it('default mode (generateOnly omitted) still emits the eval part', async () => {
+      // Re-arm the alternating extract/verdict judge responses for this one run.
+      let idx = 0
+      mockCreate.mockImplementation(() => {
+        const i = idx++
+        if (i % 2 === 0) {
+          return Promise.resolve({
+            content: [{ type: 'tool_use', name: 'extract_claims', input: { claims: ['c'] } }],
+          })
+        }
+        return Promise.resolve({
+          content: [
+            {
+              type: 'tool_use',
+              name: 'verdict_claims',
+              input: { verdicts: [{ claim: 'c', verdict: 'supported', rationale: 'r' }] },
+            },
+          ],
+        })
+      })
+
+      const res = await handler(
+        makeReq({
+          patientId: 'p1',
+          query: 'What medications is the patient on?',
+          mode: 'stuff',
+          record: 'Patient takes Lisinopril 10mg daily for hypertension.',
+        }) as never,
+      )
+
+      const parts = parseDataStreamParts(await res.text())
+      const evalPart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'eval',
+      )
+      expect(evalPart).toBeDefined()
+      expect(mockCreate).toHaveBeenCalled()
+    })
+  })
 })
 
 // ─── DB trace persistence (requires DATABASE_URL) ─────────────────────────────

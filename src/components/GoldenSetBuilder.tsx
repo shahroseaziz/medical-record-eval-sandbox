@@ -10,6 +10,7 @@ import {
   genPromptHash,
 } from '@/lib/cases'
 import type { RetrievalData } from '@/hooks/useRun'
+import { useGenerationRun, type GenerationCase } from '@/hooks/useGenerationRun'
 import type { RunMode } from '@/app/api/run/types'
 import { DisagreementTable } from './DisagreementTable'
 import type { UserRunCaseResult } from '@/lib/eval/user-agreement'
@@ -156,6 +157,9 @@ export function GoldenSetBuilder({
     rateLimited: boolean
   } | null>(null)
 
+  // Live-generation fan-out: re-run the current prompt across every golden case.
+  const gen = useGenerationRun()
+
   useEffect(() => {
     setCases(loadUserCasesV2())
     const stored = loadStoredEvalRun()
@@ -238,6 +242,30 @@ export function GoldenSetBuilder({
     setBatchRunning(false)
     setBatchProgress('')
     onEvalComplete?.()
+  }
+
+  // Map golden cases → generation-fan-out inputs. Each case re-runs generation
+  // against its own patient/mode/grounding using the *current* (possibly edited)
+  // generation prompt — this is the keystone round-trip.
+  function toGenerationCases(): GenerationCase[] {
+    return cases.map((uc) => ({
+      id: uc.id,
+      patientId: uc.patientId,
+      query: uc.taskPrompt,
+      mode: uc.ragMode,
+      record: uc.ragMode === 'stuff' ? uc.capturedGrounding.record : undefined,
+      k: uc.provenance.k,
+    }))
+  }
+
+  function regenerate() {
+    if (gen.running || cases.length === 0) return
+    gen.run(toGenerationCases(), currentGenPrompt)
+  }
+
+  function resumeRegenerate() {
+    if (gen.running || cases.length === 0) return
+    gen.resume(toGenerationCases(), currentGenPrompt)
   }
 
   function openCapture() {
@@ -385,6 +413,78 @@ export function GoldenSetBuilder({
           style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}
         >
           {batchProgress}
+        </div>
+      )}
+
+      {/* ── Live-generation fan-out ──────────────────────────────────────────
+          Edit the generation prompt above, then regenerate every case to see
+          what the new prompt produces — the round-trip the prototype faked. */}
+      <div style={{ marginBottom: '0.5rem' }}>
+        <button
+          data-testid="regenerate-btn"
+          onClick={regenerate}
+          disabled={cases.length === 0 || gen.running}
+          style={{
+            padding: '0.3rem 0.7rem',
+            fontSize: '0.85rem',
+            opacity: cases.length === 0 || gen.running ? 0.5 : 1,
+          }}
+        >
+          {gen.running ? 'Regenerating…' : `Regenerate with current prompt (${cases.length})`}
+        </button>
+
+        {gen.running && (
+          <>
+            {' '}
+            <button
+              data-testid="abort-regenerate-btn"
+              onClick={gen.abort}
+              style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem', color: '#c00' }}
+            >
+              Abort
+            </button>
+          </>
+        )}
+
+        {!gen.running && gen.rateLimited && (
+          <>
+            {' '}
+            <button
+              data-testid="resume-regenerate-btn"
+              onClick={resumeRegenerate}
+              disabled={cases.length === 0}
+              style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem' }}
+            >
+              Resume regeneration ({gen.completed}/{gen.total})
+            </button>
+          </>
+        )}
+      </div>
+
+      {(gen.running || gen.completed > 0) && gen.total > 0 && (
+        <div
+          data-testid="regenerate-progress"
+          style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem' }}
+        >
+          Regenerated {gen.completed} / {gen.total}
+          {gen.running && gen.activeCaseId ? ' (in progress…)' : ''}
+        </div>
+      )}
+
+      {gen.rateLimited && !gen.running && (
+        <div
+          data-testid="regenerate-rate-limit-banner"
+          style={{
+            padding: '0.4rem 0.6rem',
+            background: '#fff3cd',
+            border: '1px solid #e8a000',
+            borderRadius: 4,
+            fontSize: '0.8rem',
+            color: '#5c3c00',
+            marginBottom: '0.5rem',
+          }}
+        >
+          {`Rate-limited — ${gen.completed} of ${gen.total} regenerated. Click "Resume regeneration" when the rate-limit window resets.`}
         </div>
       )}
 
@@ -727,6 +827,45 @@ export function GoldenSetBuilder({
                     <div style={{ color: '#bbb', fontSize: '0.70rem', marginTop: 2 }}>
                       {new Date(uc.createdAt).toLocaleString()}
                     </div>
+
+                    {/* Regenerated output for this case (live-generation fan-out) */}
+                    {(() => {
+                      const r = gen.results[uc.id]
+                      if (!r || r.status === 'pending') return null
+                      return (
+                        <div
+                          data-testid={`regenerated-output-${uc.id}`}
+                          style={{
+                            marginTop: 6,
+                            padding: '0.4rem 0.5rem',
+                            background: '#fff',
+                            border: '1px solid #d7e3ff',
+                            borderRadius: 4,
+                            fontSize: '0.78rem',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              color: '#0057c2',
+                              marginBottom: 3,
+                              fontSize: '0.72rem',
+                            }}
+                          >
+                            Regenerated output
+                            {r.status === 'running' ? ' (streaming…)' : ''}
+                            {r.status === 'error' ? ' — failed' : ''}
+                          </div>
+                          {r.status === 'error' ? (
+                            <div style={{ color: '#c00' }}>{r.error ?? 'Generation failed'}</div>
+                          ) : (
+                            <div style={{ color: '#333', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                              {r.output || (r.status === 'running' ? '…' : '')}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Actions */}

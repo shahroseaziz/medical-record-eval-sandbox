@@ -29,7 +29,7 @@ export interface RunState {
 // Prefix 2: → data array (JSON array of data items)
 // Prefix 3: → error (JSON string)
 // Prefix d: → finish metadata (ignored, not end-of-stream signal)
-function parseLine(
+export function parseLine(
   line: string,
 ): { kind: 'text'; value: string } | { kind: 'data'; items: unknown[] } | { kind: 'err'; message: string } | null {
   if (!line.trim()) return null
