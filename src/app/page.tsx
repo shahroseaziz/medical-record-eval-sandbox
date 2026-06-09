@@ -118,6 +118,10 @@ export default function Home() {
             <Link href="/lesson" data-testid="lesson-link">
               Walk through the correctness lesson: catching a dose error →
             </Link>
+            <br />
+            <Link href="/workbench" data-testid="workbench-link">
+              Open the workbench: prompt, cases, and evaluator as free knobs →
+            </Link>
           </div>
         </div>
       )}
