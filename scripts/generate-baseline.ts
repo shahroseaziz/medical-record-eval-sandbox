@@ -7,11 +7,26 @@
  *   2. Generate a model output ONCE with claude-haiku-4-5 (or use preauthoredOutput
  *      when present — used for designed-fail cases).
  *   3. Run the two-call faithfulness judge k=5 times; record the median run's trace.
- *   4. Run contains / section-hit scorers once each.
+ *   4. Run contains / section-hit / structured-diff / reference-judge scorers.
+ *
+ * Modes:
+ *   - LIVE (default): every model call and pgvector retrieval is made for real.
+ *     Faithfulness scores are non-deterministic, so each LIVE run differs slightly.
+ *   - REPLAY (`--replay` or BASELINE_REPLAY=1): rule-20 deterministic test seam.
+ *     No network, no DB, no API key required. Model/retrieval outputs are REPLAYED
+ *     from the committed prior baseline (the recording) and the committed
+ *     reference-judge fixture; the free deterministic scorers (contains,
+ *     section-hit, structured-diff) are recomputed in-process. The result is the
+ *     same file byte-for-byte except `generatedAt`, so the committed baseline is
+ *     reproducible offline — this is what keeps the guided lesson stable.
  *
  * Emits:
  *   evals/results/seed-baseline.json  — per-case results + aggregate stats
  *   evals/results/overflow-demo.json  — static explainer for Agustin437 overflow
+ *
+ * NOTE: the kappa / self-preference fields of `aggregate` are added by a second
+ * pass (scripts/compute-kappa.ts). Run `npm run generate:baseline:replay`
+ * followed by `npm run compute:kappa` to regenerate the full committed baseline.
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -24,7 +39,11 @@ import { scoreFaithfulness } from '../src/lib/eval/scorers/faithfulness.js'
 import { scoreContains } from '../src/lib/eval/scorers/contains.js'
 import { scoreSectionHit } from '../src/lib/eval/scorers/section-hit.js'
 import { scoreStructuredDiff } from '../src/lib/eval/scorers/structured-diff.js'
-import { scoreReferenceJudge } from '../src/lib/eval/scorers/reference-judge.js'
+import {
+  scoreReferenceJudge,
+  buildReplayedReferenceResult,
+} from '../src/lib/eval/scorers/reference-judge.js'
+import type { ReferenceVerdict } from '../src/lib/eval/types.js'
 import {
   computeMeanScore,
   computeStdDev,
@@ -60,6 +79,14 @@ interface SeedCase {
   expectedStructured?: Record<string, unknown>
   /** Hand-authored expected prose reference, graded by reference-judge. */
   expectedProse?: string
+  /**
+   * Committed reference-judge verdict (record-replay fixture, rule 20). When
+   * present, the reference-judge result is built deterministically from this
+   * verdict + reason instead of calling the live judge — so the case (e.g. the
+   * guided lesson) never live-generates and its Beat-2 verdict is identical on
+   * every run.
+   */
+  replayReferenceJudge?: { verdict: ReferenceVerdict; reason: string }
   /** Maps each expected-output field to the scorer that grades it. */
   fieldScorers?: Record<string, string>
   rationale: string
@@ -106,7 +133,11 @@ function getPatientRecordText(patientId: string): string {
 
 // ── Model output generation ──────────────────────────────────────────────────
 
-async function generateOutput(client: Anthropic, taskPrompt: string, context: string): Promise<string> {
+async function generateOutput(
+  client: Anthropic,
+  taskPrompt: string,
+  context: string,
+): Promise<string> {
   const response = await client.messages.create({
     model: HAIKU_MODEL,
     max_tokens: 1024,
@@ -128,7 +159,7 @@ async function generateOutput(client: Anthropic, taskPrompt: string, context: st
 async function runFaithfulnessK(
   evalCase: EvalCase,
   client: Anthropic,
-  k: number
+  k: number,
 ): Promise<{
   results: FaithfulnessResult[]
   meanScore: number | null
@@ -148,28 +179,61 @@ async function runFaithfulnessK(
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // Rule 20: deterministic test seam. In REPLAY mode every model call and pgvector
+  // retrieval is served from the committed recording, so the baseline is
+  // reproducible offline, free, and without an API key.
+  const REPLAY = process.argv.includes('--replay') || process.env.BASELINE_REPLAY === '1'
+
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY env var required')
+  if (!REPLAY && !apiKey)
+    throw new Error('ANTHROPIC_API_KEY env var required (or run with --replay)')
 
   const seedCases: SeedCase[] = JSON.parse(readFileSync(GOLDEN_PATH, 'utf-8'))
-  const client = new Anthropic({ apiKey })
+  // Live calls only ever happen off this client; in REPLAY mode it is never used.
+  const client = apiKey ? new Anthropic({ apiKey }) : null
+
+  // The recording replayed in REPLAY mode: the prior committed baseline, indexed
+  // by caseId. Each case's recorded model/retrieval outputs (output text,
+  // retrieved chunks, faithfulness judge runs) are reused verbatim.
+  const priorCases = new Map<string, CaseResult>()
+  if (REPLAY) {
+    const prior: { cases: CaseResult[] } = JSON.parse(readFileSync(BASELINE_PATH, 'utf-8'))
+    for (const pc of prior.cases) priorCases.set(pc.caseId, pc)
+    console.log(`REPLAY mode — recording loaded from ${BASELINE_PATH} (${priorCases.size} cases)`)
+  }
 
   const caseResults: CaseResult[] = []
-  const faithAggInputs: Array<{ meanScore: number | null; referenceLabel: 'pass' | 'fail'; zeroClaimFlag: boolean }> = []
+  const faithAggInputs: Array<{
+    meanScore: number | null
+    referenceLabel: 'pass' | 'fail'
+    zeroClaimFlag: boolean
+  }> = []
 
   for (const sc of seedCases) {
     console.log(`\n── Case: ${sc.id} ──`)
+
+    const prior = priorCases.get(sc.id)
+    if (REPLAY && !prior) {
+      throw new Error(`REPLAY: case ${sc.id} has no recording in ${BASELINE_PATH}`)
+    }
 
     // Build grounding context
     let context: string
     let retrievedChunks: Array<{ section: string; text: string }> | undefined
 
-    if (sc.ragMode === 'retrieve') {
+    if (REPLAY) {
+      // Replay the recorded retrieval — no pgvector / embedding calls.
+      retrievedChunks = prior!.trace.retrievedChunks
+      context = (retrievedChunks ?? []).map((c) => `[${c.section}]\n${c.text}`).join('\n\n---\n\n')
+      console.log(`  replayed ${retrievedChunks?.length ?? 0} chunk(s) from recording`)
+    } else if (sc.ragMode === 'retrieve') {
       console.log(`  retrieve k=${K} for patient ${sc.patientId}`)
       const rr = await retrieve(sc.patientId, sc.taskPrompt, K)
       retrievedChunks = rr.chunks.map((c) => ({ section: c.section, text: c.text }))
       context = retrievedChunks.map((c) => `[${c.section}]\n${c.text}`).join('\n\n---\n\n')
-      console.log(`  retrieved ${retrievedChunks.length} chunks: ${retrievedChunks.map((c) => c.section).join(', ')}`)
+      console.log(
+        `  retrieved ${retrievedChunks.length} chunks: ${retrievedChunks.map((c) => c.section).join(', ')}`,
+      )
     } else {
       console.log(`  stuffing full record for patient ${sc.patientId}`)
       context = getPatientRecordText(sc.patientId)
@@ -180,9 +244,13 @@ async function main(): Promise<void> {
     if (sc.preauthoredOutput) {
       output = sc.preauthoredOutput
       console.log(`  using pre-authored output (${output.length} chars)`)
+    } else if (REPLAY) {
+      // Replay the recorded model generation — no LLM call.
+      output = prior!.trace.output
+      console.log(`  replayed generated output from recording (${output.length} chars)`)
     } else {
       console.log(`  generating output with ${HAIKU_MODEL}`)
-      output = await generateOutput(client, sc.taskPrompt, context)
+      output = await generateOutput(client!, sc.taskPrompt, context)
       console.log(`  generated ${output.length} chars`)
     }
 
@@ -212,32 +280,64 @@ async function main(): Promise<void> {
 
     for (const scorer of sc.scorers) {
       if (scorer === 'faithfulness') {
-        console.log(`  running faithfulness judge ×${K}`)
-        const { results, meanScore: ms, scoreStdDev: sd, medianIdx } = await runFaithfulnessK(evalCase, client, K)
-        meanScore = ms
-        scoreStdDev = sd
+        if (REPLAY) {
+          // Faithfulness is the only non-deterministic (live-LLM) scorer; replay
+          // its recorded median-run result, mean/stdDev, and judge-prompt trace.
+          const recorded = prior!.scorerResults.find((r) => r.scorer === 'faithfulness')
+          if (!recorded) throw new Error(`REPLAY: no recorded faithfulness for ${sc.id}`)
+          meanScore = prior!.meanScore
+          scoreStdDev = prior!.scoreStdDev
+          trace = {
+            output,
+            retrievedChunks,
+            extractPrompt: prior!.trace.extractPrompt,
+            verdictPrompt: prior!.trace.verdictPrompt,
+          }
+          const zeroClaimFlag = Boolean(recorded.zeroClaimFlag)
+          faithAggInputs.push({ meanScore, referenceLabel: sc.referenceLabel, zeroClaimFlag })
+          scorerResults.push(recorded)
+          console.log(
+            `  faithfulness replayed meanScore=${meanScore?.toFixed?.(3) ?? meanScore} zeroClaimFlag=${zeroClaimFlag}`,
+          )
+        } else {
+          console.log(`  running faithfulness judge ×${K}`)
+          const {
+            results,
+            meanScore: ms,
+            scoreStdDev: sd,
+            medianIdx,
+          } = await runFaithfulnessK(evalCase, client!, K)
+          meanScore = ms
+          scoreStdDev = sd
 
-        const medianRun = results[medianIdx]
-        trace = {
-          output,
-          retrievedChunks,
-          extractPrompt: medianRun.extractPrompt,
-          verdictPrompt: medianRun.verdictPrompt,
+          const medianRun = results[medianIdx]
+          trace = {
+            output,
+            retrievedChunks,
+            extractPrompt: medianRun.extractPrompt,
+            verdictPrompt: medianRun.verdictPrompt,
+          }
+
+          const zeroClaimFlag = results.every((r) => r.zeroClaimFlag)
+          faithAggInputs.push({ meanScore: ms, referenceLabel: sc.referenceLabel, zeroClaimFlag })
+
+          scorerResults.push({
+            scorer: 'faithfulness',
+            score: meanScore,
+            zeroClaimFlag,
+            claims: medianRun.claims,
+            extractPrompt: medianRun.extractPrompt,
+            verdictPrompt: medianRun.verdictPrompt,
+            allRunScores: results.map((r) => ({
+              score: r.score,
+              claimCount: r.claims.length,
+              zeroClaimFlag: r.zeroClaimFlag,
+            })),
+          })
+          console.log(
+            `  faithfulness meanScore=${meanScore?.toFixed(3)} stdDev=${sd.toFixed(3)} zeroClaimFlag=${zeroClaimFlag}`,
+          )
         }
-
-        const zeroClaimFlag = results.every((r) => r.zeroClaimFlag)
-        faithAggInputs.push({ meanScore: ms, referenceLabel: sc.referenceLabel, zeroClaimFlag })
-
-        scorerResults.push({
-          scorer: 'faithfulness',
-          score: meanScore,
-          zeroClaimFlag,
-          claims: medianRun.claims,
-          extractPrompt: medianRun.extractPrompt,
-          verdictPrompt: medianRun.verdictPrompt,
-          allRunScores: results.map((r) => ({ score: r.score, claimCount: r.claims.length, zeroClaimFlag: r.zeroClaimFlag })),
-        })
-        console.log(`  faithfulness meanScore=${meanScore?.toFixed(3)} stdDev=${sd.toFixed(3)} zeroClaimFlag=${zeroClaimFlag}`)
       } else if (scorer === 'contains') {
         const r = scoreContains(evalCase)
         scorerResults.push(r as unknown as Record<string, unknown>)
@@ -252,17 +352,35 @@ async function main(): Promise<void> {
         // what makes the guided lesson's Beat-1 diff stable instead of flaky.
         const r = scoreStructuredDiff(evalCase)
         scorerResults.push(r as unknown as Record<string, unknown>)
-        console.log(`  structured-diff score=${r.score?.toFixed(4) ?? 'null'} match=${r.matchCount} mismatch=${r.mismatchCount} missing=${r.missingCount} extra=${r.extraCount}`)
+        console.log(
+          `  structured-diff score=${r.score?.toFixed(4) ?? 'null'} match=${r.matchCount} mismatch=${r.mismatchCount} missing=${r.missingCount} extra=${r.extraCount}`,
+        )
       } else if (scorer === 'reference-judge') {
-        // LLM meaning-equivalence judge of the committed output vs expectedProse.
-        // Run once at baseline-generation time; the committed verdict is what the
-        // lesson's Beat-2 reads — the lesson never re-calls the judge live.
+        // Meaning-equivalence judge of the committed output vs expectedProse.
         if (!sc.expectedProse) {
           console.log('  reference-judge skipped — case has no expectedProse')
-        } else {
-          const r = await scoreReferenceJudge(output, sc.expectedProse, client)
+        } else if (sc.replayReferenceJudge) {
+          // Record-replay (rule 20): build the result deterministically from the
+          // committed verdict. The lesson's Beat-2 reads this — it is byte-identical
+          // on every run and never re-calls the live judge.
+          const { verdict, reason } = sc.replayReferenceJudge
+          const r = buildReplayedReferenceResult(output, sc.expectedProse, verdict, reason)
           scorerResults.push(r as unknown as Record<string, unknown>)
-          console.log(`  reference-judge verdict=${r.verdict ?? 'errored'} score=${r.score ?? 'null'}`)
+          console.log(`  reference-judge replayed verdict=${r.verdict} score=${r.score}`)
+        } else if (REPLAY) {
+          // No committed verdict fixture: replay the recorded judge result.
+          const recorded = prior!.scorerResults.find((r) => r.scorer === 'reference-judge')
+          if (!recorded) throw new Error(`REPLAY: no recorded reference-judge for ${sc.id}`)
+          scorerResults.push(recorded)
+          console.log(
+            `  reference-judge replayed from recording verdict=${recorded.verdict ?? 'errored'}`,
+          )
+        } else {
+          const r = await scoreReferenceJudge(output, sc.expectedProse, client!)
+          scorerResults.push(r as unknown as Record<string, unknown>)
+          console.log(
+            `  reference-judge verdict=${r.verdict ?? 'errored'} score=${r.score ?? 'null'}`,
+          )
         }
       }
     }
@@ -291,7 +409,9 @@ async function main(): Promise<void> {
 
   writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2))
   console.log(`\nBaseline written to ${BASELINE_PATH}`)
-  console.log(`Aggregate: passRate=${aggregate.passRate?.toFixed(3)} judgeReferenceAgreement=${aggregate.judgeReferenceAgreement?.toFixed(3)} n=${aggregate.n}`)
+  console.log(
+    `Aggregate: passRate=${aggregate.passRate?.toFixed(3)} judgeReferenceAgreement=${aggregate.judgeReferenceAgreement?.toFixed(3)} n=${aggregate.n}`,
+  )
 
   // Static overflow demo
   writeFileSync(
@@ -301,8 +421,7 @@ async function main(): Promise<void> {
         description:
           'Demonstration of context overflow when stuffing the 6 MB Agustin437 C-CDA record vs. using retrieve mode.',
         patientId: 'e0de7b0a-c40b-6467-c099-0f9467be6c0a',
-        patientFile:
-          'Agustin437_Hills818_e0de7b0a-c40b-6467-c099-0f9467be6c0a.xml',
+        patientFile: 'Agustin437_Hills818_e0de7b0a-c40b-6467-c099-0f9467be6c0a.xml',
         rawFileSizeBytes: 6391614,
         rawFileSizeHuman: '~6.1 MB',
         tiers: [
@@ -339,8 +458,8 @@ async function main(): Promise<void> {
           'within the model context window (typically < 100 KB raw XML / < 10 000 tokens).',
       },
       null,
-      2
-    )
+      2,
+    ),
   )
   console.log(`Overflow demo written to ${OVERFLOW_PATH}`)
 }

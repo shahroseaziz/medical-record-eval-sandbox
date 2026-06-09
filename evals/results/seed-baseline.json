@@ -2,7 +2,7 @@
   "judgeModel": "claude-haiku-4-5-20251001",
   "embeddingModel": "voyage-3.5",
   "k": 6,
-  "generatedAt": "2026-06-04T00:52:21.137Z",
+  "generatedAt": "2026-06-09T21:13:44.415Z",
   "cases": [
     {
       "caseId": "faith-agustin-problems-retrieve-pass",
