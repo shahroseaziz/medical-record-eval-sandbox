@@ -8,6 +8,11 @@ import {
   loadUserCasesV2,
   saveUserCaseV2,
   deleteUserCaseV2,
+  loadUserCasesV3,
+  saveUserCaseV3,
+  deleteUserCaseV3,
+  migrateUserCaseV2toV3,
+  migrateUserCasesV2toV3,
   genPromptHash,
   isCaseStale,
   serializeState,
@@ -19,6 +24,7 @@ import {
   type UserCase,
   type SeededCase,
   type UserCaseV2,
+  type UserCaseV3,
 } from '../cases'
 
 const SEED_CASES: SeededCase[] = [
@@ -265,22 +271,22 @@ describe('account-portable state blob: serialize/deserialize', () => {
     localStorage.clear()
   })
 
-  it('serialized blob has the correct schema shape', () => {
+  it('serialized blob has the correct schema shape (v2, carrying v3 cases)', () => {
     saveGenPrompt('my gen prompt')
     saveJudgeRubric('my rubric')
     const parsed = JSON.parse(serializeState())
-    expect(parsed.version).toBe(1)
+    expect(parsed.version).toBe(2)
     expect(parsed.genPrompt).toBe('my gen prompt')
     expect(parsed.judgeRubric).toBe('my rubric')
     expect(Array.isArray(parsed.cases)).toBe(true)
   })
 
-  it('round-trips the full state losslessly', () => {
+  it('round-trips the full state losslessly through the v3 store', () => {
     const hash = genPromptHash(GEN_PROMPT)
     saveGenPrompt(GEN_PROMPT)
     saveJudgeRubric('Score 0-3 on faithfulness.')
-    saveUserCaseV2(makeUserCaseV2('blob-1', hash))
-    saveUserCaseV2(makeUserCaseV2('blob-2', hash))
+    saveUserCaseV3(makeUserCaseV3('blob-1', hash))
+    saveUserCaseV3(makeUserCaseV3('blob-2', hash))
 
     const blob = serializeState()
     localStorage.clear()
@@ -288,10 +294,27 @@ describe('account-portable state blob: serialize/deserialize', () => {
 
     expect(loadGenPrompt()).toBe(GEN_PROMPT)
     expect(loadJudgeRubric()).toBe('Score 0-3 on faithfulness.')
-    const cases = loadUserCasesV2()
+    const cases = loadUserCasesV3()
     expect(cases).toHaveLength(2)
-    expect(cases[0]).toEqual(makeUserCaseV2('blob-1', hash))
-    expect(cases[1]).toEqual(makeUserCaseV2('blob-2', hash))
+    expect(cases[0]).toEqual(makeUserCaseV3('blob-1', hash))
+    expect(cases[1]).toEqual(makeUserCaseV3('blob-2', hash))
+  })
+
+  it('imports a legacy v1 blob by migrating its v2 cases to v3', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const legacy = JSON.stringify({
+      version: 1,
+      genPrompt: GEN_PROMPT,
+      judgeRubric: 'rubric',
+      cases: [{ ...makeUserCaseV2('legacy-blob', hash), referenceOutput: 'ideal prose' }],
+    })
+    deserializeState(legacy)
+    const cases = loadUserCasesV3()
+    expect(cases).toHaveLength(1)
+    expect(cases[0].version).toBe(3)
+    expect(cases[0].id).toBe('legacy-blob')
+    expect(cases[0].expectedProse).toBe('ideal prose')
+    expect(cases[0].fieldScorers).toEqual({ prose: 'faithfulness' })
   })
 
   it('empty state round-trips losslessly', () => {
@@ -301,7 +324,7 @@ describe('account-portable state blob: serialize/deserialize', () => {
 
     expect(loadGenPrompt()).toBe('')
     expect(loadJudgeRubric()).toBe('')
-    expect(loadUserCasesV2()).toEqual([])
+    expect(loadUserCasesV3()).toEqual([])
   })
 
   it('throws on unsupported blob version', () => {
@@ -310,18 +333,18 @@ describe('account-portable state blob: serialize/deserialize', () => {
   })
 
   it('throws with a clear message on malformed JSON (e.g. truncated paste)', () => {
-    expect(() => deserializeState('{"version":1,"genPrompt":"x')).toThrow(
+    expect(() => deserializeState('{"version":2,"genPrompt":"x')).toThrow(
       'deserializeState: invalid JSON',
     )
   })
 
   it('absent blob.cases falls back to [] — does not write "undefined" string', () => {
     // Blob with no cases field
-    const partial = JSON.stringify({ version: 1, genPrompt: 'gp', judgeRubric: 'jr' })
+    const partial = JSON.stringify({ version: 2, genPrompt: 'gp', judgeRubric: 'jr' })
     deserializeState(partial)
-    expect(loadUserCasesV2()).toEqual([])
+    expect(loadUserCasesV3()).toEqual([])
     // Verify the raw key is not the string "undefined"
-    expect(localStorage.getItem('user_cases_v2')).not.toBe('undefined')
+    expect(localStorage.getItem('user_cases_v3')).not.toBe('undefined')
   })
 
   it('absent blob.genPrompt falls back to "" — does not write "undefined" string', () => {
@@ -360,5 +383,190 @@ describe('UserCaseV2 isolation: seeded aggregate unaffected by v2 localStorage',
     const agg = aggregateSeededCases(SEED_CASES)
     expect(agg.modeBreakdown.retrieve).toBe(1)
     expect(agg.modeBreakdown.stuff).toBe(1)
+  })
+})
+
+// ── UserCaseV3 tests ───────────────────────────────────────────────────────
+
+const makeUserCaseV3 = (id: string, hash: string): UserCaseV3 => ({
+  version: 3,
+  id,
+  taskPrompt: GEN_PROMPT,
+  patientId: 'p-v3',
+  ragMode: 'retrieve',
+  capturedOutput: 'Medication: metformin 500mg',
+  capturedGrounding: {
+    mode: 'retrieve',
+    chunks: [{ text: 'metformin', section: 'medications', distance: 0.1, similarity: 0.9 }],
+  },
+  expectedStructured: { medications: ['metformin 500mg'] },
+  expectedProse: 'The patient takes metformin 500mg.',
+  fieldScorers: { structured: 'extraction-completeness', prose: 'faithfulness' },
+  intentLabel: 'pass',
+  provenance: { genPromptHash: hash, patientId: 'p-v3', ragMode: 'retrieve', k: 5 },
+  createdAt: 1000000,
+})
+
+describe('UserCaseV3 localStorage CRUD', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('starts empty', () => {
+    expect(loadUserCasesV3()).toHaveLength(0)
+  })
+
+  it('round-trips a case including the new expected fields and scorer map', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const uc = makeUserCaseV3('v3-1', hash)
+    saveUserCaseV3(uc)
+    const loaded = loadUserCasesV3()
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0]).toEqual(uc)
+    expect(loaded[0].expectedStructured).toEqual({ medications: ['metformin 500mg'] })
+    expect(loaded[0].expectedProse).toBe('The patient takes metformin 500mg.')
+    expect(loaded[0].fieldScorers).toEqual({
+      structured: 'extraction-completeness',
+      prose: 'faithfulness',
+    })
+  })
+
+  it('updates an existing case on re-save', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    saveUserCaseV3(makeUserCaseV3('v3-2', hash))
+    saveUserCaseV3({
+      ...makeUserCaseV3('v3-2', hash),
+      intentLabel: 'fail',
+      fieldScorers: { prose: 'contains' },
+    })
+    const loaded = loadUserCasesV3()
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].intentLabel).toBe('fail')
+    expect(loaded[0].fieldScorers).toEqual({ prose: 'contains' })
+  })
+
+  it('deletes a case', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    saveUserCaseV3(makeUserCaseV3('v3-3', hash))
+    saveUserCaseV3(makeUserCaseV3('v3-4', hash))
+    deleteUserCaseV3('v3-3')
+    const loaded = loadUserCasesV3()
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].id).toBe('v3-4')
+  })
+
+  it('does not collide with the patients.summary column — prose lives on expectedProse', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const uc = makeUserCaseV3('v3-collide', hash)
+    saveUserCaseV3(uc)
+    const loaded = loadUserCasesV3()[0] as unknown as Record<string, unknown>
+    expect('summary' in loaded).toBe(false)
+    expect(loaded.expectedProse).toBe('The patient takes metformin 500mg.')
+  })
+})
+
+describe('UserCaseV2 → V3 migration', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('migrates a single case losslessly, mapping referenceOutput → expectedProse', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const v2: UserCaseV2 = {
+      ...makeUserCaseV2('mig-1', hash),
+      referenceOutput: 'metformin 500mg twice daily',
+      intentLabel: 'fail',
+      designedFailReason: 'wrong dosage',
+    }
+    const v3 = migrateUserCaseV2toV3(v2)
+    expect(v3.version).toBe(3)
+    expect(v3.id).toBe('mig-1')
+    expect(v3.expectedProse).toBe('metformin 500mg twice daily')
+    expect(v3.expectedStructured).toBeUndefined()
+    expect(v3.fieldScorers).toEqual({ prose: 'faithfulness' })
+    expect(v3.intentLabel).toBe('fail')
+    expect(v3.designedFailReason).toBe('wrong dosage')
+    expect(v3.capturedGrounding).toEqual(v2.capturedGrounding)
+    expect(v3.provenance).toEqual(v2.provenance)
+    expect(v3.createdAt).toBe(v2.createdAt)
+  })
+
+  it('migrateUserCasesV2toV3 maps every case', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const out = migrateUserCasesV2toV3([
+      makeUserCaseV2('a', hash),
+      makeUserCaseV2('b', hash),
+    ])
+    expect(out.map((c) => c.id)).toEqual(['a', 'b'])
+    expect(out.every((c) => c.version === 3)).toBe(true)
+  })
+
+  it('migrates a case with no referenceOutput to an empty fieldScorers map', () => {
+    // makeUserCaseV2 has no referenceOutput — there is no prose to grade, so no
+    // scorer should be wired to an undefined expectedProse field.
+    const hash = genPromptHash(GEN_PROMPT)
+    const v3 = migrateUserCaseV2toV3(makeUserCaseV2('no-ref', hash))
+    expect(v3.expectedProse).toBeUndefined()
+    expect(v3.fieldScorers).toEqual({})
+  })
+
+  it('loadUserCasesV3 lazily migrates an existing v2 store and persists under the v3 key', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    // Seed only the legacy v2 store.
+    saveUserCaseV2(makeUserCaseV2('legacy-1', hash))
+    saveUserCaseV2(makeUserCaseV2('legacy-2', hash))
+    expect(localStorage.getItem('user_cases_v3')).toBeNull()
+
+    const loaded = loadUserCasesV3()
+    expect(loaded).toHaveLength(2)
+    expect(loaded.every((c) => c.version === 3)).toBe(true)
+
+    // v3 store is now populated, v2 store is left untouched as a backup.
+    expect(localStorage.getItem('user_cases_v3')).not.toBeNull()
+    expect(loadUserCasesV2()).toHaveLength(2)
+  })
+
+  it('does not re-migrate once a v3 store exists (v2 changes are ignored)', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    saveUserCaseV2(makeUserCaseV2('legacy-1', hash))
+    loadUserCasesV3() // first load migrates
+    // A later v2 write must not leak into v3.
+    saveUserCaseV2(makeUserCaseV2('legacy-2', hash))
+    const loaded = loadUserCasesV3()
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].id).toBe('legacy-1')
+  })
+
+  it('a fresh v3 case saved over a migrated store coexists with migrated cases', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    saveUserCaseV2(makeUserCaseV2('legacy-1', hash))
+    loadUserCasesV3() // migrate
+    saveUserCaseV3(makeUserCaseV3('fresh-1', hash))
+    const ids = loadUserCasesV3().map((c) => c.id)
+    expect(ids).toContain('legacy-1')
+    expect(ids).toContain('fresh-1')
+  })
+
+  it('corrupt v3 store with no v2 backup yields an empty set (clear path)', () => {
+    localStorage.setItem('user_cases_v3', '{not json')
+    expect(loadUserCasesV3()).toEqual([])
+  })
+
+  it('corrupt v3 store recovers from the untouched v2 backup rather than losing data', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    // A good v2 backup exists; the v3 blob is corrupt.
+    saveUserCaseV2(makeUserCaseV2('backup-1', hash))
+    localStorage.setItem('user_cases_v3', '{not json')
+
+    const recovered = loadUserCasesV3()
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].id).toBe('backup-1')
+    expect(recovered[0].version).toBe(3)
+
+    // The recovered cases survive the next save (no permanent overwrite-with-empty).
+    saveUserCaseV3(makeUserCaseV3('fresh-after-recovery', hash))
+    const ids = loadUserCasesV3().map((c) => c.id)
+    expect(ids).toContain('backup-1')
+    expect(ids).toContain('fresh-after-recovery')
   })
 })
