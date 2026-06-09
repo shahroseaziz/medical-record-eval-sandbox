@@ -63,8 +63,25 @@ export function scoreStructuredDiff(evalCase: EvalCase, actual?: unknown): Struc
   const expectedRaw = extractEntries(evalCase.expectedStructured)
   const actualRaw = extractEntries(actualValue)
 
+  // True-negative case: "patient has no meds." Expected is an empty list and the
+  // model correctly produced an empty list — nothing to find, nothing spurious
+  // produced, so F1 is vacuously perfect. This is a standard golden case and must
+  // be scorable, not errored.
   if (expectedRaw.length === 0 && actualRaw.length === 0) {
-    return blank('no medication entries found in either expected or actual')
+    return {
+      scorer: 'structured-diff',
+      score: 1,
+      fields: [],
+      matchCount: 0,
+      mismatchCount: 0,
+      missingCount: 0,
+      extraCount: 0,
+      precision: 1,
+      recall: 1,
+      blindSpots: [
+        'expected and actual are both empty (true-negative case): scored as a perfect match',
+      ],
+    }
   }
 
   const expected = collapseDuplicates(expectedRaw)
@@ -76,6 +93,24 @@ export function scoreStructuredDiff(evalCase: EvalCase, actual?: unknown): Struc
   }
   for (const name of actualC.duplicateNameGroups) {
     blindSpots.push(`actual lists "${name}" at multiple strengths (kept distinct, not merged)`)
+  }
+
+  // Surface salt-stripping that ALTERED a name: a lexical strip can mask a
+  // genuinely distinct salt, so a name "match" here is not guaranteed clinical
+  // equality. Emitted per side; deduped below.
+  for (const [side, c] of [
+    ['expected', expected],
+    ['actual', actualC],
+  ] as const) {
+    for (const e of c.entries) {
+      if (e.strippedSalts.length > 0) {
+        blindSpots.push(
+          `${side} "${e.rawName}" salt-normalized to "${e.name}" (dropped ${e.strippedSalts
+            .map((t) => `"${t}"`)
+            .join(', ')}); a clinically distinct salt would be masked`,
+        )
+      }
+    }
   }
 
   const fields = diffEntries(expected.entries, actualC.entries, blindSpots)
@@ -110,7 +145,9 @@ export function scoreStructuredDiff(evalCase: EvalCase, actual?: unknown): Struc
     extraCount,
     precision,
     recall,
-    blindSpots,
+    // Dedupe: a normalization limitation may be hit on several entries but reads
+    // as one blind spot for the reviewer.
+    blindSpots: [...new Set(blindSpots)],
   }
 }
 
@@ -316,14 +353,24 @@ function recordDoseBlindSpots(
   name: string,
   blindSpots: string[],
 ): void {
-  if (e && !e.parseable) {
-    blindSpots.push(
-      `expected dose "${e.raw}" for "${name}" not parseable as value+unit; compared as text`,
-    )
-  }
-  if (a && !a.parseable) {
-    blindSpots.push(
-      `actual dose "${a.raw}" for "${name}" not parseable as value+unit; compared as text`,
-    )
+  for (const [side, d] of [
+    ['expected', e],
+    ['actual', a],
+  ] as const) {
+    if (!d) continue
+    // Compound / concentration units ("mg/mL"): each side of the slash is
+    // alias-normalized but magnitudes are NOT converted across it, so
+    // "10 mg/mL" vs "1 g/100mL" cannot be reconciled. Surface it whether the
+    // dose parsed (matched per-side) or not.
+    if (d.compound) {
+      blindSpots.push(
+        `${side} dose "${d.raw}" for "${name}" is a compound/concentration unit; magnitudes are not converted across the slash`,
+      )
+    }
+    if (!d.parseable && !d.compound) {
+      blindSpots.push(
+        `${side} dose "${d.raw}" for "${name}" not parseable as value+unit; compared as text`,
+      )
+    }
   }
 }

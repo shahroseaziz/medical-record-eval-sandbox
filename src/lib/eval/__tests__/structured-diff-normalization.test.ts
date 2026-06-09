@@ -3,6 +3,7 @@ import {
   canonicalizeDose,
   dosesMatch,
   normalizeName,
+  resolveName,
   collapseDuplicates,
 } from '../scorers/structured-diff-normalization'
 
@@ -53,8 +54,19 @@ describe('canonicalizeDose — unit canonicalization', () => {
   it('alias-normalizes each side of a compound unit but does not convert magnitude', () => {
     const d = canonicalizeDose('10 mg/mL')
     expect(d.parseable).toBe(true)
+    expect(d.compound).toBe(true)
     expect(d.canonicalUnit).toBe('mg/mL')
     expect(d.value).toBe(10)
+  })
+
+  it('flags a compound shape it cannot fully resolve as compound + unparseable', () => {
+    const d = canonicalizeDose('1 g/100mL')
+    expect(d.parseable).toBe(false)
+    expect(d.compound).toBe(true)
+  })
+
+  it('marks a plain unparseable dose as not compound', () => {
+    expect(canonicalizeDose('as directed').compound).toBe(false)
   })
 })
 
@@ -106,6 +118,37 @@ describe('normalizeName — alias resolution', () => {
 
   it('collapses punctuation and whitespace', () => {
     expect(normalizeName('Co-Trimoxazole')).toBe('co trimoxazole')
+  })
+
+  it('preserves the anion on electrolyte / mineral salts (distinct products)', () => {
+    expect(normalizeName('Potassium chloride')).toBe('potassium chloride')
+    expect(normalizeName('Potassium citrate')).toBe('potassium citrate')
+    expect(normalizeName('Magnesium sulfate')).toBe('magnesium sulfate')
+    expect(normalizeName('Sodium chloride')).toBe('sodium chloride')
+    // and the two distinct salts must NOT collapse to the same canonical name
+    expect(normalizeName('Potassium chloride')).not.toBe(normalizeName('Potassium citrate'))
+  })
+
+  it('still strips a salt off a non-mineral base even after a mineral token', () => {
+    expect(normalizeName('Drugix sodium monohydrate')).toBe('drugix')
+  })
+})
+
+describe('resolveName — reports stripped salt tokens', () => {
+  it('reports the dropped tokens when a strip alters the name', () => {
+    expect(resolveName('Metformin HCl')).toEqual({
+      canonical: 'metformin',
+      strippedSalts: ['hcl'],
+    })
+    expect(resolveName('Drugix sodium monohydrate')).toEqual({
+      canonical: 'drugix',
+      strippedSalts: ['sodium', 'monohydrate'],
+    })
+  })
+
+  it('reports no stripped tokens when nothing is dropped', () => {
+    expect(resolveName('Metformin').strippedSalts).toEqual([])
+    expect(resolveName('Potassium chloride').strippedSalts).toEqual([])
   })
 })
 

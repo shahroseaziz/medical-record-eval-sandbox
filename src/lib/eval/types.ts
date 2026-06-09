@@ -139,8 +139,10 @@ export interface StructuredDiffResult extends BaseScoreResult {
   recall: number
   /**
    * Normalization limitations encountered on THIS case (unparseable doses,
-   * multi-strength duplicate names, un-converted compound units). Surfaced so
-   * the blind spots are visible, never hidden behind a clean-looking score.
+   * multi-strength duplicate names, un-converted compound/concentration units,
+   * and salt strips that altered a name and could mask a distinct salt).
+   * Surfaced so the blind spots are visible, never hidden behind a clean-looking
+   * score. Deduped.
    */
   blindSpots: string[]
 }

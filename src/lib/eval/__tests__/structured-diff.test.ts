@@ -159,9 +159,59 @@ describe('scoreStructuredDiff — input handling', () => {
     expect(r.errored).toBe(true)
   })
 
-  it('errors when neither side has entries', () => {
+  it('scores an empty-expected / empty-actual case as a perfect true negative', () => {
     const r = scoreStructuredDiff(makeCase({ expectedStructured: meds([]) }), meds([]))
-    expect(r.errored).toBe(true)
+    expect(r.errored).toBeFalsy()
+    expect(r.score).toBe(1)
+    expect(r.precision).toBe(1)
+    expect(r.recall).toBe(1)
+    expect(r.matchCount).toBe(0)
+    expect(r.blindSpots.some((b) => b.includes('true-negative'))).toBe(true)
+  })
+
+  it('penalizes producing meds when none were expected (false positives)', () => {
+    const r = scoreStructuredDiff(
+      makeCase({ expectedStructured: meds([]) }),
+      meds([{ name: 'Aspirin', dose: '81 mg' }]),
+    )
+    expect(r.errored).toBeFalsy()
+    expect(r.score).toBe(0)
+    expect(r.extraCount).toBe(2)
+    expect(r.missingCount).toBe(0)
+  })
+})
+
+describe('scoreStructuredDiff — salt / compound blind spots', () => {
+  it('does NOT merge distinct electrolyte salts (potassium chloride vs citrate)', () => {
+    const r = scoreStructuredDiff(
+      makeCase({ expectedStructured: meds([{ name: 'Potassium chloride', dose: '20 meq' }]) }),
+      meds([{ name: 'Potassium citrate', dose: '20 meq' }]),
+    )
+    // Distinct names → expected missing + actual extra, NOT a name match.
+    expect(r.matchCount).toBe(0)
+    const names = r.fields.filter((f) => f.field === 'name').map((f) => f.item)
+    expect(names).toContain('potassium chloride')
+    expect(names).toContain('potassium citrate')
+  })
+
+  it('surfaces a salt strip that altered a name as a blind spot', () => {
+    const r = scoreStructuredDiff(
+      makeCase({ expectedStructured: meds([{ name: 'Metformin', dose: '500 mg' }]) }),
+      meds([{ name: 'Metformin HCl', dose: '500 mg' }]),
+    )
+    expect(r.score).toBe(1) // still matches (intended salt resolution)
+    expect(r.blindSpots.some((b) => b.includes('salt-normalized') && b.includes('hcl'))).toBe(true)
+  })
+
+  it('surfaces an un-converted compound-unit comparison as a blind spot', () => {
+    const r = scoreStructuredDiff(
+      makeCase({ expectedStructured: meds([{ name: 'Heparin', dose: '10 mg/mL' }]) }),
+      meds([{ name: 'Heparin', dose: '1 g/100mL' }]),
+    )
+    // Magnitudes are not converted across the slash → dose mismatch, surfaced.
+    const dose = r.fields.find((f) => f.field === 'dose')
+    expect(dose?.status).toBe('mismatch')
+    expect(r.blindSpots.some((b) => b.includes('compound/concentration unit'))).toBe(true)
   })
 })
 

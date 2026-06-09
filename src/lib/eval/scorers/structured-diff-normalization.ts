@@ -17,11 +17,16 @@
  *   - Alias resolution is purely lexical (salt-suffix stripping). It does NOT
  *     know that "Tylenol" == "acetaminophen"; brand↔generic mapping is out of
  *     scope and a false-negative source.
- *   - Salt stripping can in principle merge two genuinely distinct salts that
- *     differ clinically (rare); we strip conservatively and keep at least one
- *     token.
+ *   - Salt stripping can merge two genuinely distinct salts that differ
+ *     clinically. For electrolyte / mineral salts ("potassium chloride" vs
+ *     "potassium citrate", "magnesium sulfate") this is systematic, so the anion
+ *     is preserved when stripping would expose a bare mineral cation
+ *     (MINERAL_TOKENS). For all OTHER salt strips that alter a name, the dropped
+ *     tokens are returned (NameResolution.strippedSalts) so the scorer can emit a
+ *     per-case blind spot — the merge is never invisible at scoring time.
  *   - Compound/concentration units ("mg/mL") are alias-normalized per side but
- *     NOT magnitude-converted across the slash.
+ *     NOT magnitude-converted across the slash; the scorer records a blind spot
+ *     whenever a compound dose participates in a comparison.
  *   - Unparseable dose strings fall back to normalized text equality.
  */
 
@@ -122,6 +127,12 @@ export interface CanonicalDose {
    * scorer falls back to normalized-text equality and records a blind spot.
    */
   parseable: boolean
+  /**
+   * True when the unit is a compound / concentration unit (`mg/mL`). Each side of
+   * the slash is alias-normalized, but NO magnitude conversion is performed across
+   * it — a documented blind spot the scorer surfaces (see `recordDoseBlindSpots`).
+   */
+  compound: boolean
   /** Lowercased, whitespace-collapsed text form, used for the text fallback. */
   normalizedText: string
 }
@@ -146,13 +157,27 @@ export function canonicalizeDose(raw: string): CanonicalDose {
   // Leading number (allow thousands separators and decimals) + trailing unit.
   const m = normalizedText.match(/^([\d][\d,]*\.?\d*|\.\d+)\s*(.+)$/)
   if (!m) {
-    return { raw, value: null, canonicalUnit: null, parseable: false, normalizedText }
+    return {
+      raw,
+      value: null,
+      canonicalUnit: null,
+      parseable: false,
+      compound: false,
+      normalizedText,
+    }
   }
 
   const value = parseFloat(m[1].replace(/,/g, ''))
   const unitPart = m[2].trim()
   if (Number.isNaN(value)) {
-    return { raw, value: null, canonicalUnit: null, parseable: false, normalizedText }
+    return {
+      raw,
+      value: null,
+      canonicalUnit: null,
+      parseable: false,
+      compound: false,
+      normalizedText,
+    }
   }
 
   // Compound / concentration unit "mg/mL": alias-normalize each side, do NOT
@@ -167,15 +192,32 @@ export function canonicalizeDose(raw: string): CanonicalDose {
         value,
         canonicalUnit: `${numDef.canonical}/${denDef.canonical}`,
         parseable: true,
+        compound: true,
         normalizedText,
       }
     }
-    return { raw, value: null, canonicalUnit: null, parseable: false, normalizedText }
+    // A compound shape we could not fully resolve (e.g. "1 g/100mL") — unparseable,
+    // but still flagged compound so the slash limitation is surfaced.
+    return {
+      raw,
+      value: null,
+      canonicalUnit: null,
+      parseable: false,
+      compound: true,
+      normalizedText,
+    }
   }
 
   const def = resolveUnit(unitPart)
   if (!def) {
-    return { raw, value: null, canonicalUnit: null, parseable: false, normalizedText }
+    return {
+      raw,
+      value: null,
+      canonicalUnit: null,
+      parseable: false,
+      compound: false,
+      normalizedText,
+    }
   }
 
   return {
@@ -183,6 +225,7 @@ export function canonicalizeDose(raw: string): CanonicalDose {
     value: value * def.factor,
     canonicalUnit: def.canonical,
     parseable: true,
+    compound: false,
     normalizedText,
   }
 }
@@ -211,8 +254,32 @@ export function dosesMatch(a: CanonicalDose, b: CanonicalDose): boolean {
 // Strategy: lowercase, strip punctuation, collapse whitespace, then iteratively
 // strip trailing salt / ester / hydrate tokens so that "Metformin HCl" and
 // "Metformin hydrochloride" both resolve to "metformin". Stripping is
-// conservative: it only removes a *trailing* salt token and never removes the
-// last remaining token (so a drug literally named after a salt is preserved).
+// conservative: it only removes a *trailing* salt token, never removes the last
+// remaining token, and — critically — refuses to strip the anion off an
+// electrolyte / mineral salt (see MINERAL_TOKENS below). For minerals the salt IS
+// the product identity: "potassium chloride" and "potassium citrate" are DISTINCT
+// medications, not two salt forms of "potassium". Whenever a strip does alter a
+// name, the dropped tokens are returned so the scorer can surface it as a blind
+// spot (a genuinely distinct salt could be masked).
+
+// Electrolyte / mineral cations whose anion is part of the drug identity. When
+// stripping a trailing salt token would expose a bare mineral cation, we stop —
+// otherwise "potassium chloride", "potassium citrate", "magnesium sulfate" would
+// all collapse to their cation and produce systematic false name-matches.
+const MINERAL_TOKENS = new Set([
+  'sodium',
+  'potassium',
+  'calcium',
+  'magnesium',
+  'lithium',
+  'zinc',
+  'iron',
+  'ferrous',
+  'ferric',
+  'aluminum',
+  'aluminium',
+  'ammonium',
+])
 
 const SALT_TOKENS = new Set([
   'hcl',
@@ -246,17 +313,31 @@ const SALT_TOKENS = new Set([
   'micronized',
 ])
 
+export interface NameResolution {
+  /** Canonical name (lowercased, punctuation-collapsed, salt-stripped). */
+  canonical: string
+  /**
+   * Trailing salt / ester / hydrate tokens dropped during resolution, in original
+   * order (empty when nothing was stripped). When non-empty the scorer surfaces a
+   * blind spot: a genuinely distinct salt could have been masked.
+   */
+  strippedSalts: string[]
+}
+
 /**
- * Resolve a drug name to its canonical alias form.
+ * Resolve a drug name to its canonical alias form, reporting any salt tokens
+ * dropped along the way.
  *
  * Examples:
- *   "Metformin"          → "metformin"
- *   "Metformin HCl"      → "metformin"
- *   "Metformin hydrochloride" → "metformin"
- *   "Amlodipine besylate"→ "amlodipine"
- *   "Sodium"             → "sodium"   (last token never stripped)
+ *   "Metformin"               → { canonical: "metformin",          strippedSalts: [] }
+ *   "Metformin HCl"           → { canonical: "metformin",          strippedSalts: ["hcl"] }
+ *   "Metformin hydrochloride" → { canonical: "metformin",          strippedSalts: ["hydrochloride"] }
+ *   "Amlodipine besylate"     → { canonical: "amlodipine",         strippedSalts: ["besylate"] }
+ *   "Sodium"                  → { canonical: "sodium",             strippedSalts: [] }  // last token never stripped
+ *   "Potassium chloride"      → { canonical: "potassium chloride", strippedSalts: [] }  // mineral salt preserved
+ *   "Magnesium sulfate"       → { canonical: "magnesium sulfate",  strippedSalts: [] }  // mineral salt preserved
  */
-export function normalizeName(raw: string): string {
+export function resolveName(raw: string): NameResolution {
   // Lowercase, replace any non-alphanumeric run with a single space, collapse.
   let tokens = raw
     .toLowerCase()
@@ -265,14 +346,25 @@ export function normalizeName(raw: string): string {
     .split(/\s+/)
     .filter(Boolean)
 
-  if (tokens.length === 0) return ''
+  if (tokens.length === 0) return { canonical: '', strippedSalts: [] }
 
-  // Iteratively drop trailing salt tokens, but always keep at least one token.
+  // Iteratively drop trailing salt tokens, but always keep at least one token,
+  // and never strip the anion off a bare mineral cation (mineral salts are
+  // distinct products, not salt forms of an organic base).
+  const stripped: string[] = []
   while (tokens.length > 1 && SALT_TOKENS.has(tokens[tokens.length - 1])) {
-    tokens = tokens.slice(0, -1)
+    const remaining = tokens.slice(0, -1)
+    if (remaining.every((t) => MINERAL_TOKENS.has(t))) break
+    stripped.unshift(tokens[tokens.length - 1])
+    tokens = remaining
   }
 
-  return tokens.join(' ')
+  return { canonical: tokens.join(' '), strippedSalts: stripped }
+}
+
+/** Canonical name only (thin wrapper over {@link resolveName}). */
+export function normalizeName(raw: string): string {
+  return resolveName(raw).canonical
 }
 
 // ── 3. Duplicate-name collapse rule ─────────────────────────────────────────
@@ -296,6 +388,8 @@ export interface NormalizedEntry {
   rawName: string
   /** Original dose as authored, or null. */
   rawDose: string | null
+  /** Salt tokens dropped from `rawName` during normalization (empty if none). */
+  strippedSalts: string[]
 }
 
 export interface RawEntry {
@@ -319,12 +413,16 @@ export interface CollapseResult {
  * Normalize then collapse a list of raw entries per the duplicate-name rule.
  */
 export function collapseDuplicates(raw: RawEntry[]): CollapseResult {
-  const normalized: NormalizedEntry[] = raw.map((r) => ({
-    name: normalizeName(r.name),
-    dose: r.dose != null && r.dose !== '' ? canonicalizeDose(r.dose) : null,
-    rawName: r.name,
-    rawDose: r.dose != null && r.dose !== '' ? r.dose : null,
-  }))
+  const normalized: NormalizedEntry[] = raw.map((r) => {
+    const res = resolveName(r.name)
+    return {
+      name: res.canonical,
+      dose: r.dose != null && r.dose !== '' ? canonicalizeDose(r.dose) : null,
+      rawName: r.name,
+      rawDose: r.dose != null && r.dose !== '' ? r.dose : null,
+      strippedSalts: res.strippedSalts,
+    }
+  })
 
   const seen = new Set<string>()
   const byName = new Map<string, Set<string>>()

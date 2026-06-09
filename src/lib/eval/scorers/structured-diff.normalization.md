@@ -52,16 +52,29 @@ Strategy is **purely lexical salt-suffix stripping**:
    (`hcl`, `hydrochloride`, `sodium`, `potassium`, `sulfate`, `succinate`,
    `besylate`, `mesylate`, `maleate`, `monohydrate`, … — full set in code);
 3. **never strip the last remaining token** (a drug literally named `sodium`
-   survives).
+   survives);
+4. **never strip the anion off an electrolyte / mineral salt.** If a strip would
+   expose a bare mineral cation (`sodium`, `potassium`, `calcium`, `magnesium`,
+   `lithium`, `iron`/`ferrous`/`ferric`, `zinc`, … — `MINERAL_TOKENS`), it is
+   refused. For these meds the anion is part of the drug identity:
+   `potassium chloride` ≠ `potassium citrate`, `magnesium sulfate` ≠ `magnesium`.
+   This is **systematic, not rare** — electrolyte salts are common — so it is
+   mitigated in code, not just documented.
+5. **every strip that alters a name is recorded.** The dropped tokens are
+   returned (`NameResolution.strippedSalts`) and the scorer emits a per-case
+   blind spot, so a lexical merge that could mask a clinically distinct salt is
+   visible at scoring time — never silent.
 
-| Input | Canonical |
-|---|---|
-| `Metformin` | `metformin` |
-| `Metformin HCl` | `metformin` |
-| `Metformin hydrochloride` | `metformin` |
-| `Amlodipine besylate` | `amlodipine` |
-| `Metoprolol succinate` | `metoprolol` |
-| `Sodium` | `sodium` |
+| Input | Canonical | Note |
+|---|---|---|
+| `Metformin` | `metformin` | — |
+| `Metformin HCl` | `metformin` | blind spot: dropped `hcl` |
+| `Metformin hydrochloride` | `metformin` | blind spot: dropped `hydrochloride` |
+| `Amlodipine besylate` | `amlodipine` | blind spot: dropped `besylate` |
+| `Metoprolol succinate` | `metoprolol` | blind spot: dropped `succinate` |
+| `Sodium` | `sodium` | last token never stripped |
+| `Potassium chloride` | `potassium chloride` | mineral salt preserved |
+| `Magnesium sulfate` | `magnesium sulfate` | mineral salt preserved |
 
 ## 3. Duplicate-name collapse rule
 
@@ -85,18 +98,30 @@ first, leftovers paired by order as dose mismatches, remaining expected →
   **`missing`** → false negative · **`extra`** → false positive.
 - **score = F1** over field-level matches, so both missed expected fields
   (recall) and spurious extra fields (precision) are penalized.
-- Every normalization limitation hit on a case is pushed to `blindSpots[]`:
+- **Empty vs empty is a true negative.** When the expected list is empty and the
+  model also produces an empty list ("patient has no meds"), F1 is vacuously
+  perfect — the scorer returns **score 1**, not an error. A patient-with-no-meds
+  golden case is a first-class, scorable case.
+- Every normalization limitation hit on a case is pushed to `blindSpots[]`
+  (deduped):
   - unparseable dose strings (fell back to text equality),
   - multi-strength duplicate names (kept distinct, not merged),
-  - un-converted compound units.
+  - **compound / concentration doses** (`mg/mL`) — emitted whenever such a dose
+    participates in a comparison, since magnitudes are not converted across the
+    slash,
+  - **salt strips that altered a name** — emitted with the dropped tokens, since
+    a lexical merge could mask a clinically distinct salt.
 
 ### Known blind spots (by design, surfaced not hidden)
 
 - **No brand↔generic mapping.** `Tylenol` ≠ `acetaminophen`; lexical only. A
   false-negative source.
-- **Salt stripping is heuristic.** It can, in rare cases, merge two distinct
-  salts that differ clinically. Stripping is conservative and keeps ≥1 token.
-- **Compound units are not magnitude-converted** across the slash.
+- **Salt stripping is heuristic.** It can merge two distinct salts that differ
+  clinically. Electrolyte / mineral salts (the systematic case) are protected by
+  the mineral-cation rule (§2.4); every other strip that alters a name is
+  surfaced as a per-case blind spot (§2.5) rather than hidden.
+- **Compound units are not magnitude-converted** across the slash, and this is
+  surfaced per comparison.
 - **Frequency / route / form beyond the dose field are out of scope** — the
   contract compares `{ name, dose }`.
 
