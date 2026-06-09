@@ -5,6 +5,25 @@ export interface RetrievedChunkInput {
   text: string
 }
 
+/** Identifiers for the scorers shipped in this lib. */
+export type ScorerName =
+  | 'contains'
+  | 'faithfulness'
+  | 'extraction-completeness'
+  | 'section-hit'
+
+/**
+ * Canonical hand-authored expected-output fields a scorer can target.
+ *  - 'structured': the expected structured output (field→value object)
+ *  - 'prose':      the expected free-text prose, authored from the patient
+ *                  summary. Deliberately NOT named `summary` to avoid colliding
+ *                  with the `patients.summary` jsonb column read by /api/patients.
+ */
+export type ExpectedField = 'structured' | 'prose'
+
+/** Maps each expected-output field to the scorer that grades it. */
+export type FieldScorerMap = Partial<Record<ExpectedField, ScorerName>>
+
 export interface EvalCase {
   id: string
   patientId: string
@@ -25,6 +44,12 @@ export interface EvalCase {
   expectedClaims?: string[]
   /** Required section names (for section-hit scorer, retrieve mode only) */
   requiredSections?: string[]
+  /** Hand-authored expected structured output (field→value), graded per fieldScorers */
+  expectedStructured?: Record<string, unknown>
+  /** Hand-authored expected prose, authored from the patient summary (distinct from patients.summary) */
+  expectedProse?: string
+  /** Maps each expected-output field to the scorer that grades it */
+  fieldScorers?: FieldScorerMap
 }
 
 export interface BaseScoreResult {

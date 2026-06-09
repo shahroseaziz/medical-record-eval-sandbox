@@ -1,4 +1,5 @@
 import type { RunMode } from '@/app/api/run/types'
+import type { FieldScorerMap } from '@/lib/eval/types'
 
 export interface SeededCase {
   id: string
@@ -95,9 +96,40 @@ export interface UserCaseV2 {
   createdAt: number
 }
 
+// ── UserCaseV3 ─────────────────────────────────────────────────────────────
+//
+// Net-new (S16 declared v2 terminal). V3 is a superset of V2: it keeps every
+// v2 field except `referenceOutput`, which is replaced by the explicit
+// hand-authored expected-output fields below, plus a per-field scorer map.
+//
+//  - `expectedStructured` — hand-authored structured expected output (field→value).
+//  - `expectedProse`      — hand-authored expected prose, authored from the patient
+//                           summary. NOT named `summary`: that would collide with the
+//                           `patients.summary` jsonb column read by /api/patients.
+//  - `fieldScorers`       — maps each expected field to the scorer that grades it.
+
+export interface UserCaseV3 {
+  /** Schema discriminator; always 3 for this shape. */
+  version: 3
+  id: string
+  taskPrompt: string
+  patientId: string
+  ragMode: RunMode
+  capturedOutput: string
+  capturedGrounding: CapturedGrounding
+  expectedStructured?: Record<string, unknown>
+  expectedProse?: string
+  fieldScorers: FieldScorerMap
+  intentLabel: 'pass' | 'fail'
+  designedFailReason?: string
+  provenance: UserCaseV2Provenance
+  createdAt: number
+}
+
 // ── localStorage keys ──────────────────────────────────────────────────────
 
 const STORAGE_KEY_V2 = 'user_cases_v2'
+const STORAGE_KEY_V3 = 'user_cases_v3'
 const STORAGE_KEY_GEN_PROMPT = 'gen_prompt_v1'
 const STORAGE_KEY_JUDGE_RUBRIC = 'judge_rubric_v1'
 
@@ -178,6 +210,78 @@ export function deleteUserCaseV2(id: string): void {
   if (typeof window === 'undefined') return
   const cases = loadUserCasesV2().filter((c) => c.id !== id)
   localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(cases))
+}
+
+// ── UserCaseV2 → V3 migration ──────────────────────────────────────────────
+
+// Pure, lossless migration of a single case. The v2 `referenceOutput` was the
+// hand-authored ideal prose, so it carries over to `expectedProse`. Every v2
+// case was faithfulness-scored on its prose output, so that default is preserved.
+export function migrateUserCaseV2toV3(uc: UserCaseV2): UserCaseV3 {
+  return {
+    version: 3,
+    id: uc.id,
+    taskPrompt: uc.taskPrompt,
+    patientId: uc.patientId,
+    ragMode: uc.ragMode,
+    capturedOutput: uc.capturedOutput,
+    capturedGrounding: uc.capturedGrounding,
+    expectedStructured: undefined,
+    expectedProse: uc.referenceOutput,
+    fieldScorers: { prose: 'faithfulness' },
+    intentLabel: uc.intentLabel,
+    designedFailReason: uc.designedFailReason,
+    provenance: uc.provenance,
+    createdAt: uc.createdAt,
+  }
+}
+
+export function migrateUserCasesV2toV3(cases: UserCaseV2[]): UserCaseV3[] {
+  return cases.map(migrateUserCaseV2toV3)
+}
+
+// ── UserCaseV3 CRUD (with lazy v2→v3 migration) ────────────────────────────
+
+// Loads v3 cases. If no v3 store exists yet but a v2 store does, the v2 cases
+// are migrated in place and persisted under the v3 key — the v2 store is left
+// untouched as a backup. A corrupt store resets to an empty set (clear path:
+// the prior raw value is overwritten only on the next save).
+export function loadUserCasesV3(): UserCaseV3[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const rawV3 = localStorage.getItem(STORAGE_KEY_V3)
+    if (rawV3) {
+      const parsed = JSON.parse(rawV3) as UserCaseV3[]
+      return Array.isArray(parsed) ? parsed : []
+    }
+    // No v3 store — migrate from v2 if present.
+    const rawV2 = localStorage.getItem(STORAGE_KEY_V2)
+    if (!rawV2) return []
+    const v2 = JSON.parse(rawV2) as UserCaseV2[]
+    const migrated = Array.isArray(v2) ? migrateUserCasesV2toV3(v2) : []
+    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(migrated))
+    return migrated
+  } catch {
+    return []
+  }
+}
+
+export function saveUserCaseV3(uc: UserCaseV3): void {
+  if (typeof window === 'undefined') return
+  const cases = loadUserCasesV3()
+  const idx = cases.findIndex((c) => c.id === uc.id)
+  if (idx >= 0) {
+    cases[idx] = uc
+  } else {
+    cases.push(uc)
+  }
+  localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(cases))
+}
+
+export function deleteUserCaseV3(id: string): void {
+  if (typeof window === 'undefined') return
+  const cases = loadUserCasesV3().filter((c) => c.id !== id)
+  localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(cases))
 }
 
 // ── Account-portable state blob ────────────────────────────────────────────
