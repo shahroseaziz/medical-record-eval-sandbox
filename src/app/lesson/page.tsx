@@ -66,8 +66,8 @@ export default function LessonPage() {
         <hr className={styles.rule} />
 
         <div>
-          <Link href="/" className={styles.cta}>
-            Author your own run →
+          <Link href="/workbench" className={styles.cta} data-testid="workbench-link">
+            Open the workbench — pre-loaded from this lesson →
           </Link>
         </div>
       </Stack>

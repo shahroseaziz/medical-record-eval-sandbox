@@ -1,0 +1,108 @@
+import { describe, it, expect } from 'vitest'
+import {
+  EVALUATORS,
+  evaluatorHasAnswerKey,
+  loadBenchCases,
+  assembleGrounding,
+  buildBenchResults,
+  buildStructuredDiffDetails,
+  FALLBACK_THRESHOLDS,
+} from '../bench'
+import { caseVerdict, caseScore } from '@/lib/eval/user-agreement'
+
+const ALLERGIES = 'beat3-allergies-rubric-sensitive-fail'
+const MEDS = 'beat3-medications-pass'
+
+describe('workbench bench', () => {
+  it('pre-loads the lesson cases joined with an answer-key annex', () => {
+    const cases = loadBenchCases()
+    expect(cases.length).toBeGreaterThanOrEqual(4)
+    const meds = cases.find((c) => c.caseId === MEDS)!
+    expect(meds.expectedProse).toContain('Lisinopril')
+    expect(meds.referenceVerdict).toBe('equivalent')
+    expect(meds.expectedStructured?.medications.length).toBe(2)
+    // The faithfulness cases carry grounding (no answer key needed for faithfulness).
+    expect(meds.grounding.length).toBeGreaterThan(0)
+  })
+
+  it('palette is exactly the three evaluator types, only faithfulness has no answer key', () => {
+    expect([...EVALUATORS]).toEqual(['faithfulness', 'reference-judge', 'structured-diff'])
+    expect(evaluatorHasAnswerKey('faithfulness')).toBe(false)
+    expect(evaluatorHasAnswerKey('reference-judge')).toBe(true)
+    expect(evaluatorHasAnswerKey('structured-diff')).toBe(true)
+  })
+
+  it('assembles grounding into a single context string', () => {
+    const cases = loadBenchCases()
+    const g = assembleGrounding(cases[0].grounding)
+    expect(g).toContain('[')
+    expect(g.length).toBeGreaterThan(0)
+  })
+
+  // ── The red-cell aha: the allergies case flips when the rubric changes ──────
+  it('faithfulness: the allergies case AGREES under strict but DISAGREES under lenient', () => {
+    const cases = loadBenchCases()
+    const T = FALLBACK_THRESHOLDS
+
+    const strict = buildBenchResults('faithfulness', cases, 'strict', T)
+    const strictAllergies = strict.find((r) => r.caseId === ALLERGIES)!
+    // strict: aspirin claim unsupported → 2/3 ≈ 0.67 < 0.85 → FAIL, intent fail → agrees
+    expect(caseScore(strictAllergies)).toBeCloseTo(2 / 3, 5)
+    expect(caseVerdict(strictAllergies, T.faithfulness)).toBe('fail')
+    expect(caseVerdict(strictAllergies, T.faithfulness)).toBe(strictAllergies.intentLabel)
+
+    const lenient = buildBenchResults('faithfulness', cases, 'lenient', T)
+    const lenientAllergies = lenient.find((r) => r.caseId === ALLERGIES)!
+    // lenient: aspirin reads as plausible → 3/3 = 1.0 → PASS, but intent is fail → DISAGREES
+    expect(caseScore(lenientAllergies)).toBeCloseTo(1, 5)
+    expect(caseVerdict(lenientAllergies, T.faithfulness)).toBe('pass')
+    expect(caseVerdict(lenientAllergies, T.faithfulness)).not.toBe(lenientAllergies.intentLabel)
+  })
+
+  it('reference-judge: committed verdicts are classified against the config threshold', () => {
+    const cases = loadBenchCases()
+    const T = FALLBACK_THRESHOLDS
+    const results = buildBenchResults('reference-judge', cases, 'strict', T)
+
+    const meds = results.find((r) => r.caseId === MEDS)!
+    expect(caseScore(meds)).toBe(1) // equivalent
+    expect(caseVerdict(meds, T.referenceJudge)).toBe('pass')
+
+    const allergies = results.find((r) => r.caseId === ALLERGIES)!
+    expect(caseScore(allergies)).toBe(0.5) // partial < 0.8 → fail
+    expect(caseVerdict(allergies, T.referenceJudge)).toBe('fail')
+
+    // Every reference-judge result carries the scorer provenance.
+    expect(meds.scorers).toEqual(['reference-judge'])
+  })
+
+  it('structured-diff: only the list-extraction case has a key; the rest are excluded', () => {
+    const cases = loadBenchCases()
+    const details = buildStructuredDiffDetails(cases)
+    const medsDetail = details.find((d) => d.caseId === MEDS)!
+    expect(medsDetail.score).toBe(1) // expected list == actual list → F1 1.0
+
+    const results = buildBenchResults('structured-diff', cases, 'strict', FALLBACK_THRESHOLDS)
+    const meds = results.find((r) => r.caseId === MEDS)!
+    expect(caseScore(meds)).toBe(1)
+
+    const allergies = results.find((r) => r.caseId === ALLERGIES)!
+    // No structured answer key → excluded from the denominator (not a silent zero).
+    expect(allergies.excluded).toBe(true)
+    expect(caseScore(allergies)).toBeNull()
+  })
+
+  it('intent-label overrides flip a case without mutating the committed fixture', () => {
+    const cases = loadBenchCases()
+    const T = FALLBACK_THRESHOLDS
+    const base = buildBenchResults('faithfulness', cases, 'strict', T)
+    const baseMeds = base.find((r) => r.caseId === MEDS)!
+    expect(baseMeds.intentLabel).toBe('pass')
+
+    const flipped = buildBenchResults('faithfulness', cases, 'strict', T, { [MEDS]: 'fail' })
+    expect(flipped.find((r) => r.caseId === MEDS)!.intentLabel).toBe('fail')
+    // The committed source is untouched — a fresh build still reads pass.
+    const rebuilt = buildBenchResults('faithfulness', cases, 'strict', T)
+    expect(rebuilt.find((r) => r.caseId === MEDS)!.intentLabel).toBe('pass')
+  })
+})
