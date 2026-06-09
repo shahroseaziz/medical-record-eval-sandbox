@@ -4,10 +4,12 @@ import { LessonView } from '../LessonView'
 import { loadLesson } from '@/lib/lesson'
 
 /**
- * Acceptance test for SHA-59 R7: the lesson's Beat-1 diff and Beat-2 judge
- * produce IDENTICAL results on every load. The lesson reads only committed data
- * (the baseline + seed-case fixtures), so this asserts both the exact committed
- * values and byte-stable re-renders — i.e. no live generation / no flap.
+ * Acceptance test for the lesson's Beat 1 (SHA-59 R7): the deterministic
+ * structured diff produces IDENTICAL results on every load. The lesson reads only
+ * committed data (the baseline + seed-case fixtures), so this asserts both the
+ * exact committed values and byte-stable re-renders — i.e. no live generation / no
+ * flap. Beat 2 (the prose contrast) moved to its own component; see
+ * LessonBeat2.test.tsx.
  */
 describe('LessonView (committed correctness lesson)', () => {
   const lesson = loadLesson()
@@ -32,21 +34,6 @@ describe('LessonView (committed correctness lesson)', () => {
     expect(lesson!.beat1.mismatchCount).toBe(1)
     expect(lesson!.beat1.missingCount).toBe(0)
     expect(lesson!.beat1.extraCount).toBe(0)
-  })
-
-  it('Beat-2 renders the committed reference verdict (partial, 0.50)', () => {
-    render(<LessonView data={lesson!} />)
-    expect(screen.getByTestId('lesson-verdict')).toHaveTextContent('partial')
-    expect(screen.getByTestId('lesson-beat-2-metrics')).toHaveTextContent('0.50')
-    expect(lesson!.beat2.verdict).toBe('partial')
-    expect(lesson!.beat2.score).toBe(0.5)
-  })
-
-  it('the judge prompt is redacted (no raw expected/actual text persisted)', () => {
-    render(<LessonView data={lesson!} />)
-    const prompt = screen.getByTestId('lesson-judge-prompt').textContent ?? ''
-    expect(prompt).toContain('redacted sha256=')
-    expect(prompt).not.toContain('amlodipine')
   })
 
   it('renders identically on repeated loads (no flap)', () => {

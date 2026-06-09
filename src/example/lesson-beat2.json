@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Beat 2 — prose contrast. A second query whose correct answer is a prose clinical judgment ('is this patient's diabetes controlled?'), not a field list. The deterministic structured diff (Beat 1's instrument) cannot grade it — prose has no fields to align, so the diff errors. The reference judge, comparing meaning against an expected-prose answer key, resolves it as equivalent. Both results are computed deterministically and offline (structured-diff is a pure function; the reference verdict is a committed record-replay fixture, rule 20) so the beat runs with no model call. Synthetic patient data only.",
+  "caseId": "lesson-marisela-diabetes-control-prose",
+  "taskPrompt": "Based only on the provided record, is this patient's diabetes under control? Answer in prose and cite the supporting evidence.",
+  "output": "No — the record indicates this patient's type 2 diabetes is not well controlled. The most recent hemoglobin A1c is 8.2%, above the 7% treatment target, and the chart notes persistent hyperglycemia despite ongoing metformin therapy.",
+  "expectedProse": "This patient's diabetes is poorly controlled: the latest HbA1c of 8.2% exceeds the 7% goal, and the record documents continued high blood sugars on metformin.",
+  "expectedStructured": {
+    "diabetesControlled": "no",
+    "latestHbA1c": "8.2%"
+  },
+  "replayReferenceJudge": {
+    "verdict": "equivalent",
+    "reason": "Both texts conclude the patient's diabetes is not controlled and cite the same evidence — an HbA1c of 8.2% above the ~7% target with continued high blood sugars on metformin. Wording differs ('not well controlled' vs 'poorly controlled') but the clinical meaning is identical."
+  },
+  "fallibilitySeed": "The reference judge is not an oracle. It only checks whether the answer means the same thing as the expected prose YOU wrote — so it inherits your blind spots. If your expected answer were itself wrong, a faithfully-matching output would still score \"equivalent\". And a fluent answer that subtly overstates the evidence can read as equivalent to a fluent expected answer. The judge is a second fallible opinion, not the ground truth — Beat 3 shows one getting fooled outright.",
+  "rationale": "Guided-lesson Beat 2 (SHA-61 R9). Contrasts with Beat 1: the query 'is diabetes controlled?' has a PROSE answer (a clinical judgment), so Beat 1's structured diff has no fields to align — scoreStructuredDiff returns errored/score=null on the non-JSON output. That is the visible failure that motivates reaching for the reference judge, which compares meaning against expectedProse and returns 'equivalent' (the output and expectedProse are meaning-equivalent, differently worded). The verdict is COMMITTED as replayReferenceJudge (record-replay, rule 20) so the beat never calls the live judge and is byte-identical on every load. The fallibilitySeed plants judge-fallibility with no oracle framing, setting up Beat 3 where a judge is fooled. Synthetic patient (Marisela850) — no PHI/PII (rule 17)."
+}
