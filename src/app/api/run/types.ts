@@ -48,6 +48,14 @@ export interface RunRequest {
   /** If true, the judge uses the caller's BYO key instead of the seeded key. Default: false. */
   judgeUsesByo?: boolean
   /**
+   * Generate-only mode: stream the generation (and retrieval metadata) but skip the
+   * faithfulness judge call and the `eval` data part. Used by the live-generation
+   * fan-out that re-runs a prompt across N cases — scoring happens separately so the
+   * expensive judge isn't paid N times during iteration. Section-hit (deterministic,
+   * no model call) is still computed and persisted to the trace. Default: false.
+   */
+  generateOnly?: boolean
+  /**
    * Caller-supplied system/generation prompt. When provided it replaces the built-in
    * medical-record-analyst template. The text is NEVER persisted — traces store only
    * a sha256 hash + length when this field is set.

@@ -112,6 +112,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     judgeModel = DEFAULT_JUDGE_MODEL,
     judgeUsesByo = false,
     generationPrompt,
+    generateOnly = false,
   } = body
 
   if (!patientId || !query) {
@@ -267,17 +268,23 @@ export async function POST(req: NextRequest): Promise<Response> {
           k: mode === 'retrieve' ? k : undefined,
         }
 
-        const [faithfulnessResult, sectionHitResult] = await Promise.all([
-          scoreFaithfulness(evalCase, judgeClient),
-          Promise.resolve(scoreSectionHit(evalCase)),
-        ])
+        // section-hit is deterministic (no model call), so it runs in both modes.
+        // The faithfulness judge is an Anthropic call we skip in generate-only mode —
+        // that's the whole point of the fan-out: re-generate over N cases without
+        // paying for N judge calls. Scoring is a separate, deliberate step.
+        const sectionHitResult = scoreSectionHit(evalCase)
+        const faithfulnessResult = generateOnly
+          ? null
+          : await scoreFaithfulness(evalCase, judgeClient)
 
-        // ── 10. Stream eval results ───────────────────────────────────────
-        dataStream.writeData({
-          type: 'eval',
-          faithfulness: faithfulnessResult,
-          sectionHit: sectionHitResult,
-        } as unknown as JSONValue)
+        // ── 10. Stream eval results (skipped in generate-only mode) ───────
+        if (faithfulnessResult) {
+          dataStream.writeData({
+            type: 'eval',
+            faithfulness: faithfulnessResult,
+            sectionHit: sectionHitResult,
+          } as unknown as JSONValue)
+        }
 
         // ── 11. Persist trace to DB ───────────────────────────────────────
         const embeddingTokens = mode === 'retrieve' ? estimateTokens(query) : 0
@@ -310,7 +317,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               : undefined,
           sectionHit: sectionHitResult,
           output,
-          scorerResults: [faithfulnessResult, sectionHitResult],
+          scorerResults: faithfulnessResult
+            ? [faithfulnessResult, sectionHitResult]
+            : [sectionHitResult],
           generationModel: model,
           judgeModel,
           embeddingModel: mode === 'retrieve' ? EMBEDDING_MODEL : 'none',
@@ -320,7 +329,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             output: usage.completionTokens,
             estCostUsd,
           },
-          claimCount: faithfulnessResult.claims.length,
+          claimCount: faithfulnessResult ? faithfulnessResult.claims.length : 0,
           outputLength: output.length,
           judgeUsesByo: judgeKeyIsByo,
         }
