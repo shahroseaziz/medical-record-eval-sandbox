@@ -24,13 +24,20 @@ const FAITHFULNESS_THRESHOLD = 0.85
 
 const FIXTURE_PATIENT_IDS = new Set([
   'e0de7b0a-c40b-6467-c099-0f9467be6c0a', // Agustin437
-  '7a351fec-de09-1605-7053-5bfb6766dffa',   // Brenna468
-  'a08c7d55-8400-6d5d-908f-13a33e8214c0',   // Marisela850
+  '7a351fec-de09-1605-7053-5bfb6766dffa', // Brenna468
+  'a08c7d55-8400-6d5d-908f-13a33e8214c0', // Marisela850
 ])
 
 const VALID_RAG_MODES = new Set(['retrieve', 'stuff'])
 const VALID_LABELS = new Set(['pass', 'fail'])
-const VALID_SCORERS = new Set(['faithfulness', 'contains', 'section-hit', 'extraction-completeness'])
+const VALID_SCORERS = new Set([
+  'faithfulness',
+  'contains',
+  'section-hit',
+  'extraction-completeness',
+  'structured-diff',
+  'reference-judge',
+])
 
 let errors = 0
 
@@ -69,7 +76,14 @@ for (const sc of seedCases as any[]) {
   const id: string = sc.id ?? '<missing-id>'
 
   // Required string fields
-  for (const field of ['id', 'taskPrompt', 'patientId', 'ragMode', 'referenceLabel', 'rationale'] as const) {
+  for (const field of [
+    'id',
+    'taskPrompt',
+    'patientId',
+    'ragMode',
+    'referenceLabel',
+    'rationale',
+  ] as const) {
     if (typeof sc[field] !== 'string' || sc[field] === '') {
       fail(`Case ${id}: field "${field}" must be a non-empty string`)
     }
@@ -104,6 +118,27 @@ for (const sc of seedCases as any[]) {
     }
   }
 
+  // replayReferenceJudge (record-replay fixture) shape, when present
+  if (sc.replayReferenceJudge !== undefined) {
+    const rj = sc.replayReferenceJudge
+    if (typeof rj !== 'object' || rj === null) {
+      fail(`Case ${id}: replayReferenceJudge must be an object`)
+    } else {
+      if (!new Set(['equivalent', 'partial', 'divergent']).has(rj.verdict)) {
+        fail(`Case ${id}: replayReferenceJudge.verdict must be equivalent|partial|divergent`)
+      }
+      if (typeof rj.reason !== 'string' || rj.reason === '') {
+        fail(`Case ${id}: replayReferenceJudge.reason must be a non-empty string`)
+      }
+    }
+    if (!Array.isArray(sc.scorers) || !sc.scorers.includes('reference-judge')) {
+      fail(`Case ${id}: replayReferenceJudge requires the reference-judge scorer`)
+    }
+    if (typeof sc.expectedProse !== 'string' || sc.expectedProse === '') {
+      fail(`Case ${id}: replayReferenceJudge requires a non-empty expectedProse`)
+    }
+  }
+
   // requiredSections.length <= k for retrieve cases
   if (sc.ragMode === 'retrieve' && Array.isArray(sc.requiredSections)) {
     if (sc.requiredSections.length > K) {
@@ -123,9 +158,13 @@ if (errors === 0) ok('seed-cases.json is schema-valid')
 
 // Count case types
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const faithCases = (seedCases as any[]).filter((sc) => Array.isArray(sc.scorers) && sc.scorers.includes('faithfulness'))
+const faithCases = (seedCases as any[]).filter(
+  (sc) => Array.isArray(sc.scorers) && sc.scorers.includes('faithfulness'),
+)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const containsCases = (seedCases as any[]).filter((sc) => Array.isArray(sc.scorers) && sc.scorers.includes('contains'))
+const containsCases = (seedCases as any[]).filter(
+  (sc) => Array.isArray(sc.scorers) && sc.scorers.includes('contains'),
+)
 const faithPass = faithCases.filter((sc) => sc.referenceLabel === 'pass')
 const faithFail = faithCases.filter((sc) => sc.referenceLabel === 'fail')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -133,7 +172,9 @@ const retrieveCases = (seedCases as any[]).filter((sc) => sc.ragMode === 'retrie
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const stuffCases = (seedCases as any[]).filter((sc) => sc.ragMode === 'stuff')
 
-console.log(`\n  Case counts: total=${seedCases.length} faithfulness=${faithCases.length} contains=${containsCases.length}`)
+console.log(
+  `\n  Case counts: total=${seedCases.length} faithfulness=${faithCases.length} contains=${containsCases.length}`,
+)
 console.log(`  Faithfulness: pass=${faithPass.length} fail=${faithFail.length}`)
 console.log(`  Modes: retrieve=${retrieveCases.length} stuff=${stuffCases.length}`)
 
@@ -144,7 +185,9 @@ if (faithFail.length < 1) fail('Need >= 1 faithfulness FAIL case')
 if (retrieveCases.length < 1) fail('Need >= 1 retrieve case')
 if (stuffCases.length < 1) fail('Need >= 1 stuff case')
 
-const agustinRetrieve = retrieveCases.filter((sc) => sc.patientId === 'e0de7b0a-c40b-6467-c099-0f9467be6c0a')
+const agustinRetrieve = retrieveCases.filter(
+  (sc) => sc.patientId === 'e0de7b0a-c40b-6467-c099-0f9467be6c0a',
+)
 if (agustinRetrieve.length < 1) fail('Need >= 1 retrieve case for Agustin437 (e0de7b0a-...)')
 else ok('Agustin437 retrieve case present')
 
@@ -182,7 +225,8 @@ if (!agg) {
   for (const field of ['n', 'note']) {
     if (agg[field] === undefined) fail(`Baseline aggregate missing field "${field}"`)
   }
-  if (agg.note !== 'directional, n=6-8') fail(`Baseline aggregate.note must be "directional, n=6-8", got "${agg.note}"`)
+  if (agg.note !== 'directional, n=6-8')
+    fail(`Baseline aggregate.note must be "directional, n=6-8", got "${agg.note}"`)
 }
 
 // Per-case validation + off-band check
@@ -195,9 +239,14 @@ let offBandErrors = 0
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 for (const bc of baseline.cases as any[]) {
-  if (typeof bc.caseId !== 'string') { fail('Baseline case missing caseId'); continue }
-  if (!Array.isArray(bc.scorerResults)) fail(`Baseline case ${bc.caseId}: scorerResults must be an array`)
-  if (!VALID_LABELS.has(bc.referenceLabel)) fail(`Baseline case ${bc.caseId}: invalid referenceLabel "${bc.referenceLabel}"`)
+  if (typeof bc.caseId !== 'string') {
+    fail('Baseline case missing caseId')
+    continue
+  }
+  if (!Array.isArray(bc.scorerResults))
+    fail(`Baseline case ${bc.caseId}: scorerResults must be an array`)
+  if (!VALID_LABELS.has(bc.referenceLabel))
+    fail(`Baseline case ${bc.caseId}: invalid referenceLabel "${bc.referenceLabel}"`)
 
   // Off-band check: faithfulness cases only, non-zero-claim
   if (!faithCaseIdSet.has(bc.caseId)) continue
@@ -205,24 +254,29 @@ for (const bc of baseline.cases as any[]) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const faithResult = (bc.scorerResults as any[]).find((r) => r.scorer === 'faithfulness')
-  if (faithResult?.zeroClaimFlag) continue  // exempt
+  if (faithResult?.zeroClaimFlag) continue // exempt
 
   const seed = seedCaseMap.get(bc.caseId)
   if (!seed) continue
 
   const score: number = bc.meanScore
   if (seed.referenceLabel === 'pass' && score <= FAITHFULNESS_THRESHOLD) {
-    fail(`Case ${bc.caseId} (referenceLabel=pass) has meanScore=${score.toFixed(3)} which is <= threshold ${FAITHFULNESS_THRESHOLD} — in-band, violates off-band invariant`)
+    fail(
+      `Case ${bc.caseId} (referenceLabel=pass) has meanScore=${score.toFixed(3)} which is <= threshold ${FAITHFULNESS_THRESHOLD} — in-band, violates off-band invariant`,
+    )
     offBandErrors++
   } else if (seed.referenceLabel === 'fail' && score >= FAITHFULNESS_THRESHOLD) {
-    fail(`Case ${bc.caseId} (referenceLabel=fail) has meanScore=${score.toFixed(3)} which is >= threshold ${FAITHFULNESS_THRESHOLD} — in-band, violates off-band invariant`)
+    fail(
+      `Case ${bc.caseId} (referenceLabel=fail) has meanScore=${score.toFixed(3)} which is >= threshold ${FAITHFULNESS_THRESHOLD} — in-band, violates off-band invariant`,
+    )
     offBandErrors++
   } else {
     ok(`Case ${bc.caseId} (${seed.referenceLabel}): meanScore=${score.toFixed(3)} — off-band ✓`)
   }
 }
 
-if (offBandErrors === 0 && baseline.cases?.length > 0) ok('All faithfulness cases are off the 0.85 band')
+if (offBandErrors === 0 && baseline.cases?.length > 0)
+  ok('All faithfulness cases are off the 0.85 band')
 
 // ── Kappa gate ───────────────────────────────────────────────────────────────
 
@@ -249,15 +303,21 @@ if (judgeKappaMin > 0) {
   if (agg && typeof agg.judgeHumanKappa === 'number') {
     if (agg.judgeHumanKappa < judgeKappaMin) {
       fail(
-        `Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} is below judge_kappa_min=${judgeKappaMin} — run scripts/compute-kappa.ts after regenerating baseline`
+        `Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} is below judge_kappa_min=${judgeKappaMin} — run scripts/compute-kappa.ts after regenerating baseline`,
       )
     } else {
-      ok(`Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} >= judge_kappa_min=${judgeKappaMin}`)
+      ok(
+        `Judge-vs-human kappa=${agg.judgeHumanKappa.toFixed(4)} >= judge_kappa_min=${judgeKappaMin}`,
+      )
     }
   } else if (agg && agg.judgeHumanKappa === null) {
-    fail('Baseline aggregate.judgeHumanKappa is null — kappa could not be computed; check human-labels.json')
+    fail(
+      'Baseline aggregate.judgeHumanKappa is null — kappa could not be computed; check human-labels.json',
+    )
   } else {
-    fail('judgeHumanKappa absent from baseline aggregate — run npm run compute:kappa before committing baseline')
+    fail(
+      'judgeHumanKappa absent from baseline aggregate — run npm run compute:kappa before committing baseline',
+    )
   }
 }
 

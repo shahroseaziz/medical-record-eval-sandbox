@@ -107,5 +107,38 @@
     "scorers": [
       "contains"
     ]
+  },
+  {
+    "id": "lesson-marisela-medications-structured-diff",
+    "taskPrompt": "Using only the provided patient record, extract this patient's medications as a JSON object with a `medications` array of `{ name, dose }` entries. Output only medications explicitly documented in the record; do not add, omit, or alter any dose.",
+    "patientId": "a08c7d55-8400-6d5d-908f-13a33e8214c0",
+    "ragMode": "stuff",
+    "expectedOutput": "",
+    "referenceLabel": "fail",
+    "preauthoredOutput": "{\n  \"medications\": [\n    {\n      \"name\": \"Lisinopril\",\n      \"dose\": \"10 MG\"\n    },\n    {\n      \"name\": \"Amlodipine\",\n      \"dose\": \"5 mg\"\n    },\n    {\n      \"name\": \"Sodium Fluoride\",\n      \"dose\": \"0.0272 mg/mg\"\n    },\n    {\n      \"name\": \"Amoxicillin\",\n      \"dose\": \"250 mg\"\n    },\n    {\n      \"name\": \"Ibuprofen\",\n      \"dose\": \"200 mg\"\n    },\n    {\n      \"name\": \"Acetaminophen\",\n      \"dose\": \"325 mg\"\n    }\n  ]\n}",
+    "expectedStructured": {
+      "medications": [
+        { "name": "lisinopril", "dose": "10 mg" },
+        { "name": "amlodipine", "dose": "2.5 mg" },
+        { "name": "sodium fluoride", "dose": "0.0272 mg/mg" },
+        { "name": "amoxicillin", "dose": "250 mg" },
+        { "name": "ibuprofen", "dose": "200 mg" },
+        { "name": "acetaminophen", "dose": "325 mg" }
+      ]
+    },
+    "expectedProse": "This patient's documented medications are lisinopril 10 mg, amlodipine 2.5 mg, sodium fluoride 0.0272 mg/mg oral gel, amoxicillin 250 mg, ibuprofen 200 mg, and acetaminophen 325 mg.",
+    "fieldScorers": {
+      "structured": "structured-diff",
+      "prose": "reference-judge"
+    },
+    "replayReferenceJudge": {
+      "verdict": "partial",
+      "reason": "ACTUAL lists the same six medications as EXPECTED, but doses amlodipine at 5 mg where EXPECTED documents 2.5 mg; every other medication and dose agrees. Most of the expected meaning is captured, but one dose diverges."
+    },
+    "rationale": "Guided-lesson fixture (Marisela850). Generation is COMMITTED via preauthoredOutput so the lesson never live-generates and the Beat-1 structured diff cannot flap on formatting drift. The output differs from expectedStructured only in (a) cosmetic formatting absorbed by the normalization contract — name casing ('Lisinopril') and unit case ('10 MG') — and (b) one genuine error: amlodipine dosed at 5 mg instead of the documented 2.5 mg. The deterministic structured-diff therefore scores a stable F1=0.9167 with exactly one dose 'mismatch' row, demonstrating both normalization robustness and real error detection. Beat-2's reference-judge compares the same committed output against expectedProse; the single dose discrepancy makes the designed verdict 'partial'. That verdict is itself COMMITTED as replayReferenceJudge (record-replay, rule 20): generate-baseline.ts replays it deterministically — recomputing only the score and redacted prompt — so the lesson never re-calls the live judge and Beat-2 is byte-identical on every load. referenceLabel=fail (a wrong dose is clinically unacceptable). Not a faithfulness case, so it is excluded from faithfulness aggregates and the off-band invariant.",
+    "scorers": [
+      "structured-diff",
+      "reference-judge"
+    ]
   }
 ]

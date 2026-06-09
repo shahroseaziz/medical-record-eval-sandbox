@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import Link from 'next/link'
 import { HomeClient } from '@/components/HomeClient'
 import { EvalScorecard } from '@/components/EvalScorecard'
 import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
@@ -113,6 +114,11 @@ export default function Home() {
             Seeded baseline — maintained by project author, produced by the live judge
           </div>
           <EvalScorecard aggregate={scorecard.aggregate} cases={scorecard.cases} />
+          <div style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
+            <Link href="/lesson" data-testid="lesson-link">
+              Walk through the correctness lesson: catching a dose error →
+            </Link>
+          </div>
         </div>
       )}
     </>

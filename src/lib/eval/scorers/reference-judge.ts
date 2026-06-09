@@ -22,7 +22,7 @@ const JUDGE_PARSE_ATTEMPTS = 4
 // The judge returns one of three meaning-equivalence verdicts; each maps to a
 // fixed score. "partial" sits at the midpoint so that a defined threshold (read
 // from config, never hardcoded into a gate) can decide pass/fail.
-const VERDICT_SCORE: Record<ReferenceVerdict, number> = {
+export const VERDICT_SCORE: Record<ReferenceVerdict, number> = {
   equivalent: 1.0,
   partial: 0.5,
   divergent: 0.0,
@@ -249,6 +249,37 @@ export async function scoreReferenceJudge(
     verdict,
     reason: result.reason,
     judgePrompt: judgePromptRedacted,
+    ...(criteriaMeta ? { criteriaMeta } : {}),
+  }
+}
+
+// ── Record-replay seam (rule 20: deterministic test seam) ──────────────────────
+/**
+ * Build a reference-judge result from a COMMITTED verdict instead of a live model
+ * call. The verdict + reason are the recorded judge response (a fixture); the
+ * score and the persisted (redacted) prompt are recomputed deterministically from
+ * the same actual/expected text, so the result is byte-identical on every run —
+ * offline, free, and reproducible. This is what lets the guided lesson's Beat-2
+ * read a stable verdict without ever re-calling the judge live.
+ *
+ * The result is shape-identical to a live `scoreReferenceJudge` success path so
+ * downstream consumers (baseline writer, lesson UI) cannot tell replay from live.
+ */
+export function buildReplayedReferenceResult(
+  actual: string,
+  expected: string,
+  verdict: ReferenceVerdict,
+  reason: string,
+  options?: { criteria?: string },
+): ReferenceJudgeResult {
+  const criteria = options?.criteria
+  const criteriaMeta = criteria ? redactionMarker('criteria', criteria) : undefined
+  return {
+    scorer: 'reference-judge',
+    score: VERDICT_SCORE[verdict],
+    verdict,
+    reason,
+    judgePrompt: buildRedactedReferencePrompt(actual, expected, criteria),
     ...(criteriaMeta ? { criteriaMeta } : {}),
   }
 }
