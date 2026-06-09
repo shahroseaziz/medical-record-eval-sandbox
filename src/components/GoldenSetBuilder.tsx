@@ -17,12 +17,18 @@ import type { UserRunCaseResult } from '@/lib/eval/user-agreement'
 import {
   loadStoredEvalRun,
   saveEvalRun,
+  toUserRunCaseResult,
   DEFAULT_PASS_THRESHOLD,
 } from '@/lib/eval/user-agreement'
+import { scoreRow } from '@/lib/eval/row-aggregate'
+import type { FieldScoreOutcome } from '@/lib/eval/row-aggregate'
+import { scoreStructuredDiff } from '@/lib/eval/scorers/structured-diff'
+import type { ExpectedField, EvalCase, FieldScorerMap } from '@/lib/eval/types'
+import type { Thresholds } from '@/lib/eval/thresholds'
 import { getByoHeaders } from './ApiKeyInput'
 import { Term } from './Term'
 
-// ── Score API response shape ──────────────────────────────────────────────────
+// ── Score API response shapes ─────────────────────────────────────────────────
 
 interface ScoreAPIResponse {
   score: number | null
@@ -36,6 +42,18 @@ interface ScoreAPIResponse {
   errorMessage?: string
 }
 
+interface ScoreReferenceAPIResponse {
+  score: number | null
+  verdict: 'equivalent' | 'partial' | 'divergent' | null
+  reason: string | null
+  threshold: number
+  passed: boolean | null
+  errored?: boolean
+  errorMessage?: string
+}
+
+type ResultClaim = NonNullable<UserRunCaseResult['claims']>[number]
+
 // ── Grounding assembly ────────────────────────────────────────────────────────
 
 function assembleGrounding(cg: CapturedGrounding): string {
@@ -45,41 +63,226 @@ function assembleGrounding(cg: CapturedGrounding): string {
   return cg.record ?? ''
 }
 
-// ── Per-case scorer (POST /api/score with captured output + grounding) ────────
+// ── Per-field scoring ──────────────────────────────────────────────────────────
+//
+// Each expected field is graded by the scorer assigned to it in the case's
+// `fieldScorers` map (R2 config), then the per-field outcomes are rolled up into
+// one (possibly mixed diff + judge) row via scoreRow(). Dispatch:
+//   - structured-diff  → deterministic, client-side, free (no model call)
+//   - reference-judge  → POST /api/score-reference (meaning-equivalence judge)
+//   - faithfulness     → POST /api/score (grounding faithfulness judge)
+// A 429 on any judge field aborts the row and bubbles up so the run stops
+// gracefully and resumably, exactly as the single-scorer path did.
 
 const SCORE_TIMEOUT_MS = 30_000
 
-async function scoreOneCase(
-  uc: UserCaseV3,
-): Promise<{ data: ScoreAPIResponse | null; rateLimited: boolean }> {
-  const grounding = assembleGrounding(uc.capturedGrounding)
-  if (!grounding || !uc.capturedOutput) return { data: null, rateLimited: false }
+interface FieldScoreResult {
+  outcome: FieldScoreOutcome
+  /** Claim detail to surface in the disagreement table (faithfulness only). */
+  claims: ResultClaim[]
+  rateLimited: boolean
+}
 
+// Cases with no explicit scorer map (e.g. legacy v2 cases migrated without a
+// prose reference) default to grounding-faithfulness on the captured output —
+// the behavior the single-scorer path had before per-field assignment existed.
+function effectiveScorers(uc: UserCaseV3): FieldScorerMap {
+  const fs = uc.fieldScorers ?? {}
+  return Object.keys(fs).length === 0 ? { prose: 'faithfulness' } : fs
+}
+
+async function postJson(
+  url: string,
+  body: unknown,
+): Promise<{ status: number; data: unknown | null }> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), SCORE_TIMEOUT_MS)
-
   try {
-    const res = await fetch('/api/score', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getByoHeaders() },
-      body: JSON.stringify({
-        source: 'captured',
-        capturedOutput: uc.capturedOutput,
-        capturedGrounding: grounding,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
-
-    if (res.status === 429) return { data: null, rateLimited: true }
-    if (!res.ok) return { data: null, rateLimited: false }
-
-    const data = (await res.json()) as ScoreAPIResponse
-    return { data, rateLimited: false }
+    if (res.status === 429) return { status: 429, data: null }
+    if (!res.ok) return { status: res.status, data: null }
+    return { status: res.status, data: await res.json() }
   } catch {
-    return { data: null, rateLimited: false }
+    return { status: 0, data: null }
   } finally {
     clearTimeout(timeoutId)
   }
+}
+
+// Grounding faithfulness: scores the captured output against the grounding it was
+// produced with (no expected reference needed). A swallowed judge error surfaces
+// as errored:true → 'judge-errored'; zero-claim → 'skipped'.
+async function scoreFaithfulnessField(uc: UserCaseV3): Promise<FieldScoreResult> {
+  const grounding = assembleGrounding(uc.capturedGrounding)
+  if (!grounding || !uc.capturedOutput) {
+    return {
+      outcome: { field: 'prose', scorer: 'faithfulness', score: null, skipped: true },
+      claims: [],
+      rateLimited: false,
+    }
+  }
+  const { status, data } = await postJson('/api/score', {
+    source: 'captured',
+    capturedOutput: uc.capturedOutput,
+    capturedGrounding: grounding,
+  })
+  if (status === 429) {
+    return {
+      outcome: { field: 'prose', scorer: 'faithfulness', score: null, rateLimited: true },
+      claims: [],
+      rateLimited: true,
+    }
+  }
+  if (data === null) {
+    return {
+      outcome: { field: 'prose', scorer: 'faithfulness', score: null, errored: true },
+      claims: [],
+      rateLimited: false,
+    }
+  }
+  const d = data as ScoreAPIResponse
+  const claims: ResultClaim[] = (d.claims ?? []).map((c) => ({
+    claim: c.claim,
+    verdict: c.verdict,
+    rationale: c.reason,
+  }))
+  return {
+    outcome: {
+      field: 'prose',
+      scorer: 'faithfulness',
+      score: d.score ?? null,
+      zeroClaimFlag: d.zeroClaimFlag ?? false,
+      errored: d.errored ?? false,
+    },
+    claims,
+    rateLimited: false,
+  }
+}
+
+// Reference judge (R5): scores the captured output against the hand-authored
+// expected prose for meaning-equivalence. Skipped when no expected prose exists.
+async function scoreReferenceField(uc: UserCaseV3): Promise<FieldScoreResult> {
+  const expected = uc.expectedProse
+  if (!expected || !uc.capturedOutput) {
+    return {
+      outcome: { field: 'prose', scorer: 'reference-judge', score: null, skipped: true },
+      claims: [],
+      rateLimited: false,
+    }
+  }
+  const { status, data } = await postJson('/api/score-reference', {
+    actual: uc.capturedOutput,
+    expected,
+  })
+  if (status === 429) {
+    return {
+      outcome: { field: 'prose', scorer: 'reference-judge', score: null, rateLimited: true },
+      claims: [],
+      rateLimited: true,
+    }
+  }
+  if (data === null) {
+    return {
+      outcome: { field: 'prose', scorer: 'reference-judge', score: null, errored: true },
+      claims: [],
+      rateLimited: false,
+    }
+  }
+  const d = data as ScoreReferenceAPIResponse
+  return {
+    outcome: {
+      field: 'prose',
+      scorer: 'reference-judge',
+      score: d.score,
+      errored: d.errored ?? false,
+    },
+    claims: [],
+    rateLimited: false,
+  }
+}
+
+// Structured diff (R4): deterministic, client-side F1 of the captured output
+// (parsed as structured JSON) against the hand-authored expected structured
+// output. Skipped when there is no expected structured value or nothing to score.
+function scoreStructuredField(uc: UserCaseV3): FieldScoreResult {
+  if (uc.expectedStructured == null) {
+    return {
+      outcome: { field: 'structured', scorer: 'structured-diff', score: null, skipped: true },
+      claims: [],
+      rateLimited: false,
+    }
+  }
+  const evalCase: EvalCase = {
+    id: uc.id,
+    patientId: uc.patientId,
+    query: uc.taskPrompt,
+    output: uc.capturedOutput,
+    mode: uc.ragMode,
+    expectedStructured: uc.expectedStructured,
+  }
+  const result = scoreStructuredDiff(evalCase)
+  return {
+    outcome: {
+      field: 'structured',
+      scorer: 'structured-diff',
+      score: result.score,
+      // A null score (unparseable output / no expected) is nothing to grade.
+      skipped: result.score === null,
+    },
+    claims: [],
+    rateLimited: false,
+  }
+}
+
+// Grade every assigned field and roll the outcomes up into one row. Fields are
+// graded in a stable order (structured, then prose) for deterministic output.
+async function scoreCaseRow(
+  uc: UserCaseV3,
+  thresholds: Thresholds,
+): Promise<{ result: UserRunCaseResult | null; rateLimited: boolean }> {
+  const scorers = effectiveScorers(uc)
+  const outcomes: FieldScoreOutcome[] = []
+  const claims: ResultClaim[] = []
+
+  for (const field of ['structured', 'prose'] as ExpectedField[]) {
+    const scorer = scorers[field]
+    if (!scorer) continue
+
+    let fr: FieldScoreResult
+    if (scorer === 'structured-diff') {
+      fr = scoreStructuredField(uc)
+    } else if (scorer === 'reference-judge') {
+      fr = await scoreReferenceField(uc)
+    } else if (scorer === 'faithfulness') {
+      fr = await scoreFaithfulnessField(uc)
+    } else {
+      // No client dispatch for this scorer yet — nothing to grade for the field.
+      fr = {
+        outcome: { field, scorer, score: null, skipped: true },
+        claims: [],
+        rateLimited: false,
+      }
+    }
+
+    outcomes.push(fr.outcome)
+    claims.push(...fr.claims)
+    // A throttled judge field aborts the row — stop the run before recording it.
+    if (fr.rateLimited) return { result: null, rateLimited: true }
+  }
+
+  const row = scoreRow(uc.id, outcomes, thresholds)
+  const result = toUserRunCaseResult(row, {
+    intentLabel: uc.intentLabel,
+    output: uc.capturedOutput,
+    taskPrompt: uc.taskPrompt,
+    claims: claims.length > 0 ? claims : undefined,
+  })
+  return { result, rateLimited: false }
 }
 
 // Patterns that signal a fail reason is out-of-scope for a grounding judge
@@ -104,6 +307,20 @@ function isOutOfScopeForGrounding(reason: string): boolean {
 
 type CaptureMode = 'promote' | 'edit' | 'scratch'
 
+// Fallback for the per-field classification thresholds. The real values are read
+// from config (evals/thresholds.yaml via loadThresholds) on the server and
+// threaded in through the `thresholds` prop — this object is only used when the
+// prop is absent (e.g. isolated component tests) and mirrors the documented
+// config defaults. Never the source of truth in the running app (rule 15).
+const FALLBACK_THRESHOLDS: Thresholds = {
+  faithfulness: DEFAULT_PASS_THRESHOLD,
+  contains: 1.0,
+  referenceJudge: 0.8,
+  judgeKappaMin: 0.4,
+  extractionCompleteness: 0.0,
+  structuredDiff: 0.0,
+}
+
 interface Props {
   runOutput: string
   retrieval: RetrievalData | null
@@ -123,6 +340,12 @@ interface Props {
   onEvalComplete?: () => void
   /** Called when the capture panel opens or closes — lets the parent light the label stage. */
   onCapturePanelChange?: (isOpen: boolean) => void
+  /**
+   * Per-scorer acceptance thresholds, read from config on the server and threaded
+   * in. Used to classify each field's score as matched/mismatched. Falls back to
+   * the documented config defaults when absent (rule 15).
+   */
+  thresholds?: Thresholds
 }
 
 export function GoldenSetBuilder({
@@ -139,6 +362,7 @@ export function GoldenSetBuilder({
   onCaseSaved,
   onEvalComplete,
   onCapturePanelChange,
+  thresholds = FALLBACK_THRESHOLDS,
 }: Props) {
   const [cases, setCases] = useState<UserCaseV3[]>([])
   const [showCapture, setShowCapture] = useState(false)
@@ -198,7 +422,7 @@ export function GoldenSetBuilder({
         `Scoring ${scored + 1} / ${totalCases}: ${uc.taskPrompt.slice(0, 40)}${uc.taskPrompt.length > 40 ? '…' : ''}`,
       )
 
-      const { data, rateLimited } = await scoreOneCase(uc)
+      const { result, rateLimited } = await scoreCaseRow(uc, thresholds)
 
       if (rateLimited) {
         // Stop gracefully — save partial results so the run is resumable
@@ -212,19 +436,8 @@ export function GoldenSetBuilder({
         return
       }
 
-      results.push({
-        caseId: uc.id,
-        intentLabel: uc.intentLabel,
-        faithfulnessScore: data?.score ?? null,
-        zeroClaimFlag: data?.zeroClaimFlag ?? false,
-        claims: (data?.claims ?? []).map((c) => ({
-          claim: c.claim,
-          verdict: c.verdict,
-          rationale: c.reason,
-        })),
-        output: uc.capturedOutput,
-        taskPrompt: uc.taskPrompt,
-      })
+      // rateLimited === false guarantees a result here.
+      if (result) results.push(result)
       scored++
 
       // Save after every case — partial until all done
