@@ -26,6 +26,34 @@ export type ExpectedField = 'structured' | 'prose'
 /** Maps each expected-output field to the scorer that grades it. */
 export type FieldScorerMap = Partial<Record<ExpectedField, ScorerName>>
 
+/**
+ * Outcome of grading a single expected field with its assigned scorer.
+ *  - 'matched':       scorer ran and the score met the field's threshold (true positive).
+ *  - 'mismatched':    scorer ran and the score fell below the field's threshold.
+ *  - 'judge-errored': an LLM-judge scorer threw / returned no verdict — no score was produced.
+ *  - 'rate-limited':  scoring was throttled (HTTP 429) before a verdict was produced.
+ *  - 'skipped':       nothing to grade — no expected value, no scorer assigned, or a
+ *                     zero-claim faithfulness case (score exists but is excluded from aggregates).
+ *
+ * 'judge-errored' / 'rate-limited' / 'skipped' are NON-scoreable: they never enter
+ * an aggregate denominator. Only 'matched' / 'mismatched' carry a usable score.
+ */
+export type FieldResultState =
+  | 'matched'
+  | 'mismatched'
+  | 'judge-errored'
+  | 'rate-limited'
+  | 'skipped'
+
+/** One field's classified result within a (possibly mixed-scorer) row. */
+export interface FieldResult {
+  field: ExpectedField
+  scorer: ScorerName
+  /** Scorer score in [0,1]; null whenever the state is non-scoreable. */
+  score: number | null
+  state: FieldResultState
+}
+
 export interface EvalCase {
   id: string
   patientId: string

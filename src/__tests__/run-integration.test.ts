@@ -805,11 +805,25 @@ describe.skipIf(!hasDb)('RunTrace DB persistence (live DB)', () => {
       }) as never
     )
 
-    // Drain the stream
-    await res.text()
+    // Drain the stream and capture the caseId of the trace THIS run produced.
+    // The `traces` table is shared across all integration test files, which run
+    // in parallel workers against the same DATABASE_URL in CI. An unscoped
+    // `SELECT ... LIMIT 1` can return a score / score-reference trace written by
+    // another file (those have no `ragMode`), so scope the read to this run's
+    // caseId — emitted in the stream as the `trace` data part.
+    const body = await res.text()
+    const tracePart = parseDataStreamParts(body).find(
+      (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'
+    )
+    expect(tracePart).toBeDefined()
+    const streamedTrace = (tracePart!.value as Record<string, unknown>).trace as RunTrace
+    const caseId = streamedTrace.caseId
 
     const traces = await withClient(async (client) => {
-      const r = await client.query<{ trace: RunTrace }>('SELECT trace FROM traces LIMIT 1')
+      const r = await client.query<{ trace: RunTrace }>(
+        "SELECT trace FROM traces WHERE trace->>'caseId' = $1 LIMIT 1",
+        [caseId],
+      )
       return r.rows
     })
 

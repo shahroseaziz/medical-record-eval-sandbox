@@ -5,6 +5,7 @@ import { HomeClient } from '@/components/HomeClient'
 import { EvalScorecard } from '@/components/EvalScorecard'
 import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
 import { loadThresholds } from '@/lib/eval/thresholds'
+import type { Thresholds } from '@/lib/eval/thresholds'
 import exampleData from '@/example/eval-example.json'
 import type { UserRunCaseResult, StoredEvalRun } from '@/lib/eval/user-agreement'
 import type { UserCaseV2 } from '@/lib/cases'
@@ -56,8 +57,20 @@ function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[
   }
 }
 
+// Per-scorer acceptance thresholds, read from config (evals/thresholds.yaml) on
+// the server and threaded into the client authoring workspace so the per-field
+// scorer classification reads config, never a hardcoded client value (rule 15).
+function loadThresholdsOrNull(): Thresholds | null {
+  try {
+    return loadThresholds()
+  } catch {
+    return null
+  }
+}
+
 export default function Home() {
   const scorecard = loadScorecard()
+  const thresholds = loadThresholdsOrNull()
 
   const exampleResults = exampleData.results as UserRunCaseResult[]
   const exampleCases = exampleData.cases as unknown as UserCaseV2[]
@@ -75,6 +88,7 @@ export default function Home() {
         exampleThreshold={exampleData.threshold}
         exampleCases={exampleCases}
         exampleEvalRun={exampleEvalRun}
+        thresholds={thresholds ?? undefined}
       />
 
       {/* Seeded baseline — Inspector-reachable, below the authoring workspace */}

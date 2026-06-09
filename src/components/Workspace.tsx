@@ -16,6 +16,7 @@ import { Term } from './Term'
 import { useRun } from '@/hooks/useRun'
 import { loadUserCasesV3, type UserCase, type UserCaseV3 } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
+import type { Thresholds } from '@/lib/eval/thresholds'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
   const color = score === null ? '#888' : score >= 0.85 ? '#2a7' : score >= 0.5 ? '#a80' : '#c00'
@@ -38,7 +39,10 @@ function EvalBadge({ label, score }: { label: string; score: number | null }) {
   )
 }
 
-export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: number } = {}) {
+export function Workspace({
+  goldenSetResetKey = 0,
+  thresholds,
+}: { goldenSetResetKey?: number; thresholds?: Thresholds } = {}) {
   const [selectedPatient, setSelectedPatient] = useState<PatientRow | null>(null)
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<RunMode>('retrieve')
@@ -481,6 +485,7 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
         onCaseSaved={(count) => setGoldenCaseCount(count)}
         onEvalComplete={() => setHasEvalRun(true)}
         onCapturePanelChange={setIsLabeling}
+        thresholds={thresholds}
       />
     </div>
   )
