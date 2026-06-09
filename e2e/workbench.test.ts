@@ -61,6 +61,43 @@ test.describe('open workbench (R11)', () => {
     await expect(page.getByTestId('disagreement-table')).toBeVisible()
   })
 
+  test('graduation arc (R12): finishing the lesson lands in the bench pre-loaded, not a restart', async ({
+    page,
+  }) => {
+    await mockRun(page)
+    await page.goto('/lesson')
+
+    // The win-moment is gated behind finishing — it is not on screen yet.
+    await expect(page.getByTestId('lesson-graduation')).toHaveCount(0)
+
+    // Leave the lesson on the lenient rubric and a flipped label, then finish.
+    await page.getByTestId('beat3-rubric-lenient').click()
+    await page.getByTestId('set-intent-fail-beat3-medications-pass').click()
+    await page.getByTestId('beat3-finish-btn').click()
+
+    // The "you did it" win-moment appears.
+    await expect(page.getByTestId('lesson-graduation')).toBeVisible()
+    await expect(page.getByTestId('lesson-graduation')).toContainText('You did it')
+
+    // Crossing the graduation lands in the bench (not a lesson restart)...
+    await page.getByTestId('graduation-cta').click()
+    await expect(page).toHaveURL(/\/workbench\?/)
+    await expect(page.getByTestId('workbench')).toBeVisible()
+
+    // ...pre-loaded with the carried state: the banner, the lenient rubric, and
+    // the flipped label all survived the handoff.
+    await expect(page.getByTestId('carryover-banner')).toBeVisible()
+    await expect(page.getByTestId('rubric-lenient')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId(`disagreement-row-${ALLERGIES}`)).toHaveAttribute(
+      'data-disagrees',
+      'true',
+    )
+    await expect(page.getByTestId('disagreement-row-beat3-medications-pass')).toHaveAttribute(
+      'data-disagrees',
+      'true',
+    )
+  })
+
   test('the prompt knob is live: regenerate fires /api/run with the custom prompt and streams output', async ({
     page,
   }) => {

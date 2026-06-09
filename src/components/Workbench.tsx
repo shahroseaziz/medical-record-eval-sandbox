@@ -28,6 +28,16 @@ interface Props {
    * only when absent (e.g. isolated tests).
    */
   thresholds?: Thresholds
+  /**
+   * Initial knob state carried over from the lesson graduation (R12). When the
+   * learner crosses the graduation, the bench opens on the surface they left —
+   * the faithfulness evaluator, their rubric, and their labels — instead of a
+   * cold default. Decoded from the URL by the page and threaded in here. Each
+   * falls back to the bench's own default when absent (a cold visit).
+   */
+  initialEvaluator?: EvaluatorType
+  initialRubric?: RubricVariant
+  initialLabelOverrides?: Record<string, 'pass' | 'fail'>
 }
 
 const RUBRIC_LABEL: Record<RubricVariant, string> = {
@@ -54,13 +64,21 @@ const PIPELINE_STAGES = ['Prompt', 'Generate', 'Evaluate', 'Agreement'] as const
  *
  * Everything except the prompt knob is deterministic and offline (rule 20).
  */
-export function Workbench({ thresholds = FALLBACK_THRESHOLDS }: Props) {
+export function Workbench({
+  thresholds = FALLBACK_THRESHOLDS,
+  initialEvaluator,
+  initialRubric,
+  initialLabelOverrides,
+}: Props) {
   const cases = useMemo(() => loadBenchCases(), [])
   const diffDetails = useMemo(() => buildStructuredDiffDetails(cases), [cases])
 
-  const [evaluator, setEvaluator] = useState<EvaluatorType>('faithfulness')
-  const [rubric, setRubric] = useState<RubricVariant>('strict')
-  const [labelOverrides, setLabelOverrides] = useState<Record<string, 'pass' | 'fail'>>({})
+  // Seed the knobs from the lesson carry-over when present, else the cold default.
+  const [evaluator, setEvaluator] = useState<EvaluatorType>(initialEvaluator ?? 'faithfulness')
+  const [rubric, setRubric] = useState<RubricVariant>(initialRubric ?? 'strict')
+  const [labelOverrides, setLabelOverrides] = useState<Record<string, 'pass' | 'fail'>>(
+    initialLabelOverrides ?? {},
+  )
   const [selectedCaseId, setSelectedCaseId] = useState<string>(cases[0]?.caseId ?? '')
   const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
 

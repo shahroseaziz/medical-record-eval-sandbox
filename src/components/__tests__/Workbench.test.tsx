@@ -89,4 +89,25 @@ describe('Workbench (open workbench)', () => {
     expect(screen.getByTestId('prompt-stale-note')).toBeInTheDocument()
     expect(screen.getByTestId('regenerate-btn')).toBeEnabled()
   })
+
+  // ── R12: carried-over state from the lesson graduation seeds the knobs ──────
+  it('seeds the rubric and labels from the lesson carry-over (not a cold default)', () => {
+    render(
+      <Workbench
+        initialRubric="lenient"
+        initialLabelOverrides={{ 'beat3-medications-pass': 'fail' }}
+      />,
+    )
+    // The lenient rubric is pre-selected → the allergies red cell already disagrees.
+    expect(screen.getByTestId('rubric-lenient')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId(`disagreement-row-${ALLERGIES}`)).toHaveAttribute(
+      'data-disagrees',
+      'true',
+    )
+    // The carried label override is applied on first paint (meds now disagrees).
+    expect(screen.getByTestId('disagreement-row-beat3-medications-pass')).toHaveAttribute(
+      'data-disagrees',
+      'true',
+    )
+  })
 })

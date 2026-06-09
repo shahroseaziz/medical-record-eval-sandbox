@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
+import { LessonGraduation } from './LessonGraduation'
 import { Term } from './Term'
 import { Badge, Card, Heading, Stack, Text } from './ui'
 import {
@@ -40,6 +41,9 @@ export function LessonBeat3({ initialThreshold }: Props) {
   const data = loadLessonBeat3()
   const [rubric, setRubric] = useState<RubricVariant>('strict')
   const [labels, setLabels] = useState<Record<string, 'pass' | 'fail'>>({})
+  // The graduation is gated behind an explicit "finish" so it reads as an earned
+  // win-moment, not a card that was always on screen.
+  const [graduated, setGraduated] = useState(false)
 
   const results = useMemo(() => buildBeat3Results(rubric, labels), [rubric, labels])
   const meanScore = meanBeat3Score(rubric)
@@ -196,6 +200,32 @@ export function LessonBeat3({ initialThreshold }: Props) {
           ))}
         </Stack>
       </details>
+
+      {/* ── Graduation — the win-moment that routes into the open workbench ─── */}
+      <section data-testid="beat3-finish">
+        {graduated ? (
+          <LessonGraduation rubric={rubric} labels={labels} threshold={initialThreshold} />
+        ) : (
+          <Card tone="info" padding="md">
+            <Stack gap={2}>
+              <Text as="p" size="sm">
+                That is the whole correctness loop. Finish the lesson to see what you built — and
+                carry it straight into the open workbench.
+              </Text>
+              <div>
+                <button
+                  type="button"
+                  data-testid="beat3-finish-btn"
+                  className={styles.finishBtn}
+                  onClick={() => setGraduated(true)}
+                >
+                  Finish the lesson →
+                </button>
+              </div>
+            </Stack>
+          </Card>
+        )}
+      </section>
     </Stack>
   )
 }
