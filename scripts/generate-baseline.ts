@@ -23,6 +23,8 @@ import { retrieve } from '../src/lib/rag/index.js'
 import { scoreFaithfulness } from '../src/lib/eval/scorers/faithfulness.js'
 import { scoreContains } from '../src/lib/eval/scorers/contains.js'
 import { scoreSectionHit } from '../src/lib/eval/scorers/section-hit.js'
+import { scoreStructuredDiff } from '../src/lib/eval/scorers/structured-diff.js'
+import { scoreReferenceJudge } from '../src/lib/eval/scorers/reference-judge.js'
 import {
   computeMeanScore,
   computeStdDev,
@@ -54,6 +56,12 @@ interface SeedCase {
   requiredSections?: string[]
   expectedClaims?: string[]
   preauthoredOutput?: string
+  /** Hand-authored expected structured output (field→value), graded by structured-diff. */
+  expectedStructured?: Record<string, unknown>
+  /** Hand-authored expected prose reference, graded by reference-judge. */
+  expectedProse?: string
+  /** Maps each expected-output field to the scorer that grades it. */
+  fieldScorers?: Record<string, string>
   rationale: string
   scorers: string[]
 }
@@ -190,6 +198,9 @@ async function main(): Promise<void> {
       expectedOutput: sc.expectedOutput,
       expectedClaims: sc.expectedClaims,
       requiredSections: sc.requiredSections,
+      expectedStructured: sc.expectedStructured,
+      expectedProse: sc.expectedProse,
+      fieldScorers: sc.fieldScorers as EvalCase['fieldScorers'],
       k: K,
     }
 
@@ -235,6 +246,24 @@ async function main(): Promise<void> {
         const r = scoreSectionHit(evalCase)
         scorerResults.push(r as unknown as Record<string, unknown>)
         console.log(`  section-hit score=${r.score} retrieved=[${r.retrievedSections.join(',')}]`)
+      } else if (scorer === 'structured-diff') {
+        // Deterministic, client-side (free) per-field diff of expectedStructured vs
+        // the committed output. Produces identical results on every run — this is
+        // what makes the guided lesson's Beat-1 diff stable instead of flaky.
+        const r = scoreStructuredDiff(evalCase)
+        scorerResults.push(r as unknown as Record<string, unknown>)
+        console.log(`  structured-diff score=${r.score?.toFixed(4) ?? 'null'} match=${r.matchCount} mismatch=${r.mismatchCount} missing=${r.missingCount} extra=${r.extraCount}`)
+      } else if (scorer === 'reference-judge') {
+        // LLM meaning-equivalence judge of the committed output vs expectedProse.
+        // Run once at baseline-generation time; the committed verdict is what the
+        // lesson's Beat-2 reads — the lesson never re-calls the judge live.
+        if (!sc.expectedProse) {
+          console.log('  reference-judge skipped — case has no expectedProse')
+        } else {
+          const r = await scoreReferenceJudge(output, sc.expectedProse, client)
+          scorerResults.push(r as unknown as Record<string, unknown>)
+          console.log(`  reference-judge verdict=${r.verdict ?? 'errored'} score=${r.score ?? 'null'}`)
+        }
       }
     }
 

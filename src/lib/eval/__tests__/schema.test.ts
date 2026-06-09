@@ -18,6 +18,9 @@ interface SeedCase {
   requiredSections?: string[]
   expectedClaims?: string[]
   preauthoredOutput?: string
+  expectedStructured?: Record<string, unknown>
+  expectedProse?: string
+  fieldScorers?: Record<string, string>
   rationale: string
   scorers: string[]
 }
@@ -54,10 +57,10 @@ describe('seed-cases.json schema', () => {
     expect(cases.length).toBeGreaterThan(0)
   })
 
-  it('has exactly 7 cases', () => {
+  it('has exactly 8 cases', () => {
     const raw = readFileSync(GOLDEN_PATH, 'utf-8')
     const c: SeedCase[] = JSON.parse(raw)
-    expect(c.length).toBe(7)
+    expect(c.length).toBe(8)
   })
 
   it('every case has required string fields', () => {

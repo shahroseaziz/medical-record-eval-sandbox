@@ -30,7 +30,14 @@ const FIXTURE_PATIENT_IDS = new Set([
 
 const VALID_RAG_MODES = new Set(['retrieve', 'stuff'])
 const VALID_LABELS = new Set(['pass', 'fail'])
-const VALID_SCORERS = new Set(['faithfulness', 'contains', 'section-hit', 'extraction-completeness'])
+const VALID_SCORERS = new Set([
+  'faithfulness',
+  'contains',
+  'section-hit',
+  'extraction-completeness',
+  'structured-diff',
+  'reference-judge',
+])
 
 let errors = 0
 
