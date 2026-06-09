@@ -4,6 +4,7 @@ import { join } from 'path'
 export interface Thresholds {
   faithfulness: number
   contains: number
+  referenceJudge: number
   judgeKappaMin: number
   extractionCompleteness: number
   structuredDiff: number
@@ -26,6 +27,7 @@ export function loadThresholds(yamlPath?: string): Thresholds {
   return {
     faithfulness: raw['faithfulness'] ?? 0.85,
     contains: raw['contains'] ?? 1.0,
+    referenceJudge: raw['reference_judge'] ?? 0.8,
     judgeKappaMin: raw['judge_kappa_min'] ?? 0.0,
     extractionCompleteness: raw['extraction_completeness'] ?? 0.0,
     structuredDiff: raw['structured_diff'] ?? 0.0,

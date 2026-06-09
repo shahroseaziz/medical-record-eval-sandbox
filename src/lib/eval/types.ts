@@ -12,6 +12,7 @@ export type ScorerName =
   | 'extraction-completeness'
   | 'section-hit'
   | 'structured-diff'
+  | 'reference-judge'
 
 /**
  * Canonical hand-authored expected-output fields a scorer can target.
@@ -85,6 +86,23 @@ export interface FaithfulnessResult extends BaseScoreResult {
   verdictPrompt: string
   /** Present when a caller-supplied verdict rubric was used; sha256=<hex8> len=<n> (rubric text is never persisted) */
   verdictRubricMeta?: string
+}
+
+/** Meaning-equivalence verdicts returned by the reference judge. */
+export type ReferenceVerdict = 'equivalent' | 'partial' | 'divergent'
+
+export interface ReferenceJudgeResult extends BaseScoreResult {
+  scorer: 'reference-judge'
+  /** 1.0 / 0.5 / 0.0 for equivalent / partial / divergent; null when the judge errored */
+  score: number | null
+  /** null when the judge errored (never a fabricated verdict) */
+  verdict: ReferenceVerdict | null
+  /** null when the judge errored */
+  reason: string | null
+  /** Redacted prompt safe to persist: EXPECTED/ACTUAL/criteria replaced with sha256+len markers */
+  judgePrompt: string
+  /** Present when caller-supplied criteria was used; sha256=<hex8> len=<n> (criteria text is never persisted) */
+  criteriaMeta?: string
 }
 
 export interface ExtractionCompletenessResult extends BaseScoreResult {
