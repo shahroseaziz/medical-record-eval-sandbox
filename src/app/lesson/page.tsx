@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Container, Heading, Stack, Text } from '@/components/ui'
 import { LessonView } from '@/components/LessonView'
 import { loadLesson } from '@/lib/lesson'
+import { LessonBeat1 } from '@/components/LessonBeat1'
 import { LessonBeat3 } from '@/components/LessonBeat3'
 import { loadThresholds } from '@/lib/eval/thresholds'
 import { DEFAULT_PASS_THRESHOLD } from '@/lib/eval/user-agreement'
@@ -39,6 +40,21 @@ export default function LessonPage() {
             a real extraction error, then how a faithfulness judge grades when there is no answer
             key. Read-only and deterministic — runs on committed generation, no database or model
             calls.
+          </Text>
+        </Stack>
+
+        {/* Beat 1 — the interactive on-ramp (R8): author a key, run the diff, hit
+            the reference-was-wrong aha. Runs on the seeded R7 generation. */}
+        <LessonBeat1 />
+
+        {/* The same committed case, scored end-to-end and under the hood — the
+            deterministic structured diff (Beat 1) plus the reference judge (Beat 2). */}
+        <Stack gap={1}>
+          <Heading level={2}>Under the hood — the committed scorecard</Heading>
+          <Text as="p" size="sm" tone="muted">
+            The interactive beat above let you author the key. Here is the same case scored against
+            the committed answer key end-to-end: the deterministic structured diff and the reference
+            judge, replayed from a fixture so they never re-call a model.
           </Text>
         </Stack>
 

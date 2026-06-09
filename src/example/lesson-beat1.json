@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Beat 1 — correctness with a diff. The intuitive on-ramp: you author an answer key, run a deterministic structured diff against the SEEDED model output (R7), and hit the reference-was-wrong aha. Two committed authoring paths — from the patient summary (which carries a dose error) or from the full record (the source of truth) — let the same diff render two honest outcomes with no model call. Synthetic patient data only (Synthea / Marisela850).",
+  "patientLabel": "Marisela850 (synthetic)",
+  "generationPrompt": "Using only the provided patient record, extract this patient's medications as a JSON object with a `medications` array of `{ name, dose }` entries. Output only medications explicitly documented in the record; do not add, omit, or alter any dose.",
+  "modelOutput": "{\n  \"medications\": [\n    {\n      \"name\": \"Lisinopril\",\n      \"dose\": \"10 MG\"\n    },\n    {\n      \"name\": \"Amlodipine\",\n      \"dose\": \"5 mg\"\n    },\n    {\n      \"name\": \"Sodium Fluoride\",\n      \"dose\": \"0.0272 mg/mg\"\n    },\n    {\n      \"name\": \"Amoxicillin\",\n      \"dose\": \"250 mg\"\n    },\n    {\n      \"name\": \"Ibuprofen\",\n      \"dose\": \"200 mg\"\n    },\n    {\n      \"name\": \"Acetaminophen\",\n      \"dose\": \"325 mg\"\n    }\n  ]\n}",
+  "summary": "Marisela is managed for hypertension with dental and short-course prophylaxis on file. Current medications, per the latest visit summary:\n  • lisinopril 10 mg daily\n  • amlodipine 5 mg daily\n  • sodium fluoride 0.0272 mg/mg oral gel\n  • amoxicillin 250 mg\n  • ibuprofen 200 mg\n  • acetaminophen 325 mg",
+  "fullRecord": "MEDICATIONS — from the C-CDA substanceAdministration entries (the source of truth):\n  - Lisinopril 10 MG Oral Tablet — 1 tablet once daily\n  - Amlodipine 2.5 MG Oral Tablet — 1 tablet once daily\n  - Sodium Fluoride 0.0272 MG/MG Oral Gel\n  - Amoxicillin 250 MG Oral Capsule\n  - Ibuprofen 200 MG Oral Tablet\n  - Acetaminophen 325 MG Oral Tablet\n\nNote: the visit summary above lists amlodipine at 5 mg, but the record documents 2.5 mg. The summary is a derived artifact — it was never diffed against this record.",
+  "answerKeys": {
+    "summary": {
+      "medications": [
+        { "name": "lisinopril", "dose": "10 mg" },
+        { "name": "amlodipine", "dose": "5 mg" },
+        { "name": "sodium fluoride", "dose": "0.0272 mg/mg" },
+        { "name": "amoxicillin", "dose": "250 mg" },
+        { "name": "ibuprofen", "dose": "200 mg" },
+        { "name": "acetaminophen", "dose": "325 mg" }
+      ]
+    },
+    "record": {
+      "medications": [
+        { "name": "lisinopril", "dose": "10 mg" },
+        { "name": "amlodipine", "dose": "2.5 mg" },
+        { "name": "sodium fluoride", "dose": "0.0272 mg/mg" },
+        { "name": "amoxicillin", "dose": "250 mg" },
+        { "name": "ibuprofen", "dose": "200 mg" },
+        { "name": "acetaminophen", "dose": "325 mg" }
+      ]
+    }
+  },
+  "outcomes": {
+    "summary": {
+      "tone": "danger",
+      "headline": "You trusted an untested key",
+      "body": "The diff is green — F1 100% — so it looks like the model nailed it. But you authored the key from the visit summary, and the summary itself says amlodipine 5 mg. The model agrees with the summary, not the record: the record documents 2.5 mg. A green diff against an unverified key is false confidence, not correctness. The reference was wrong, and the diff faithfully reported agreement with a wrong reference."
+    },
+    "record": {
+      "tone": "success",
+      "headline": "That's the discipline",
+      "body": "You opened the source record, saw amlodipine 2.5 mg, and authored the key from it. Now the same model output lights up one mismatch — the model's 5 mg against the documented 2.5 mg. F1 drops to 91.7% and the error is caught. The diff is only ever as trustworthy as the key you hold it to; authoring from the source is what makes it real."
+    }
+  }
+}
