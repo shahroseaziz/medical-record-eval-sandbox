@@ -11,6 +11,7 @@ export type ScorerName =
   | 'faithfulness'
   | 'extraction-completeness'
   | 'section-hit'
+  | 'structured-diff'
 
 /**
  * Canonical hand-authored expected-output fields a scorer can target.
@@ -100,4 +101,48 @@ export interface SectionHitResult extends BaseScoreResult {
   requiredSections: string[]
   retrievedSections: string[]
   missingSections: string[]
+}
+
+/**
+ * One per-field outcome in a structured diff.
+ *  - 'match':    expected & actual values agree (after normalization)  → true positive
+ *  - 'mismatch': both sides present but disagree                       → false pos + false neg
+ *  - 'missing':  expected the field/item, actual omitted it            → false negative
+ *  - 'extra':    actual produced a field/item not in expected          → false positive
+ */
+export interface StructuredFieldDiff {
+  /** Canonical item key (normalized drug name) the field belongs to. */
+  item: string
+  /** Which field of the item is being compared. */
+  field: 'name' | 'dose'
+  status: 'match' | 'mismatch' | 'missing' | 'extra'
+  /** Expected value as authored (undefined when expected omitted it). */
+  expected?: string
+  /** Actual value as produced (undefined when actual omitted it). */
+  actual?: string
+}
+
+export interface StructuredDiffResult extends BaseScoreResult {
+  scorer: 'structured-diff'
+  /** F1 over field-level matches; null when there is nothing to compare. */
+  score: number | null
+  /** Every per-field comparison, in expected-then-extra order. */
+  fields: StructuredFieldDiff[]
+  /** Confusion-matrix counts over field-level diffs. */
+  matchCount: number
+  mismatchCount: number
+  /** False negatives: expected fields missing from actual. */
+  missingCount: number
+  /** False positives: actual fields not in expected. */
+  extraCount: number
+  precision: number
+  recall: number
+  /**
+   * Normalization limitations encountered on THIS case (unparseable doses,
+   * multi-strength duplicate names, un-converted compound/concentration units,
+   * and salt strips that altered a name and could mask a distinct salt).
+   * Surfaced so the blind spots are visible, never hidden behind a clean-looking
+   * score. Deduped.
+   */
+  blindSpots: string[]
 }

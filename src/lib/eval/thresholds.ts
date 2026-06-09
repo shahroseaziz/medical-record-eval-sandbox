@@ -6,6 +6,7 @@ export interface Thresholds {
   contains: number
   judgeKappaMin: number
   extractionCompleteness: number
+  structuredDiff: number
 }
 
 function parseSimpleYaml(content: string): Record<string, number> {
@@ -27,5 +28,6 @@ export function loadThresholds(yamlPath?: string): Thresholds {
     contains: raw['contains'] ?? 1.0,
     judgeKappaMin: raw['judge_kappa_min'] ?? 0.0,
     extractionCompleteness: raw['extraction_completeness'] ?? 0.0,
+    structuredDiff: raw['structured_diff'] ?? 0.0,
   }
 }
