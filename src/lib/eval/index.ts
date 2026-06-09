@@ -9,6 +9,8 @@ export type {
   ContainsResult,
   FaithfulnessClaim,
   FaithfulnessResult,
+  ReferenceVerdict,
+  ReferenceJudgeResult,
   ExtractionCompletenessResult,
   SectionHitResult,
   StructuredFieldDiff,
@@ -20,6 +22,11 @@ export type { Thresholds } from './thresholds'
 
 export { scoreContains } from './scorers/contains'
 export { scoreFaithfulness } from './scorers/faithfulness'
+export {
+  scoreReferenceJudge,
+  buildReferencePrompt,
+  buildRedactedReferencePrompt,
+} from './scorers/reference-judge'
 export { scoreExtractionCompleteness } from './scorers/extraction-completeness'
 export { scoreSectionHit } from './scorers/section-hit'
 export { scoreStructuredDiff, extractEntries } from './scorers/structured-diff'
