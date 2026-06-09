@@ -14,7 +14,7 @@ import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from '.
 import { EvalLoopDiagram, type EvalStage } from './EvalLoopDiagram'
 import { Term } from './Term'
 import { useRun } from '@/hooks/useRun'
-import { loadUserCasesV2, type UserCase, type UserCaseV2 } from '@/lib/cases'
+import { loadUserCasesV3, type UserCase, type UserCaseV3 } from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 
 function EvalBadge({ label, score }: { label: string; score: number | null }) {
@@ -63,7 +63,7 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
 
   // Seed count from localStorage so the diagram reflects prior work on reload
   useEffect(() => {
-    setGoldenCaseCount(loadUserCasesV2().length)
+    setGoldenCaseCount(loadUserCasesV3().length)
   }, [])
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
@@ -149,7 +149,7 @@ export function Workspace({ goldenSetResetKey = 0 }: { goldenSetResetKey?: numbe
     }
   }
 
-  function handleRunGoldenCase(uc: UserCaseV2) {
+  function handleRunGoldenCase(uc: UserCaseV3) {
     setQuery(uc.taskPrompt)
     setMode(uc.ragMode)
     if (uc.capturedGrounding.record) setRecord(uc.capturedGrounding.record)

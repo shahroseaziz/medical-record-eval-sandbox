@@ -271,22 +271,22 @@ describe('account-portable state blob: serialize/deserialize', () => {
     localStorage.clear()
   })
 
-  it('serialized blob has the correct schema shape', () => {
+  it('serialized blob has the correct schema shape (v2, carrying v3 cases)', () => {
     saveGenPrompt('my gen prompt')
     saveJudgeRubric('my rubric')
     const parsed = JSON.parse(serializeState())
-    expect(parsed.version).toBe(1)
+    expect(parsed.version).toBe(2)
     expect(parsed.genPrompt).toBe('my gen prompt')
     expect(parsed.judgeRubric).toBe('my rubric')
     expect(Array.isArray(parsed.cases)).toBe(true)
   })
 
-  it('round-trips the full state losslessly', () => {
+  it('round-trips the full state losslessly through the v3 store', () => {
     const hash = genPromptHash(GEN_PROMPT)
     saveGenPrompt(GEN_PROMPT)
     saveJudgeRubric('Score 0-3 on faithfulness.')
-    saveUserCaseV2(makeUserCaseV2('blob-1', hash))
-    saveUserCaseV2(makeUserCaseV2('blob-2', hash))
+    saveUserCaseV3(makeUserCaseV3('blob-1', hash))
+    saveUserCaseV3(makeUserCaseV3('blob-2', hash))
 
     const blob = serializeState()
     localStorage.clear()
@@ -294,10 +294,27 @@ describe('account-portable state blob: serialize/deserialize', () => {
 
     expect(loadGenPrompt()).toBe(GEN_PROMPT)
     expect(loadJudgeRubric()).toBe('Score 0-3 on faithfulness.')
-    const cases = loadUserCasesV2()
+    const cases = loadUserCasesV3()
     expect(cases).toHaveLength(2)
-    expect(cases[0]).toEqual(makeUserCaseV2('blob-1', hash))
-    expect(cases[1]).toEqual(makeUserCaseV2('blob-2', hash))
+    expect(cases[0]).toEqual(makeUserCaseV3('blob-1', hash))
+    expect(cases[1]).toEqual(makeUserCaseV3('blob-2', hash))
+  })
+
+  it('imports a legacy v1 blob by migrating its v2 cases to v3', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    const legacy = JSON.stringify({
+      version: 1,
+      genPrompt: GEN_PROMPT,
+      judgeRubric: 'rubric',
+      cases: [{ ...makeUserCaseV2('legacy-blob', hash), referenceOutput: 'ideal prose' }],
+    })
+    deserializeState(legacy)
+    const cases = loadUserCasesV3()
+    expect(cases).toHaveLength(1)
+    expect(cases[0].version).toBe(3)
+    expect(cases[0].id).toBe('legacy-blob')
+    expect(cases[0].expectedProse).toBe('ideal prose')
+    expect(cases[0].fieldScorers).toEqual({ prose: 'faithfulness' })
   })
 
   it('empty state round-trips losslessly', () => {
@@ -307,7 +324,7 @@ describe('account-portable state blob: serialize/deserialize', () => {
 
     expect(loadGenPrompt()).toBe('')
     expect(loadJudgeRubric()).toBe('')
-    expect(loadUserCasesV2()).toEqual([])
+    expect(loadUserCasesV3()).toEqual([])
   })
 
   it('throws on unsupported blob version', () => {
@@ -316,18 +333,18 @@ describe('account-portable state blob: serialize/deserialize', () => {
   })
 
   it('throws with a clear message on malformed JSON (e.g. truncated paste)', () => {
-    expect(() => deserializeState('{"version":1,"genPrompt":"x')).toThrow(
+    expect(() => deserializeState('{"version":2,"genPrompt":"x')).toThrow(
       'deserializeState: invalid JSON',
     )
   })
 
   it('absent blob.cases falls back to [] — does not write "undefined" string', () => {
     // Blob with no cases field
-    const partial = JSON.stringify({ version: 1, genPrompt: 'gp', judgeRubric: 'jr' })
+    const partial = JSON.stringify({ version: 2, genPrompt: 'gp', judgeRubric: 'jr' })
     deserializeState(partial)
-    expect(loadUserCasesV2()).toEqual([])
+    expect(loadUserCasesV3()).toEqual([])
     // Verify the raw key is not the string "undefined"
-    expect(localStorage.getItem('user_cases_v2')).not.toBe('undefined')
+    expect(localStorage.getItem('user_cases_v3')).not.toBe('undefined')
   })
 
   it('absent blob.genPrompt falls back to "" — does not write "undefined" string', () => {
@@ -484,6 +501,15 @@ describe('UserCaseV2 → V3 migration', () => {
     expect(out.every((c) => c.version === 3)).toBe(true)
   })
 
+  it('migrates a case with no referenceOutput to an empty fieldScorers map', () => {
+    // makeUserCaseV2 has no referenceOutput — there is no prose to grade, so no
+    // scorer should be wired to an undefined expectedProse field.
+    const hash = genPromptHash(GEN_PROMPT)
+    const v3 = migrateUserCaseV2toV3(makeUserCaseV2('no-ref', hash))
+    expect(v3.expectedProse).toBeUndefined()
+    expect(v3.fieldScorers).toEqual({})
+  })
+
   it('loadUserCasesV3 lazily migrates an existing v2 store and persists under the v3 key', () => {
     const hash = genPromptHash(GEN_PROMPT)
     // Seed only the legacy v2 store.
@@ -521,8 +547,26 @@ describe('UserCaseV2 → V3 migration', () => {
     expect(ids).toContain('fresh-1')
   })
 
-  it('corrupt v3 store resets to an empty set (clear path)', () => {
+  it('corrupt v3 store with no v2 backup yields an empty set (clear path)', () => {
     localStorage.setItem('user_cases_v3', '{not json')
     expect(loadUserCasesV3()).toEqual([])
+  })
+
+  it('corrupt v3 store recovers from the untouched v2 backup rather than losing data', () => {
+    const hash = genPromptHash(GEN_PROMPT)
+    // A good v2 backup exists; the v3 blob is corrupt.
+    saveUserCaseV2(makeUserCaseV2('backup-1', hash))
+    localStorage.setItem('user_cases_v3', '{not json')
+
+    const recovered = loadUserCasesV3()
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].id).toBe('backup-1')
+    expect(recovered[0].version).toBe(3)
+
+    // The recovered cases survive the next save (no permanent overwrite-with-empty).
+    saveUserCaseV3(makeUserCaseV3('fresh-after-recovery', hash))
+    const ids = loadUserCasesV3().map((c) => c.id)
+    expect(ids).toContain('backup-1')
+    expect(ids).toContain('fresh-after-recovery')
   })
 })

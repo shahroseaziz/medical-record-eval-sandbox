@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import type { UserCaseV2, CapturedGrounding } from '@/lib/cases'
+import type { UserCaseV3, CapturedGrounding } from '@/lib/cases'
 import {
-  loadUserCasesV2,
-  saveUserCaseV2,
-  deleteUserCaseV2,
+  loadUserCasesV3,
+  saveUserCaseV3,
+  deleteUserCaseV3,
   isCaseStale,
   genPromptHash,
 } from '@/lib/cases'
@@ -49,7 +49,7 @@ function assembleGrounding(cg: CapturedGrounding): string {
 const SCORE_TIMEOUT_MS = 30_000
 
 async function scoreOneCase(
-  uc: UserCaseV2,
+  uc: UserCaseV3,
 ): Promise<{ data: ScoreAPIResponse | null; rateLimited: boolean }> {
   const grounding = assembleGrounding(uc.capturedGrounding)
   if (!grounding || !uc.capturedOutput) return { data: null, rateLimited: false }
@@ -115,7 +115,7 @@ interface Props {
   runGenPrompt: string
   /** True while a run is in progress; blocks mid-stream captures. */
   loading: boolean
-  onRunCase: (uc: UserCaseV2) => void
+  onRunCase: (uc: UserCaseV3) => void
   /** Called after a case is successfully saved — receives the new case count. */
   onCaseSaved?: (count: number) => void
   /** Called when a batch eval completes. */
@@ -139,7 +139,7 @@ export function GoldenSetBuilder({
   onEvalComplete,
   onCapturePanelChange,
 }: Props) {
-  const [cases, setCases] = useState<UserCaseV2[]>([])
+  const [cases, setCases] = useState<UserCaseV3[]>([])
   const [showCapture, setShowCapture] = useState(false)
   const [captureMode, setCaptureMode] = useState<CaptureMode>('promote')
   const [editedOutput, setEditedOutput] = useState('')
@@ -157,7 +157,7 @@ export function GoldenSetBuilder({
   } | null>(null)
 
   useEffect(() => {
-    setCases(loadUserCasesV2())
+    setCases(loadUserCasesV3())
     const stored = loadStoredEvalRun()
     if (stored) {
       setBatchResults(stored.results)
@@ -167,7 +167,7 @@ export function GoldenSetBuilder({
   }, [])
 
   function refresh() {
-    const updated = loadUserCasesV2()
+    const updated = loadUserCasesV3()
     setCases(updated)
     return updated
   }
@@ -254,20 +254,25 @@ export function GoldenSetBuilder({
     if (!currentPatientId) return
 
     const referenceOutput = captureMode === 'promote' ? runOutput : editedOutput
+    const expectedProse = referenceOutput || undefined
 
     const capturedGrounding =
       currentMode === 'retrieve' && retrieval != null
         ? { mode: 'retrieve' as RunMode, chunks: retrieval.chunks }
         : { mode: 'stuff' as RunMode, record: currentRecord }
 
-    const uc: UserCaseV2 = {
+    const uc: UserCaseV3 = {
+      version: 3,
       id: `golden-${Date.now()}`,
       taskPrompt: currentQuery,
       patientId: currentPatientId,
       ragMode: currentMode,
       capturedOutput: runOutput,
       capturedGrounding,
-      referenceOutput: referenceOutput || undefined,
+      expectedStructured: undefined,
+      // The hand-authored prose reference; faithfulness grades it when present.
+      expectedProse,
+      fieldScorers: expectedProse !== undefined ? { prose: 'faithfulness' } : {},
       intentLabel,
       designedFailReason: intentLabel === 'fail' && failReason ? failReason : undefined,
       provenance: {
@@ -278,7 +283,7 @@ export function GoldenSetBuilder({
       },
       createdAt: Date.now(),
     }
-    saveUserCaseV2(uc)
+    saveUserCaseV3(uc)
     const updated = refresh()
     setShowCapture(false)
     onCapturePanelChange?.(false)
@@ -288,7 +293,7 @@ export function GoldenSetBuilder({
   }
 
   function handleDelete(id: string) {
-    deleteUserCaseV2(id)
+    deleteUserCaseV3(id)
     const updated = refresh()
     onCaseSaved?.(updated.length)
   }

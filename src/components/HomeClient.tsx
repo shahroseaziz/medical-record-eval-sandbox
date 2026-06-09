@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { ExampleHero } from './ExampleHero'
 import { Workspace } from './Workspace'
 import type { UserRunCaseResult, StoredEvalRun } from '@/lib/eval/user-agreement'
-import type { UserCaseV2 } from '@/lib/cases'
+import { migrateUserCasesV2toV3, replaceUserCasesV3, type UserCaseV2 } from '@/lib/cases'
 
 interface Props {
   exampleResults: UserRunCaseResult[]
@@ -23,7 +23,8 @@ export function HomeClient({
 
   function handleResetToExample() {
     if (typeof window === 'undefined') return
-    localStorage.setItem('user_cases_v2', JSON.stringify(exampleCases))
+    // The example fixtures are v2-shaped — migrate them into the canonical v3 store.
+    replaceUserCasesV3(migrateUserCasesV2toV3(exampleCases))
     localStorage.setItem('user_eval_run_v1', JSON.stringify(exampleEvalRun))
     setGoldenSetResetKey((k) => k + 1)
   }
