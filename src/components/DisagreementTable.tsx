@@ -17,6 +17,13 @@ interface Props {
   onThresholdChange?: (t: number) => void
   /** Present when the run was stopped before scoring all cases. */
   partial?: { scored: number; total: number; rateLimited: boolean }
+  /**
+   * When provided, the intent-label cell becomes interactive: the learner can
+   * flip each case between designed-pass and designed-fail and watch the judge
+   * agree or disagree. Omitted (the default) keeps the label read-only — the
+   * worked-example and golden-set surfaces stay static.
+   */
+  onIntentLabelChange?: (caseId: string, label: 'pass' | 'fail') => void
 }
 
 export function DisagreementTable({
@@ -24,6 +31,7 @@ export function DisagreementTable({
   initialThreshold = DEFAULT_PASS_THRESHOLD,
   onThresholdChange,
   partial,
+  onIntentLabelChange,
 }: Props) {
   const [threshold, setThreshold] = useState(initialThreshold)
 
@@ -145,7 +153,9 @@ export function DisagreementTable({
             marginBottom: '0.5rem',
           }}
         >
-          Fitting the threshold to your own labels is not validation.
+          Fitting the threshold to your own labels is not validation. At this sample size (n=
+          {n}) a cutoff tuned for maximum agreement just memorizes your set — it will not
+          generalize. Calibrate against a held-out, human-labeled set before trusting it.
         </div>
       )}
 
@@ -310,11 +320,39 @@ export function DisagreementTable({
                     borderLeft: `3px solid ${disagrees ? '#e8a000' : 'transparent'}`,
                   }}
                 >
-                  {/* Intent label */}
+                  {/* Intent label — interactive when onIntentLabelChange is provided */}
                   <td style={TD}>
-                    <span style={intentBadge(r.intentLabel)}>
-                      {r.intentLabel === 'pass' ? 'designed-pass' : 'designed-fail'}
-                    </span>
+                    {onIntentLabelChange ? (
+                      <div
+                        data-testid={`intent-label-control-${r.caseId}`}
+                        style={{ display: 'flex', gap: 4 }}
+                      >
+                        {(['pass', 'fail'] as const).map((label) => {
+                          const active = r.intentLabel === label
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              data-testid={`set-intent-${label}-${r.caseId}`}
+                              aria-pressed={active}
+                              onClick={() => onIntentLabelChange(r.caseId, label)}
+                              style={{
+                                ...intentBadge(label),
+                                cursor: 'pointer',
+                                opacity: active ? 1 : 0.4,
+                                borderWidth: active ? 2 : 1,
+                              }}
+                            >
+                              {label === 'pass' ? 'designed-pass' : 'designed-fail'}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <span style={intentBadge(r.intentLabel)}>
+                        {r.intentLabel === 'pass' ? 'designed-pass' : 'designed-fail'}
+                      </span>
+                    )}
                   </td>
 
                   {/* Judge verdict */}
