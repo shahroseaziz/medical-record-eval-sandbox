@@ -1,0 +1,93 @@
+.pre {
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+.record {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.summary {
+  cursor: pointer;
+}
+
+.record .pre {
+  margin-top: var(--space-2);
+}
+
+/* Source picker — mirrors the segmented control used in Beat 3. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.segment {
+  appearance: none;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-primary-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+.segment + .segment {
+  border-left: 1px solid var(--color-primary-border);
+}
+.segment:hover {
+  background: var(--color-primary-subtle);
+}
+.segmentActive {
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+.segmentActive:hover {
+  background: var(--color-primary-hover);
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.table,
+.keyTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table th,
+.table td,
+.keyTable th,
+.keyTable td {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.table th,
+.keyTable th {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+.rowFlag {
+  background: var(--color-surface-sunken);
+}

@@ -50,7 +50,7 @@ export function LessonView({ data }: { data: LessonData }) {
       <section data-testid="lesson-beat-1">
         <Stack gap={3}>
           <Stack gap={1}>
-            <Heading level={2}>Beat 1 — Structured diff (deterministic)</Heading>
+            <Heading level={3}>Structured diff — committed reference (deterministic)</Heading>
             <Text as="p" size="sm" tone="muted">
               Each medication field is aligned by canonical name and compared after normalization.
               Casing differences are absorbed; a genuine dose error is not.
@@ -123,7 +123,7 @@ export function LessonView({ data }: { data: LessonData }) {
       <section data-testid="lesson-beat-2">
         <Stack gap={3}>
           <Stack gap={1}>
-            <Heading level={2}>Beat 2 — Reference judge (committed verdict)</Heading>
+            <Heading level={3}>Reference judge — committed verdict</Heading>
             <Text as="p" size="sm" tone="muted">
               The same output, compared in meaning against the expected prose. The verdict is a
               committed record-replay fixture — never re-judged live.
