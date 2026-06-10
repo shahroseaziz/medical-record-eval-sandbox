@@ -12,8 +12,12 @@
  * Checks:
  *   1. eval-example.json carries >=1 disagreement row
  *   2. API liveness (Voyage + Claude)
- *   3. Each case scores without a judge error
+ *   3. Each case scores without a judge error (faithfulness)
  *   4. Pass cases score above the example's threshold
+ *   5. structured-diff runtime: a valid fixture scores in [0,1]; a no-expected
+ *      fixture degrades to errored (never crash)
+ *   6. reference-judge runtime: a live verdict is valid + non-errored; a malformed
+ *      judge response surfaces "errored", never a crash or fabricated verdict (E13)
  *
  * Exit codes:
  *   0  gate-green
@@ -29,8 +33,16 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { scoreFaithfulness } from '../src/lib/eval/scorers/faithfulness.js'
+import { scoreStructuredDiff } from '../src/lib/eval/scorers/structured-diff.js'
+import { scoreReferenceJudge } from '../src/lib/eval/scorers/reference-judge.js'
 import { isUpstreamOutage, EXPECTED_JUDGE_MODEL, EXPECTED_EMBEDDING_MODEL } from './run_evals.js'
-import type { EvalCase, FaithfulnessResult } from '../src/lib/eval/types.js'
+import type {
+  EvalCase,
+  FaithfulnessResult,
+  StructuredDiffResult,
+  ReferenceJudgeResult,
+  ReferenceVerdict,
+} from '../src/lib/eval/types.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -66,6 +78,20 @@ export interface ExampleGateOptions {
   anthropicProber?: () => Promise<'ok' | 'down'>
   examplePath?: string
   scoreFn?: (evalCase: EvalCase, client?: Anthropic, rubric?: string) => Promise<FaithfulnessResult>
+  /** Override the structured-diff scorer (deterministic, free); defaults to the real one. */
+  structuredDiffFn?: (evalCase: EvalCase, actual?: unknown) => StructuredDiffResult
+  /**
+   * Override the LIVE reference-judge scorer used for the positive fixture only;
+   * defaults to the real one. The malformed negative fixture ALWAYS uses the real
+   * scoreReferenceJudge against an in-process client (no live tokens) so the
+   * errored-not-faked path is genuinely exercised.
+   */
+  referenceJudgeFn?: (
+    actual: string,
+    expected: string,
+    client?: Anthropic,
+    options?: { criteria?: string; maxTokens?: number },
+  ) => Promise<ReferenceJudgeResult>
 }
 
 interface ExampleChunk {
@@ -100,6 +126,98 @@ interface ExampleData {
   threshold: number
   cases: ExampleCase[]
   results: ExampleResult[]
+}
+
+// ── New-scorer runtime fixtures (R14) ──────────────────────────────────────────
+//
+// The faithfulness path above is the original gate. R14 also guards the two
+// scorers added in the correctness-first redesign — structured-diff (free,
+// deterministic) and reference-judge (live Haiku) — so a runtime regression in
+// either is caught here, not in production.
+
+const REFERENCE_VERDICTS = new Set<ReferenceVerdict>(['equivalent', 'partial', 'divergent'])
+
+/**
+ * Structured-diff fixture: a hand-authored expected med list vs an actual list
+ * with one deliberate dose mismatch (Atorvastatin 20mg → 40mg). A correct scorer
+ * returns a finite F1 in [0,1] with at least one mismatch — never `errored`.
+ */
+export const STRUCTURED_DIFF_FIXTURE: { evalCase: EvalCase; actual: unknown } = {
+  evalCase: {
+    id: 'r14-structured-diff-runtime',
+    patientId: 'example-fixture',
+    query: 'List documented medications with dose.',
+    output:
+      '{"medications":[{"name":"Lisinopril","dose":"10 mg"},{"name":"Atorvastatin","dose":"40 mg"}]}',
+    mode: 'retrieve',
+    expectedStructured: {
+      medications: [
+        { name: 'Lisinopril', dose: '10 mg' },
+        { name: 'Atorvastatin', dose: '20 mg' },
+      ],
+    },
+  },
+  actual: {
+    medications: [
+      { name: 'Lisinopril', dose: '10 mg' },
+      { name: 'Atorvastatin', dose: '40 mg' },
+    ],
+  },
+}
+
+/**
+ * Structured-diff negative fixture: no `expectedStructured` on the case. The
+ * scorer must degrade to `errored` with a null score — never crash or fabricate
+ * a confusion matrix from nothing.
+ */
+export const STRUCTURED_DIFF_NEGATIVE: { evalCase: EvalCase; actual: unknown } = {
+  evalCase: {
+    id: 'r14-structured-diff-negative',
+    patientId: 'example-fixture',
+    query: 'List documented medications.',
+    output: '{"medications":[]}',
+    mode: 'retrieve',
+  },
+  actual: undefined,
+}
+
+/** Reference-judge fixture: prose that should read as equivalent meaning to a live judge. */
+export const REFERENCE_JUDGE_FIXTURE = {
+  actual: 'The patient takes Lisinopril 10mg daily and Atorvastatin 20mg at night.',
+  expected: 'Patient is on Lisinopril 10mg once daily and Atorvastatin 20mg nightly.',
+}
+
+/** Reference-judge negative fixture: any prose pair — the malformed JUDGE response is what forces errored. */
+export const REFERENCE_JUDGE_NEGATIVE = {
+  actual: 'Patient takes Lisinopril.',
+  expected: 'Patient takes Lisinopril 10mg daily.',
+}
+
+/**
+ * An in-process Anthropic stub whose verdict tool always returns an enum value
+ * OUTSIDE the valid set {equivalent, partial, divergent}. Feeding this to the
+ * real scoreReferenceJudge drives its parse-reject → retry → null → errored path
+ * deterministically, with zero live tokens. This is the regression guard for the
+ * E13 contract: a malformed reference-judge case must surface `errored: true`
+ * with a null verdict — never a crash, never a fabricated verdict.
+ *
+ * NEVER used for the positive live call.
+ */
+function makeMalformedJudgeClient(): Anthropic {
+  return {
+    messages: {
+      create: async () => ({
+        content: [
+          {
+            type: 'tool_use',
+            name: 'reference_verdict',
+            input: { verdict: 'MALFORMED_NOT_IN_ENUM', reason: 'injected malformed verdict' },
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+    },
+  } as unknown as Anthropic
 }
 
 // ── Exported check helpers (unit-testable) ────────────────────────────────────
@@ -328,6 +446,97 @@ export async function runExampleGate(opts: ExampleGateOptions = {}): Promise<Gat
           `< threshold=${exampleData.threshold}`,
       })
     }
+  }
+
+  // [4] Structured-diff scorer runtime path (deterministic, client-side / free)
+  //
+  // Exercises scoreStructuredDiff — the per-field reference diff /api/score-reference
+  // hits when a user grades a structured field. A valid fixture must produce a
+  // finite F1 score; a no-expected fixture must degrade to errored, never crash.
+  log('\n[4] Structured-diff scorer runtime path')
+
+  const runStructuredDiff = opts.structuredDiffFn ?? scoreStructuredDiff
+
+  const sd = runStructuredDiff(STRUCTURED_DIFF_FIXTURE.evalCase, STRUCTURED_DIFF_FIXTURE.actual)
+  if (sd.errored) {
+    add({
+      check: 'structured-diff-runtime',
+      message: `structured-diff errored on a valid fixture — ${sd.errorMessage ?? 'unknown'}`,
+    })
+  } else if (typeof sd.score !== 'number' || sd.score < 0 || sd.score > 1) {
+    add({
+      check: 'structured-diff-runtime',
+      message: `structured-diff produced a non-[0,1] score: ${String(sd.score)}`,
+    })
+  } else {
+    ok(
+      `structured-diff fixture: score=${sd.score.toFixed(4)} ` +
+        `match=${sd.matchCount} mismatch=${sd.mismatchCount} missing=${sd.missingCount} extra=${sd.extraCount}`,
+    )
+  }
+
+  const sdNeg = runStructuredDiff(STRUCTURED_DIFF_NEGATIVE.evalCase, STRUCTURED_DIFF_NEGATIVE.actual)
+  if (!sdNeg.errored || sdNeg.score !== null) {
+    add({
+      check: 'structured-diff-negative',
+      message:
+        `structured-diff on a no-expected fixture must be errored with a null score; ` +
+        `got errored=${String(sdNeg.errored)} score=${String(sdNeg.score)}`,
+    })
+  } else {
+    ok('structured-diff negative fixture: errored (null score) — degraded, not crashed')
+  }
+
+  // [5] Reference-judge scorer runtime path
+  //
+  // Positive: a live Haiku verdict (Claude liveness already confirmed in [2]) must
+  // return a valid verdict, not errored — the same path /api/score-reference runs.
+  // Negative: a deliberately-malformed judge response must drive the REAL scorer to
+  // `errored` — never a crash, never a fabricated verdict (the E13 contract).
+  log('\n[5] Reference-judge scorer runtime path')
+
+  const runReferenceJudge = opts.referenceJudgeFn ?? scoreReferenceJudge
+
+  const rj = await runReferenceJudge(
+    REFERENCE_JUDGE_FIXTURE.actual,
+    REFERENCE_JUDGE_FIXTURE.expected,
+    client,
+  )
+  if (rj.errored) {
+    add({
+      check: 'reference-judge-runtime',
+      message: `reference-judge errored on a valid fixture — ${rj.errorMessage ?? 'unknown'}`,
+    })
+  } else if (rj.verdict == null || !REFERENCE_VERDICTS.has(rj.verdict)) {
+    add({
+      check: 'reference-judge-runtime',
+      message: `reference-judge returned no valid verdict: ${String(rj.verdict)}`,
+    })
+  } else {
+    ok(`reference-judge fixture: verdict=${rj.verdict} score=${(rj.score ?? 0).toFixed(2)}`)
+  }
+
+  // Negative fixture — runs the REAL scoreReferenceJudge against an in-process
+  // malformed-response client (no live tokens), so the errored-not-faked path is
+  // exercised end-to-end even when the live gate is dispatched.
+  const rjNeg = await scoreReferenceJudge(
+    REFERENCE_JUDGE_NEGATIVE.actual,
+    REFERENCE_JUDGE_NEGATIVE.expected,
+    makeMalformedJudgeClient(),
+  )
+  if (!rjNeg.errored || rjNeg.score !== null || rjNeg.verdict !== null) {
+    add({
+      check: 'reference-judge-negative',
+      message:
+        `malformed reference-judge case must be errored with a null score & verdict (E13); ` +
+        `got errored=${String(rjNeg.errored)} score=${String(rjNeg.score)} verdict=${String(
+          rjNeg.verdict,
+        )}`,
+    })
+  } else {
+    ok(
+      'reference-judge negative fixture: errored (null score & verdict) — not a crash, not a fabricated verdict',
+    )
   }
 
   if (violations.length === 0) {

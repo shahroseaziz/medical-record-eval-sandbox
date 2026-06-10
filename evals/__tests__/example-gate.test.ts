@@ -9,6 +9,9 @@
  *   ✓ outage paths: inconclusive when Voyage or Claude is down
  *   ✓ pass-case-below-threshold: gate-red when a pass case scores below threshold
  *   ✓ judge-error violation: gate-red when scoreFn returns errored result
+ *   ✓ R14 structured-diff runtime: gate-red on errored / non-[0,1] score
+ *   ✓ R14 reference-judge runtime: gate-red on errored / invalid verdict; malformed
+ *     negative fixture produces "errored" (not a crash / fake verdict) without failing the gate
  */
 
 import { describe, it, expect } from 'vitest'
@@ -25,7 +28,12 @@ import {
   type ExampleGateOptions,
   type GateResult,
 } from '../run_evals_example.js'
-import type { EvalCase, FaithfulnessResult } from '../../src/lib/eval/types.js'
+import type {
+  EvalCase,
+  FaithfulnessResult,
+  ReferenceJudgeResult,
+  StructuredDiffResult,
+} from '../../src/lib/eval/types.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +63,19 @@ function makeMinimalExample(resultsOverride?: Array<{ caseId: string; intentLabe
   }
 }
 
+// A non-errored reference-judge result so the [5] live positive fixture never
+// hits the network in unit tests. The malformed negative fixture in [5] always
+// uses the REAL scorer with an in-process client, so it needs no injection.
+function makeRefOkResult(): ReferenceJudgeResult {
+  return {
+    scorer: 'reference-judge',
+    score: 1.0,
+    verdict: 'equivalent',
+    reason: 'same meaning',
+    judgePrompt: '[actual redacted sha256=00000000 len=0]',
+  }
+}
+
 async function runWithTmpExample(
   example: ReturnType<typeof makeMinimalExample>,
   opts: Omit<ExampleGateOptions, 'examplePath'>
@@ -67,7 +88,11 @@ async function runWithTmpExample(
   process.env.VOYAGE_API_KEY = 'test-stub'
   process.env.ANTHROPIC_API_KEY = 'test-stub'
   try {
-    return await runExampleGate({ examplePath, ...opts })
+    return await runExampleGate({
+      examplePath,
+      referenceJudgeFn: async () => makeRefOkResult(),
+      ...opts,
+    })
   } finally {
     process.env.VOYAGE_API_KEY = prevVoyage
     process.env.ANTHROPIC_API_KEY = prevAnthropic
@@ -394,6 +419,7 @@ describe('example-through-runtime gate — injected scoreFn', () => {
         anthropicProber: async () => 'ok',
         // example-pass-001 must score >=0.85; fail/disagree cases have no threshold requirement
         scoreFn: async (ec) => makeOkResult(ec.id === 'example-pass-001' ? 1.0 : 0.0),
+        referenceJudgeFn: async () => makeRefOkResult(),
       })
       expect(result.status).toBe('green')
       expect(result.violations).toHaveLength(0)
@@ -401,5 +427,111 @@ describe('example-through-runtime gate — injected scoreFn', () => {
       process.env.VOYAGE_API_KEY = prevVoyage
       process.env.ANTHROPIC_API_KEY = prevAnthropic
     }
+  })
+})
+
+// ── [7] New-scorer runtime gate (R14: structured-diff + reference-judge) ──────
+//
+// The gate exercises the two scorers added in the correctness-first redesign.
+// structured-diff runs the REAL (free, deterministic) scorer; the reference-judge
+// POSITIVE fixture is injectable (no live tokens in unit tests); the reference-judge
+// NEGATIVE fixture ALWAYS runs the real scoreReferenceJudge against an in-process
+// malformed-response client, so the "errored, not faked" path is covered here too.
+
+describe('new-scorer runtime gate (R14)', () => {
+  const healthy = {
+    voyageProber: async () => 'ok' as const,
+    anthropicProber: async () => 'ok' as const,
+    scoreFn: async (ec: EvalCase) => makeOkResult(ec.id === 'example-pass-001' ? 1.0 : 0.0),
+  }
+
+  it('gate-green: real structured-diff + injected reference-judge both exercised', async () => {
+    // The malformed reference-judge NEGATIVE fixture runs internally with the real
+    // scorer; that it does not turn the gate red proves it produced "errored"
+    // (treated as success), not a crash or a fabricated verdict.
+    const result = await runWithTmpExample(makeMinimalExample(), {
+      ...healthy,
+      referenceJudgeFn: async () => makeRefOkResult(),
+    })
+    expect(result.status).toBe('green')
+    expect(result.violations).toHaveLength(0)
+  })
+
+  it('gate-red when structured-diff errors on the valid fixture (runtime regression)', async () => {
+    const erroredDiff: StructuredDiffResult = {
+      scorer: 'structured-diff',
+      score: null,
+      errored: true,
+      errorMessage: 'simulated structured-diff regression',
+      fields: [],
+      matchCount: 0,
+      mismatchCount: 0,
+      missingCount: 0,
+      extraCount: 0,
+      precision: 0,
+      recall: 0,
+      blindSpots: [],
+    }
+    const result = await runWithTmpExample(makeMinimalExample(), {
+      ...healthy,
+      structuredDiffFn: () => erroredDiff,
+    })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'structured-diff-runtime')).toBe(true)
+  })
+
+  it('gate-red when structured-diff returns a non-[0,1] score', async () => {
+    const badScoreDiff: StructuredDiffResult = {
+      scorer: 'structured-diff',
+      score: 1.7,
+      fields: [],
+      matchCount: 0,
+      mismatchCount: 0,
+      missingCount: 0,
+      extraCount: 0,
+      precision: 0,
+      recall: 0,
+      blindSpots: [],
+    }
+    const result = await runWithTmpExample(makeMinimalExample(), {
+      ...healthy,
+      structuredDiffFn: () => badScoreDiff,
+    })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'structured-diff-runtime')).toBe(true)
+  })
+
+  it('gate-red when the live reference-judge fixture errors (runtime regression)', async () => {
+    const result = await runWithTmpExample(makeMinimalExample(), {
+      ...healthy,
+      referenceJudgeFn: async () => ({
+        scorer: 'reference-judge',
+        score: null,
+        errored: true,
+        errorMessage: 'simulated reference-judge regression',
+        verdict: null,
+        reason: null,
+        judgePrompt: '[redacted]',
+      }),
+    })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'reference-judge-runtime')).toBe(true)
+  })
+
+  it('gate-red when the live reference-judge returns an invalid verdict', async () => {
+    const result = await runWithTmpExample(makeMinimalExample(), {
+      ...healthy,
+      referenceJudgeFn: async () =>
+        ({
+          scorer: 'reference-judge',
+          score: 0.5,
+          // verdict outside the valid enum — must be rejected, not trusted
+          verdict: 'maybe' as unknown,
+          reason: 'x',
+          judgePrompt: '[redacted]',
+        }) as ReferenceJudgeResult,
+    })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'reference-judge-runtime')).toBe(true)
   })
 })

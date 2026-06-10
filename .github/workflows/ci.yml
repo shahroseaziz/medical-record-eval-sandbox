@@ -124,6 +124,9 @@ jobs:
     needs: ci
     # Reads only src/example/eval-example.json (a committed artifact) — no DB, no
     # user eval data; gate-reds if that file is missing or the judge runtime is broken.
+    # R14: also exercises the structured-diff + reference-judge runtime paths, incl. a
+    # malformed reference-judge negative fixture that must surface "errored" (not a crash
+    # or fabricated verdict). The deterministic halves of those checks also run in `npm test`.
     # MANUAL ONLY (cost control): this is a live-judge run (k-variance × cases × 2
     # Haiku calls). Running it on every push/PR flooded the account's Haiku rate
     # limit (586 hits/24h), so it now runs ONLY on workflow_dispatch (Actions → CI →
