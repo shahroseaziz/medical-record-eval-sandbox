@@ -76,7 +76,7 @@ async function selectPatientAndRun(page: Page) {
 test.describe('judge rubric editor', () => {
   test('rubric editor is visible with label and warning on page load', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await expect(page.getByTestId('judge-rubric-editor')).toBeVisible()
     await expect(page.getByTestId('judge-rubric-warning')).toBeVisible()
@@ -88,14 +88,14 @@ test.describe('judge rubric editor', () => {
 
   test('pre-filled with the default verdict rubric', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await expect(page.getByTestId('judge-rubric-input')).toHaveValue(DEFAULT_VERDICT_RUBRIC)
   })
 
   test('re-score button is disabled before a run', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await expect(page.getByTestId('rescore-btn')).toBeDisabled()
     await expect(page.getByTestId('judge-rubric-editor')).toContainText('Run first to enable')
@@ -103,7 +103,7 @@ test.describe('judge rubric editor', () => {
 
   test('reset restores the default rubric after editing', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await page.getByTestId('judge-rubric-input').fill('A custom rubric text')
     await expect(page.getByTestId('judge-rubric-input')).toHaveValue('A custom rubric text')
@@ -127,7 +127,7 @@ test.describe('judge rubric editor', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndRun(page)
 
     // Re-score button should now be enabled (trace available)
@@ -167,7 +167,7 @@ test.describe('judge rubric editor', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndRun(page)
 
     await expect(page.getByTestId('rescore-btn')).toBeEnabled({ timeout: 3000 })
@@ -182,7 +182,7 @@ test.describe('judge rubric editor', () => {
 
   test('extracted claims artifact renders in Inspector after run', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndRun(page)
 
     // Inspector should render with the extracted claims section
@@ -210,7 +210,7 @@ test.describe('judge rubric editor', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndRun(page)
 
     // Let everything render

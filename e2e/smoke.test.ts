@@ -55,7 +55,7 @@ test.describe('smoke: browse → pick → prompt → toggle → run (all APIs mo
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('page loads and shows patient browser', async ({ page }) => {
@@ -181,7 +181,7 @@ test.describe('golden set builder: capture, label, provenance', () => {
         body: FIXTURE_STREAM,
       })
     })
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   async function runQuery(page: import('@playwright/test').Page, query = 'What medications?') {

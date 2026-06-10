@@ -64,13 +64,13 @@ async function setupMocks(page: import('@playwright/test').Page, runStream = FIX
 test.describe('eval loop diagram', () => {
   test('diagram is visible on page load', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('eval-loop-diagram')).toBeVisible()
   })
 
   test('data stage is active before patient selection', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     const dataStage = page.getByTestId('loop-stage-data')
     await expect(dataStage).toBeVisible()
     // Active stage has data-active="true" — verify the attribute, not just visibility
@@ -79,7 +79,7 @@ test.describe('eval loop diagram', () => {
 
   test('all six stages are rendered', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     const diagram = page.getByTestId('eval-loop-diagram')
     await expect(diagram.getByTestId('loop-stage-data')).toBeVisible()
     await expect(diagram.getByTestId('loop-stage-prompt')).toBeVisible()
@@ -91,7 +91,7 @@ test.describe('eval loop diagram', () => {
 
   test('stage advances to prompt after patient selection', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await page.getByTestId('get-patients-btn').click()
     await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
     await page.getByTestId(`patient-card-${MOCK_PATIENT.id}`).click()
@@ -106,7 +106,7 @@ test.describe('eval loop diagram', () => {
 
   test('stage advances to output after a run completes', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await page.getByTestId('get-patients-btn').click()
     await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
@@ -125,7 +125,7 @@ test.describe('eval loop diagram', () => {
 
   test('stage advances to label when capture panel is open', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await page.getByTestId('get-patients-btn').click()
     await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()
@@ -152,7 +152,7 @@ test.describe('eval loop diagram', () => {
     }, [PASS_CASE_FOR_EVAL])
 
     await setupMocks(page, LOW_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await page.getByTestId('batch-eval-btn').click()
     await expect(page.getByTestId('disagreement-table')).toBeVisible({ timeout: 15000 })
@@ -168,7 +168,7 @@ test.describe('eval loop diagram', () => {
 test.describe('terms of art tooltips', () => {
   test.beforeEach(async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('faithfulness-judge term is present on page load', async ({ page }) => {
@@ -256,7 +256,7 @@ test.describe('terms of art tooltips', () => {
 test.describe('first-case trap guidance (designed-fail default)', () => {
   test.beforeEach(async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('trap guidance is visible when no golden cases exist', async ({ page }) => {
@@ -285,7 +285,7 @@ test.describe('first-case trap guidance (designed-fail default)', () => {
     }, [PASS_CASE_FOR_EVAL])
 
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     // With an existing case, trap guidance should NOT show
     await expect(page.getByTestId('first-case-trap-guidance')).not.toBeVisible()
@@ -317,7 +317,7 @@ test.describe('judge-can-be-wrong explainer', () => {
     }, [PASS_CASE_FOR_EVAL])
 
     await setupMocks(page, LOW_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('explainer is visible in disagreement table after batch eval', async ({ page }) => {
@@ -366,7 +366,7 @@ test.describe('judge-can-be-wrong explainer', () => {
 test.describe('scope-honesty note copy', () => {
   test('scope note mentions browser-only storage', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     const scopeNote = page.getByTestId('scorecard-scope-note')
     await expect(scopeNote).toBeVisible()
     await expect(scopeNote).toContainText('browser only')
@@ -374,19 +374,19 @@ test.describe('scope-honesty note copy', () => {
 
   test('scope note names accounts as absent', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('scorecard-scope-note')).toContainText('accounts')
   })
 
   test('scope note names custom scorer code as absent', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('scorecard-scope-note')).toContainText('scorer code')
   })
 
   test('honesty note mentions judge can make mistakes', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('scorecard-honesty-note')).toContainText('makes mistakes')
   })
 })
@@ -396,7 +396,7 @@ test.describe('scope-honesty note copy', () => {
 test.describe('copy audit: no kappa on user path', () => {
   test('golden set builder contains no kappa or κ', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     const gsb = page.getByTestId('golden-set-builder')
     await expect(gsb).not.toContainText('kappa')
     await expect(gsb).not.toContainText('κ')
@@ -408,7 +408,7 @@ test.describe('copy audit: no kappa on user path', () => {
     }, [PASS_CASE_FOR_EVAL])
 
     await setupMocks(page, LOW_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
     await page.getByTestId('batch-eval-btn').click()
     await expect(page.getByTestId('disagreement-table')).toBeVisible({ timeout: 15000 })
 
@@ -419,7 +419,7 @@ test.describe('copy audit: no kappa on user path', () => {
 
   test('capture panel contains no kappa or κ', async ({ page }) => {
     await setupMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     await page.getByTestId('get-patients-btn').click()
     await expect(page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)).toBeVisible()

@@ -59,7 +59,7 @@ export default function ExamplePage() {
         </details>
 
         <div>
-          <Link href="/" className={styles.cta}>
+          <Link href="/workspace" className={styles.cta}>
             Author your own run →
           </Link>
         </div>
