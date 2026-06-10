@@ -58,20 +58,20 @@ async function selectPatientAndFillQuery(page: Page) {
 test.describe('generation prompt editor', () => {
   test('warning is visible on page load', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('generation-prompt-warning')).toBeVisible()
     await expect(page.getByTestId('generation-prompt-warning')).toContainText('real patient data')
   })
 
   test('pre-filled with the example default prompt', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
     await expect(page.getByTestId('generation-prompt-input')).toHaveValue(DEFAULT_GENERATION_PROMPT)
   })
 
   test('reset restores default after editing', async ({ page }) => {
     await setupBaseMocks(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     const customPrompt = 'You are a custom assistant. Use only what is provided.'
     await page.getByTestId('generation-prompt-input').fill(customPrompt)
@@ -110,7 +110,7 @@ test.describe('generation prompt editor', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndFillQuery(page)
 
     const customPrompt = 'You are a clinical assistant. Only cite the provided context.'
@@ -152,7 +152,7 @@ test.describe('generation prompt editor', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await selectPatientAndFillQuery(page)
 
     // Edit then reset

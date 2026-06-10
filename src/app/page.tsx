@@ -1,130 +1,100 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+export const dynamic = 'force-static'
+
 import Link from 'next/link'
-import { HomeClient } from '@/components/HomeClient'
-import { EvalScorecard } from '@/components/EvalScorecard'
-import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
-import { loadThresholds } from '@/lib/eval/thresholds'
-import type { Thresholds } from '@/lib/eval/thresholds'
-import exampleData from '@/example/eval-example.json'
-import type { UserRunCaseResult, StoredEvalRun } from '@/lib/eval/user-agreement'
-import type { UserCaseV2 } from '@/lib/cases'
+import styles from './page.module.css'
 
-interface BaselineCase {
-  caseId: string
-  meanScore: number | null
-}
-
-interface BaselineFile {
-  aggregate: {
-    passRate: number | null
-    judgeReferenceAgreement: number | null
-    judgeHumanKappa?: number | null
-    interHumanKappa?: number | null
-    n: number
-  }
-  cases: BaselineCase[]
-}
-
-function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[] } | null {
-  try {
-    const raw = readFileSync(join(process.cwd(), 'evals/results/seed-baseline.json'), 'utf8')
-    const data: BaselineFile = JSON.parse(raw)
-    const agg = data.aggregate
-    if (agg.passRate === null || agg.judgeReferenceAgreement === null) return null
-
-    const { faithfulness: passThreshold } = loadThresholds()
-
-    const aggregate: ScorecardAggregate = {
-      passRate: agg.passRate,
-      judgeReferenceAgreement: agg.judgeReferenceAgreement,
-      judgeHumanKappa: agg.judgeHumanKappa ?? null,
-      interHumanKappa: agg.interHumanKappa ?? null,
-      n: agg.n,
-    }
-    const cases: ScorecardCase[] = (data.cases ?? [])
-      .filter((c) => c.meanScore !== null && c.meanScore !== undefined)
-      .map((c) => ({
-        id: c.caseId,
-        label: c.caseId,
-        faithfulnessScore: c.meanScore as number,
-        pass: (c.meanScore as number) >= passThreshold,
-      }))
-
-    return { aggregate, cases }
-  } catch {
-    return null
-  }
-}
-
-// Per-scorer acceptance thresholds, read from config (evals/thresholds.yaml) on
-// the server and threaded into the client authoring workspace so the per-field
-// scorer classification reads config, never a hardcoded client value (rule 15).
-function loadThresholdsOrNull(): Thresholds | null {
-  try {
-    return loadThresholds()
-  } catch {
-    return null
-  }
-}
-
+/**
+ * The front door (SHA-73 R17). `/` used to render the v1 single-page workspace;
+ * it now routes by persona. Two clear paths — "Learn evals" (novice, primary →
+ * `/lesson`) and "Open the workbench" (practitioner → `/workbench`) — plus a quiet
+ * link to the re-homed classic workspace (`/workspace`). Static: no DB, no model
+ * call. Visual language per design/reference/tokens.css + shots/onramp.png.
+ */
 export default function Home() {
-  const scorecard = loadScorecard()
-  const thresholds = loadThresholdsOrNull()
-
-  const exampleResults = exampleData.results as UserRunCaseResult[]
-  const exampleCases = exampleData.cases as unknown as UserCaseV2[]
-  const exampleEvalRun: StoredEvalRun = {
-    timestamp: new Date(exampleData.generatedAt).getTime(),
-    threshold: exampleData.threshold,
-    results: exampleResults,
-  }
-
   return (
-    <>
-      {/* Hero: example run — static, no network/DB/model call */}
-      <HomeClient
-        exampleResults={exampleResults}
-        exampleThreshold={exampleData.threshold}
-        exampleCases={exampleCases}
-        exampleEvalRun={exampleEvalRun}
-        thresholds={thresholds ?? undefined}
-      />
-
-      {/* Seeded baseline — Inspector-reachable, below the authoring workspace */}
-      {scorecard && (
-        <div
-          data-testid="baseline-scorecard-section"
-          style={{
-            maxWidth: 1100,
-            margin: '0 auto',
-            padding: '0 1.5rem 2rem',
-            fontFamily: 'sans-serif',
-          }}
-        >
-          <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
-          <div
-            style={{
-              fontSize: '0.78rem',
-              color: '#888',
-              marginBottom: '0.5rem',
-              fontStyle: 'italic',
-            }}
-          >
-            Seeded baseline — maintained by project author, produced by the live judge
-          </div>
-          <EvalScorecard aggregate={scorecard.aggregate} cases={scorecard.cases} />
-          <div style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
-            <Link href="/lesson" data-testid="lesson-link">
-              Walk through the correctness lesson: catching a dose error →
-            </Link>
-            <br />
-            <Link href="/workbench" data-testid="workbench-link">
-              Open the workbench: prompt, cases, and evaluator as free knobs →
-            </Link>
-          </div>
+    <main className={styles.page} data-testid="landing-page">
+      <header className={styles.topbar}>
+        <div className={styles.topbarInner}>
+          <Link href="/" className={styles.brand} data-testid="landing-brand">
+            <span className={styles.brandMark} aria-hidden="true">
+              ⚖
+            </span>
+            Eval Sandbox
+          </Link>
         </div>
-      )}
-    </>
+      </header>
+
+      <section className={styles.hero}>
+        <p className={styles.eyebrow}>A hands-on teaching sandbox for AI evals</p>
+        <h1 className={styles.title}>Measure whether an AI actually did its job.</h1>
+        <p className={styles.lede}>
+          An <span className={styles.accent}>eval</span> is how you check an AI&apos;s work on
+          purpose, instead of eyeballing it. Build small ones here over synthetic patient records,
+          run them, and watch yourself catch a model making something up.
+        </p>
+        <ul className={styles.chips}>
+          <li className={styles.chip}>
+            <span className={styles.chipDot} aria-hidden="true" />
+            Synthetic records only — never a real patient
+          </li>
+          <li className={styles.chip}>
+            <span className={styles.chipDot} aria-hidden="true" />
+            No sign-up, nothing to install
+          </li>
+        </ul>
+      </section>
+
+      <section className={styles.routes} aria-label="Choose a path">
+        <Link
+          href="/lesson"
+          className={`${styles.route} ${styles.routePrimary}`}
+          data-testid="route-lesson"
+        >
+          <span className={styles.routeEyebrow}>Start here · ten minutes</span>
+          <span className={styles.routeTitle}>
+            Learn evals
+            <span className={styles.routeArrow} aria-hidden="true">
+              →
+            </span>
+          </span>
+          <p className={styles.routeBlurb}>
+            A guided walk-through that builds one eval from scratch and ends with you catching a real
+            dose error. No prior background assumed.
+          </p>
+          <span className={styles.routeMeta}>Best if evals are new to you.</span>
+        </Link>
+
+        <Link href="/workbench" className={styles.route} data-testid="route-workbench">
+          <span className={styles.routeEyebrow}>For practitioners</span>
+          <span className={styles.routeTitle}>
+            Open the workbench
+            <span className={styles.routeArrow} aria-hidden="true">
+              →
+            </span>
+          </span>
+          <p className={styles.routeBlurb}>
+            Prompt, cases, and evaluator as free knobs. Swap the evaluator, slide the rubric, edit
+            the generation prompt, and re-run live.
+          </p>
+          <span className={styles.routeMeta}>Best if you already know what an eval is.</span>
+        </Link>
+      </section>
+
+      <footer className={styles.footer}>
+        <hr className={styles.footerRule} />
+        <p className={styles.footerText}>
+          Want the full single-page surface — Inspector, RAG toggle, and the golden-set builder
+          together? Open the{' '}
+          <Link href="/workspace" className={styles.footerLink} data-testid="workspace-link">
+            classic workspace
+          </Link>
+          , or read a{' '}
+          <Link href="/example" className={styles.footerLink} data-testid="example-link">
+            worked example run
+          </Link>
+          .
+        </p>
+      </footer>
+    </main>
   )
 }

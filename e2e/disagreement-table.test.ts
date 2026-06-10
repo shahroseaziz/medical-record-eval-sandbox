@@ -86,7 +86,7 @@ test.describe('disagreement table: disagreement highlight', () => {
     }, [PASS_CASE])
 
     await setupBaseMocks(page, LOW_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('disagreement row is highlighted when intentLabel differs from verdict', async ({ page }) => {
@@ -142,7 +142,7 @@ test.describe('disagreement table: threshold controls', () => {
     }, [FAIL_CASE_MID])
 
     await setupBaseMocks(page, MID_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('threshold-move shows delta text and non-validating warning', async ({ page }) => {
@@ -197,7 +197,7 @@ test.describe('disagreement table: no kappa label', () => {
     }, [PASS_CASE])
 
     await setupBaseMocks(page, LOW_SCORE_STREAM)
-    await page.goto('/')
+    await page.goto('/workspace')
   })
 
   test('kappa and κ never appear in the disagreement table', async ({ page }) => {
@@ -249,7 +249,7 @@ test.describe('disagreement table: zero-claim exclusion', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
     await page.getByTestId('batch-eval-btn').click()
     await expect(page.getByTestId('disagreement-table')).toBeVisible({ timeout: 10000 })
 

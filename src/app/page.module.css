@@ -1,0 +1,222 @@
+/*
+ * Landing — the front door (SHA-73 R17). A concise persona router on the violet
+ * "clinical-calm" design family (design/reference/tokens.css + shots/onramp.png):
+ * what this is, then two clear routes (learn evals / open the workbench) plus a
+ * quiet link to the classic workspace. Consumes the global --accent/--ink/--s*
+ * tokens; invents no values.
+ */
+.page {
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-ui-face), 'Geist', system-ui, sans-serif;
+}
+
+/* ── Top bar: brand only, matching the lesson/workbench shell ──────────────── */
+.topbar {
+  border-bottom: 1px solid var(--line);
+  background: rgba(247, 246, 250, 0.85);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+.topbarInner {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 12px var(--s6);
+  display: flex;
+  align-items: center;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.brandMark {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sh-accent);
+  font-size: 14px;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────────── */
+.hero {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: var(--s10) var(--s6) var(--s8);
+  animation: fadeUp 0.4s both;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 500;
+  margin: 0 0 var(--s4);
+}
+.title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  font-size: clamp(2.1rem, 5vw, 3.1rem);
+  color: var(--ink);
+  margin: 0;
+  max-width: 16ch;
+}
+.lede {
+  margin: var(--s5) 0 0;
+  font-size: 1.06rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 56ch;
+}
+.lede .accent {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* honesty chips — synthetic / no sign-up */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: var(--s6) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.chipDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── Route cards ───────────────────────────────────────────────────────────── */
+.routes {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 var(--s6) var(--s8);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s4);
+}
+@media (max-width: 680px) {
+  .routes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s7);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-sm);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  animation: fadeUp 0.4s both;
+}
+.route:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-md);
+  border-color: var(--accent-line);
+}
+.routePrimary {
+  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--surface) 70%);
+  border-color: var(--accent-line);
+}
+
+.routeEyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.routePrimary .routeEyebrow {
+  color: var(--accent);
+}
+.routeTitle {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: 1.4rem;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.routeArrow {
+  color: var(--accent);
+  transition: transform 0.16s ease;
+}
+.route:hover .routeArrow {
+  transform: translateX(3px);
+}
+.routeBlurb {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin: 0;
+}
+.routeMeta {
+  margin-top: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* ── Footer: quiet practitioner depth ──────────────────────────────────────── */
+.footer {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 var(--s6) var(--s10);
+}
+.footerRule {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0 0 var(--s5);
+}
+.footerText {
+  font-size: 13px;
+  color: var(--ink-3);
+  line-height: 1.6;
+  margin: 0;
+}
+.footerLink {
+  color: var(--accent-ink);
+  text-decoration: none;
+  font-weight: 600;
+}
+.footerLink:hover {
+  text-decoration: underline;
+}

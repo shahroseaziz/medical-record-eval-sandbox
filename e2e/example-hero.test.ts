@@ -22,7 +22,7 @@ test.describe('example hero: cold load is static (no network/DB/model call)', ()
     })
 
     await blockAllApis(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     // Hero section is visible
     await expect(page.getByTestId('example-hero')).toBeVisible()
@@ -44,7 +44,7 @@ test.describe('example hero: cold load is static (no network/DB/model call)', ()
       await route.fulfill({ status: 503, body: 'Service Unavailable' })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
 
     // Hero is still visible and showing results
     await expect(page.getByTestId('example-hero')).toBeVisible()
@@ -57,7 +57,7 @@ test.describe('example hero: cold load is static (no network/DB/model call)', ()
 
   test('shows all three cases: pass, fail, and disagree', async ({ page }) => {
     await blockAllApis(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     const table = page.getByTestId('disagreement-case-table')
     await expect(table).toBeVisible()
@@ -86,7 +86,7 @@ test.describe('example hero: cold load is static (no network/DB/model call)', ()
 
   test('example hero is above the workspace (above the fold ordering)', async ({ page }) => {
     await blockAllApis(page)
-    await page.goto('/')
+    await page.goto('/workspace')
 
     const heroBox = await page.getByTestId('example-hero').boundingBox()
     const workspaceBox = await page.getByTestId('golden-set-builder').boundingBox()
@@ -116,7 +116,7 @@ test.describe('reset to example', () => {
       await route.abort()
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
 
     // Verify no example cases in localStorage initially
     const beforeReset = await page.evaluate(() => {
@@ -200,13 +200,13 @@ test.describe('permalink /example: DB-free static route', () => {
     )
   })
 
-  test('permalink has a link back to home', async ({ page }) => {
+  test('permalink links to the workspace to author your own run', async ({ page }) => {
     await page.goto('/example')
 
-    // "Author your own run →" link
+    // "Author your own run →" link — authoring lives in the re-homed classic workspace
     const homeLink = page.getByRole('link', { name: /author your own/i })
     await expect(homeLink).toBeVisible()
-    await expect(homeLink).toHaveAttribute('href', '/')
+    await expect(homeLink).toHaveAttribute('href', '/workspace')
   })
 
   test('home page has a share link pointing to /example', async ({ page }) => {
@@ -218,7 +218,7 @@ test.describe('permalink /example: DB-free static route', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
 
     const shareLink = page.getByTestId('example-permalink')
     await expect(shareLink).toBeVisible()
@@ -238,7 +238,7 @@ test.describe('static artifact precedence: hero is example run', () => {
       })
     })
 
-    await page.goto('/')
+    await page.goto('/workspace')
 
     const heroBox = await page.getByTestId('example-hero').boundingBox()
 
