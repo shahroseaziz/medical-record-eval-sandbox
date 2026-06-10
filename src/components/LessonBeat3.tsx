@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { LessonGraduation } from './LessonGraduation'
 import { Term } from './Term'
-import { Badge, Card, Heading, Stack, Text } from './ui'
+import { Badge, Card, Heading, ScoreRing, Stack, Text } from './ui'
 import {
   buildBeat3Results,
   loadLessonBeat3,
@@ -16,6 +16,21 @@ import styles from './LessonBeat3.module.css'
 interface Props {
   /** Pass threshold, read from config (evals/thresholds.yaml) by the page. */
   initialThreshold: number
+  /**
+   * Optional CONTROLLED capstone state. When the journey shell passes these, the
+   * rubric, intent labels, and graduation latch live in the parent — so stepping
+   * BACK to an earlier beat and returning (or finishing) preserves exactly the
+   * state the gated graduation hands off to the workbench, rather than wiping it
+   * on remount. Omitted in standalone renders (tests), where state is internal.
+   */
+  rubric?: RubricVariant
+  onRubricChange?: (next: RubricVariant) => void
+  labels?: Record<string, 'pass' | 'fail'>
+  onLabelsChange?: (next: Record<string, 'pass' | 'fail'>) => void
+  graduated?: boolean
+  onGraduatedChange?: (next: boolean) => void
+  /** Replay the whole lesson from the graduation win-moment (journey resets). */
+  onReplay?: () => void
 }
 
 const RUBRIC_LABEL: Record<RubricVariant, string> = {
@@ -37,19 +52,37 @@ const RUBRIC_LABEL: Record<RubricVariant, string> = {
  * load (rule 20). The DisagreementTable does the you-vs-judge roll-up (R6 result
  * type); this component supplies the rubric knob and the editable labels.
  */
-export function LessonBeat3({ initialThreshold }: Props) {
+export function LessonBeat3({
+  initialThreshold,
+  rubric: rubricProp,
+  onRubricChange,
+  labels: labelsProp,
+  onLabelsChange,
+  graduated: graduatedProp,
+  onGraduatedChange,
+  onReplay,
+}: Props) {
   const data = loadLessonBeat3()
-  const [rubric, setRubric] = useState<RubricVariant>('strict')
-  const [labels, setLabels] = useState<Record<string, 'pass' | 'fail'>>({})
+  // Control-props pattern: use the parent's value when provided, else local state.
+  const [rubricLocal, setRubricLocal] = useState<RubricVariant>('strict')
+  const [labelsLocal, setLabelsLocal] = useState<Record<string, 'pass' | 'fail'>>({})
   // The graduation is gated behind an explicit "finish" so it reads as an earned
   // win-moment, not a card that was always on screen.
-  const [graduated, setGraduated] = useState(false)
+  const [graduatedLocal, setGraduatedLocal] = useState(false)
+
+  const rubric = rubricProp !== undefined ? rubricProp : rubricLocal
+  const labels = labelsProp !== undefined ? labelsProp : labelsLocal
+  const graduated = graduatedProp !== undefined ? graduatedProp : graduatedLocal
+  const setRubric = onRubricChange ?? setRubricLocal
+  const setGraduated = onGraduatedChange ?? setGraduatedLocal
 
   const results = useMemo(() => buildBeat3Results(rubric, labels), [rubric, labels])
   const meanScore = meanBeat3Score(rubric)
 
   function handleIntentLabelChange(caseId: string, label: 'pass' | 'fail') {
-    setLabels((prev) => ({ ...prev, [caseId]: label }))
+    const next = { ...labels, [caseId]: label }
+    if (onLabelsChange) onLabelsChange(next)
+    else setLabelsLocal(next)
   }
 
   return (
@@ -106,13 +139,19 @@ export function LessonBeat3({ initialThreshold }: Props) {
 
           <Card padding="sm" tone="neutral">
             <Stack gap={2}>
-              <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline' }}>
-                <Text size="sm" weight="semibold">
-                  Mean faithfulness score:
-                </Text>
-                <span className={styles.meanScore} data-testid="beat3-mean-score">
-                  {(meanScore * 100).toFixed(1)}%
-                </span>
+              {/* The score-ring dial from the design system (tokens.css /
+                  reference Beat 3: <ScoreRing size={76} threshold={0.85}>). The
+                  precise figure stays in text beside it for the assertions. */}
+              <div className={styles.scoreRow}>
+                <ScoreRing score={meanScore} size={76} threshold={initialThreshold} />
+                <div>
+                  <Text size="sm" weight="semibold">
+                    Mean faithfulness score:
+                  </Text>{' '}
+                  <span className={styles.meanScore} data-testid="beat3-mean-score">
+                    {(meanScore * 100).toFixed(1)}%
+                  </span>
+                </div>
               </div>
               <Stack gap={1}>
                 <Badge tone="neutral">Active rubric ({rubric})</Badge>
@@ -204,7 +243,12 @@ export function LessonBeat3({ initialThreshold }: Props) {
       {/* ── Graduation — the win-moment that routes into the open workbench ─── */}
       <section data-testid="beat3-finish">
         {graduated ? (
-          <LessonGraduation rubric={rubric} labels={labels} threshold={initialThreshold} />
+          <LessonGraduation
+            rubric={rubric}
+            labels={labels}
+            threshold={initialThreshold}
+            onReplay={onReplay}
+          />
         ) : (
           <Card tone="info" padding="md">
             <Stack gap={2}>

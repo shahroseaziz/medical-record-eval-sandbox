@@ -70,6 +70,19 @@ test.describe('open workbench (R11)', () => {
     // The win-moment is gated behind finishing — it is not on screen yet.
     await expect(page.getByTestId('lesson-graduation')).toHaveCount(0)
 
+    // The lesson is a stepper journey: exactly one beat is interactive at a
+    // time and advancing is gated. Beat 3 only appears after completing Beat 1
+    // (run the diff) and crossing Beat 2 (the contrast).
+    await expect(page.getByTestId('beat-3-active')).toHaveCount(0)
+    await page.getByTestId('beat1-source-summary').click()
+    await page.getByTestId('beat1-run').click()
+    await page.getByTestId('beat-1-advance').click()
+    // Beat 2's advance is gated on acknowledging the diff-vs-judge contrast.
+    await expect(page.getByTestId('beat-2-advance')).toBeDisabled()
+    await page.getByTestId('beat-2-ack').check()
+    await page.getByTestId('beat-2-advance').click()
+    await expect(page.getByTestId('beat-3-active')).toBeVisible()
+
     // Leave the lesson on the lenient rubric and a flipped label, then finish.
     await page.getByTestId('beat3-rubric-lenient').click()
     await page.getByTestId('set-intent-fail-beat3-medications-pass').click()

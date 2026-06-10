@@ -25,3 +25,6 @@ export type { BadgeProps, BadgeTone } from './Badge'
 
 export { Input, Textarea } from './Field'
 export type { InputProps, TextareaProps } from './Field'
+
+export { ScoreRing } from './ScoreRing'
+export type { ScoreRingProps } from './ScoreRing'

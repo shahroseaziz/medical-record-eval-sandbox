@@ -41,10 +41,41 @@ function pct(n: number): string {
  * The surface is fully determined by `source` + the committed fixture, so it
  * renders identically on every load (rule 20).
  */
-export function LessonBeat1() {
+interface Beat1Props {
+  /**
+   * Fired when the learner runs the diff — the journey shell latches this as
+   * Beat 1's completion gate (advancing to Beat 2 is blocked until it fires).
+   * Optional so the component still renders standalone (tests, storybook).
+   */
+  onRun?: () => void
+  /**
+   * Optional CONTROLLED authoring state. When the journey shell passes these,
+   * Beat 1's `source`/`hasRun` live in the parent, so collapsing the beat to a
+   * summary and reopening it later is a real REVIEW (the authored key and run
+   * result survive) rather than a fresh remount. Omitted in standalone renders
+   * (tests, storybook), where the component owns the state internally.
+   */
+  source?: SourcePath | null
+  onSourceChange?: (next: SourcePath | null) => void
+  hasRun?: boolean
+  onHasRunChange?: (next: boolean) => void
+}
+
+export function LessonBeat1({
+  onRun,
+  source: sourceProp,
+  onSourceChange,
+  hasRun: hasRunProp,
+  onHasRunChange,
+}: Beat1Props = {}) {
   const data = loadLessonBeat1()
-  const [source, setSource] = useState<SourcePath | null>(null)
-  const [hasRun, setHasRun] = useState(false)
+  // Control-props pattern: use the parent's value when provided, else local state.
+  const [sourceLocal, setSourceLocal] = useState<SourcePath | null>(null)
+  const [hasRunLocal, setHasRunLocal] = useState(false)
+  const source = sourceProp !== undefined ? sourceProp : sourceLocal
+  const hasRun = hasRunProp !== undefined ? hasRunProp : hasRunLocal
+  const setSource = onSourceChange ?? setSourceLocal
+  const setHasRun = onHasRunChange ?? setHasRunLocal
 
   // The diff is recomputed from the committed fixture for whichever source the
   // learner authored from — never a stored number.
@@ -183,7 +214,10 @@ export function LessonBeat1() {
             <Button
               data-testid="beat1-run"
               disabled={!source}
-              onClick={() => setHasRun(true)}
+              onClick={() => {
+                setHasRun(true)
+                onRun?.()
+              }}
             >
               Run the diff
             </Button>
