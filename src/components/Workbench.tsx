@@ -6,10 +6,7 @@ import { EvaluatorResultsTable } from './EvaluatorResultsTable'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { Term } from './Term'
 import { useGenerationRun, type GenerationCase } from '@/hooks/useGenerationRun'
-import {
-  computeUserAgreement,
-  DEFAULT_PASS_THRESHOLD,
-} from '@/lib/eval/user-agreement'
+import { computeUserAgreement } from '@/lib/eval/user-agreement'
 import {
   EVALUATORS,
   EVALUATOR_LABEL,
@@ -214,11 +211,23 @@ export function Workbench({
     [evaluator, cases, rubric, thresholds, labelOverrides],
   )
 
+  // The pass threshold for the active evaluator, read from config (rule 15) — the
+  // SAME cutoff the results table classifies against, so the badge can never
+  // contradict the table it summarizes. Faithfulness reads its slider's starting
+  // value; the answer-key evaluators read frozen per-field state, so their config
+  // threshold is the consistent reference point (caseVerdict ignores it for them).
+  const evaluatorThreshold =
+    evaluator === 'faithfulness'
+      ? thresholds.faithfulness
+      : evaluator === 'reference-judge'
+        ? thresholds.referenceJudge
+        : thresholds.structuredDiff
+
   // Aggregate agreement drives the pipeline's results badge — "the whole machine,
   // open" needs a live number on the landing, not a blank chip.
   const { agreement, n, agreeCount } = useMemo(
-    () => computeUserAgreement(results, DEFAULT_PASS_THRESHOLD),
-    [results],
+    () => computeUserAgreement(results, evaluatorThreshold),
+    [results, evaluatorThreshold],
   )
 
   const promptEdited = generationPrompt !== DEFAULT_GENERATION_PROMPT
@@ -350,23 +359,28 @@ export function Workbench({
           </div>
         </section>
       ) : (
-        /* ── Panels toolbar — back to the pipeline + bench heading ─────────── */
-        <div className={styles.panelsToolbar}>
-          <button
-            type="button"
-            data-testid="pipeline-view-btn"
-            className={styles.pipelineViewBtn}
-            onClick={() => setView('pipeline')}
-          >
-            <Icon name="layers" size={13} /> Pipeline view
-          </button>
-          <h2 className={styles.benchHeading}>The bench</h2>
-          <span className={styles.benchHeadingHint}>change a knob → re-grade. no rails.</span>
-        </div>
-      )}
+        /* ── Panels — the expanded three-panel daily driver (R16). The
+             pipeline and the panels are mutually exclusive views of the same live
+             bench: "open the bench" swaps one for the other, mirroring the design
+             reference (bench.jsx). The results are already computed (open without
+             empty), so expanding is instant. ─────────────────────────────────── */
+        <>
+          {/* Panels toolbar — back to the pipeline + bench heading */}
+          <div className={styles.panelsToolbar}>
+            <button
+              type="button"
+              data-testid="pipeline-view-btn"
+              className={styles.pipelineViewBtn}
+              onClick={() => setView('pipeline')}
+            >
+              <Icon name="layers" size={13} /> Pipeline view
+            </button>
+            <h2 className={styles.benchHeading}>The bench</h2>
+            <span className={styles.benchHeadingHint}>change a knob → re-grade. no rails.</span>
+          </div>
 
-      {/* ── The three atom panels (always mounted — "already running") ─────── */}
-      <div className={styles.atomGrid} data-bench-view={view}>
+          {/* ── The three atom panels ──────────────────────────────────────── */}
+          <div className={styles.atomGrid}>
         {/* atom 1 — prompt (the one live knob) */}
         <section className={styles.atomPanel} data-testid="prompt-panel">
           <header className={styles.atomHeader}>
@@ -646,7 +660,9 @@ export function Workbench({
             onIntentLabelChange={handleIntentLabelChange}
           />
         )}
-      </section>
+          </section>
+        </>
+      )}
     </div>
   )
 }
