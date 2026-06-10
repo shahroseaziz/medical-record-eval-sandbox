@@ -68,3 +68,18 @@
 .summary {
   cursor: pointer;
 }
+
+.finishBtn {
+  appearance: none;
+  border: none;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.finishBtn:hover {
+  background: var(--color-primary-hover);
+}

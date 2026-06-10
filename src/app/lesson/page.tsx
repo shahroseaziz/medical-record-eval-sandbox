@@ -81,15 +81,11 @@ export default function LessonPage() {
           </Text>
         </Stack>
 
+        {/* Beat 3 ends in the graduation (R12): a "you did it" win-moment whose CTA
+            routes into the open workbench pre-loaded with the lesson's last state
+            (rubric + labels), so the bench picks up where the lesson left off
+            instead of restarting. */}
         <LessonBeat3 initialThreshold={threshold} />
-
-        <hr className={styles.rule} />
-
-        <div>
-          <Link href="/workbench" className={styles.cta} data-testid="workbench-link">
-            Open the workbench — pre-loaded from this lesson →
-          </Link>
-        </div>
       </Stack>
     </Container>
   )
