@@ -54,4 +54,27 @@ describe('Lesson graduation (R12)', () => {
     // Agreement renders as "k/n (p%)" — a concrete, deterministic recap.
     expect(screen.getByTestId('graduation-agreement').textContent).toMatch(/\d\/\d \(\d+%\)/)
   })
+
+  // ── R13: the synthesis is stated once, at graduation ────────────────────────
+  it('states the three-atoms model — prompt → cases → evaluator', () => {
+    render(<LessonGraduation rubric="strict" labels={{}} threshold={0.85} />)
+    const atoms = screen.getByTestId('graduation-three-atoms')
+    expect(atoms).toHaveTextContent('three atoms')
+    expect(atoms).toHaveTextContent('Prompt')
+    expect(atoms).toHaveTextContent('Cases')
+    expect(atoms).toHaveTextContent('Evaluator')
+    // ...and the three-evaluator palette, mapped to the beats.
+    expect(atoms).toHaveTextContent('Deterministic diff')
+    expect(atoms).toHaveTextContent('Reference judge')
+    expect(atoms).toHaveTextContent('Faithfulness judge')
+  })
+
+  it('keeps the agreement recap honest — directional, not a validation', () => {
+    render(
+      <LessonGraduation rubric="strict" labels={{ 'beat3-medications-pass': 'fail' }} threshold={0.85} />,
+    )
+    const honesty = screen.getByTestId('graduation-agreement-honesty')
+    expect(honesty).toHaveTextContent('directional')
+    expect(honesty).toHaveTextContent(/not a validation|cannot tell you the judge is calibrated/)
+  })
 })
