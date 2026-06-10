@@ -203,8 +203,10 @@
   --spot-soft: #fff5e3;
   --spot-line: #f3d79a;
 
-  /* display type stack (declares the intended faces; degrades gracefully) */
-  --font-display: 'Schibsted Grotesk', 'Geist', system-ui, sans-serif;
+  /* display type stack — the face is LOADED by next/font (see layout.tsx),
+   * exposed as --font-display-face; the named fallbacks degrade gracefully if
+   * the webfont has not yet swapped in. */
+  --font-display: var(--font-display-face), 'Schibsted Grotesk', 'Geist', system-ui, sans-serif;
 
   /* radii */
   --r-xs: 6px;

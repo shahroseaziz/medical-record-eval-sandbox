@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import Link from 'next/link'
-import { Badge, Card, Heading, Stack, Text } from './ui'
+import { Heading, Stack, Text } from './ui'
 import { buildBeat3Results, type RubricVariant } from '@/lib/lesson/beat3'
 import { computeUserAgreement } from '@/lib/eval/user-agreement'
 import { benchHrefFromLesson } from '@/lib/workbench/carryover'
@@ -15,6 +15,12 @@ interface Props {
   labels: Record<string, 'pass' | 'fail'>
   /** Faithfulness pass threshold (config), used for the agreement recap. */
   threshold: number
+  /**
+   * Replay the lesson from the top (journey resets to Beat 1). When omitted —
+   * e.g. the standalone-rendered graduation in tests — the secondary action
+   * degrades to a plain link back to /lesson.
+   */
+  onReplay?: () => void
 }
 
 /**
@@ -29,7 +35,7 @@ interface Props {
  * built, not a cold default. The carry-over is encoded in the link href
  * (`benchHrefFromLesson`); the bench page decodes it server-side.
  */
-export function LessonGraduation({ rubric, labels, threshold }: Props) {
+export function LessonGraduation({ rubric, labels, threshold, onReplay }: Props) {
   // Recap the learner's own run: agreement between their labels and the judge
   // under the rubric they settled on. Deterministic — committed fixtures only.
   const agreement = useMemo(() => {
@@ -41,10 +47,10 @@ export function LessonGraduation({ rubric, labels, threshold }: Props) {
   const relabeled = Object.keys(labels).length
 
   return (
-    <Card tone="success" padding="lg" data-testid="lesson-graduation">
+    <section className={styles.winMoment} data-testid="lesson-graduation">
       <Stack gap={3}>
         <Stack gap={1}>
-          <Badge tone="success">🎓 You did it</Badge>
+          <span className={styles.eyebrow}>🎓 You did it</span>
           <Heading level={2}>Lesson complete — you ran a real eval loop</Heading>
           <Text as="p" size="sm">
             You authored an answer key and caught a dose error (Beat 1), watched a reference judge
@@ -130,12 +136,26 @@ export function LessonGraduation({ rubric, labels, threshold }: Props) {
           re-run live against the model.
         </Text>
 
-        <div>
+        <div className={styles.actions}>
           <Link href={href} className={styles.cta} data-testid="graduation-cta">
-            Enter the open workbench → carries your state
+            Take all three to the open workbench → carries your state
           </Link>
+          {onReplay ? (
+            <button
+              type="button"
+              className={styles.replay}
+              data-testid="graduation-replay"
+              onClick={onReplay}
+            >
+              or replay the lesson
+            </button>
+          ) : (
+            <Link href="/lesson" className={styles.replay} data-testid="graduation-replay">
+              or replay the lesson
+            </Link>
+          )}
         </div>
       </Stack>
-    </Card>
+    </section>
   )
 }

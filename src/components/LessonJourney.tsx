@@ -77,10 +77,6 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
   const [b1Source, setB1Source] = useState<SourcePath | null>(null)
   const [b1HasRun, setB1HasRun] = useState(false)
   const [beat1Ran, setBeat1Ran] = useState(false)
-  // Beat 2's contrast gate: a latch set when the learner acknowledges that the
-  // structured diff couldn't grade the prose but the reference judge resolved
-  // it. Never cleared, so revisiting Beat 2 doesn't re-lock Grounding.
-  const [beat2Seen, setBeat2Seen] = useState(false)
   // Beat 3 capstone state (rubric / labels / graduation latch).
   const [b3Rubric, setB3Rubric] = useState<RubricVariant>('strict')
   const [b3Labels, setB3Labels] = useState<Record<string, 'pass' | 'fail'>>({})
@@ -97,6 +93,24 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
 
   const toggleReopen = (n: number) =>
     setReopened((prev) => ({ ...prev, [n]: !prev[n] }))
+
+  // "or replay the lesson" from the graduation win-moment — reset the whole
+  // journey to Beat 1, clearing every lifted beat state so the replay is a true
+  // fresh run, not a return to a finished board.
+  const replay = useCallback(() => {
+    setBeat(1)
+    setFurthest(1)
+    setReopened({})
+    setB1Source(null)
+    setB1HasRun(false)
+    setBeat1Ran(false)
+    setB3Rubric('strict')
+    setB3Labels({})
+    setB3Graduated(false)
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [])
 
   function renderBeatBody(n: BeatNumber) {
     if (n === 1)
@@ -119,6 +133,7 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
         onLabelsChange={setB3Labels}
         graduated={b3Graduated}
         onGraduatedChange={setB3Graduated}
+        onReplay={replay}
       />
     )
   }
@@ -252,34 +267,19 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
             </div>
           )}
           {beat === 2 && (
+            // Beat 2 is fully shown — the diff fails on prose, the judge resolves
+            // it. Advancing is the forward-pulling CTA from the reference
+            // (correctness-first2.jsx:106), which hands the contrast straight to
+            // Beat 3's "no answer key at all", not a self-attestation checkbox.
             <div className={styles.advance} data-testid="beat-advance">
-              <label className={styles.advanceAck}>
-                <input
-                  type="checkbox"
-                  data-testid="beat-2-ack"
-                  checked={beat2Seen}
-                  onChange={(e) => setBeat2Seen(e.target.checked)}
-                />
-                <span>
-                  I see the contrast — the structured diff couldn&apos;t grade the prose, and the
-                  reference judge resolved it on meaning.
-                </span>
-              </label>
               <button
                 type="button"
                 className={styles.advanceBtn}
                 data-testid="beat-2-advance"
-                disabled={!beat2Seen}
                 onClick={() => goTo(3)}
               >
-                Continue to Grounding →
+                But what if there&apos;s no answer to write down at all? →
               </button>
-              {!beat2Seen && (
-                <span className={styles.advanceHint}>
-                  Confirm you&apos;ve seen the contrast — the diff failed, the judge resolved it — to
-                  continue.
-                </span>
-              )}
             </div>
           )}
         </Stack>

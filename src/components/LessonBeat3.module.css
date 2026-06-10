@@ -40,6 +40,13 @@
   margin: 0;
 }
 
+.scoreRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
 .meanScore {
   font-family: var(--font-mono);
   font-weight: var(--weight-bold);

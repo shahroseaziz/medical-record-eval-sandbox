@@ -7,8 +7,8 @@ import { LessonBeat2 } from '../LessonBeat2'
  * Acceptance test for SHA-71 R15 — the lesson app shell:
  *  1. a persistent stepper rail (Match → Meaning → Grounding),
  *  2. exactly one beat interactive at a time,
- *  3. advancing is GATED on completing the current beat (Beat 1's run AND
- *     Beat 2's contrast acknowledgement),
+ *  3. advancing is GATED on completing the current beat (Beat 1's run); Beat 2
+ *     advances via the reference's forward-pulling CTA,
  *  4. finished beats collapse to a reopenable summary that PRESERVES the
  *     learner's state (reopening is a review, not a reset), and stepping back
  *     and forward never wipes a later beat's state,
@@ -73,16 +73,18 @@ describe('LessonJourney (stepper app shell)', () => {
     expect(screen.getByTestId('beat1-diff-table')).toBeInTheDocument()
   })
 
-  it('gates the advance to Beat 3 behind acknowledging Beat 2’s contrast', () => {
+  it('advances from Beat 2 to Beat 3 via the forward-pulling CTA', () => {
     render(<LessonJourney initialThreshold={0.85} beat2={<LessonBeat2 />} />)
     fireEvent.click(screen.getByTestId('beat1-source-summary'))
     fireEvent.click(screen.getByTestId('beat1-run'))
     fireEvent.click(screen.getByTestId('beat-1-advance'))
 
-    // On Beat 2, advancing is disabled until the contrast is acknowledged.
-    expect(screen.getByTestId('beat-2-advance')).toBeDisabled()
-    fireEvent.click(screen.getByTestId('beat-2-ack'))
-    expect(screen.getByTestId('beat-2-advance')).toBeEnabled()
+    // Beat 2 is fully shown, so the advance is the reference's forward CTA — it
+    // pulls toward Beat 3's "no answer key at all", not a self-attestation check.
+    const advance = screen.getByTestId('beat-2-advance')
+    expect(advance).toHaveTextContent('no answer to write down')
+    fireEvent.click(advance)
+    expect(screen.getByTestId('beat-3-active')).toBeInTheDocument()
   })
 
   it('preserves Beat 3 state when stepping back to an earlier beat and returning', () => {
@@ -90,7 +92,6 @@ describe('LessonJourney (stepper app shell)', () => {
     fireEvent.click(screen.getByTestId('beat1-source-summary'))
     fireEvent.click(screen.getByTestId('beat1-run'))
     fireEvent.click(screen.getByTestId('beat-1-advance'))
-    fireEvent.click(screen.getByTestId('beat-2-ack'))
     fireEvent.click(screen.getByTestId('beat-2-advance'))
 
     // On Beat 3, move the rubric to lenient — this is the state graduation hands
@@ -116,7 +117,6 @@ describe('LessonJourney (stepper app shell)', () => {
     fireEvent.click(screen.getByTestId('beat1-source-summary'))
     fireEvent.click(screen.getByTestId('beat1-run'))
     fireEvent.click(screen.getByTestId('beat-1-advance'))
-    fireEvent.click(screen.getByTestId('beat-2-ack'))
     fireEvent.click(screen.getByTestId('beat-2-advance'))
 
     // Beat 3 is now active and still gates the graduation behind "finish".

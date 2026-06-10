@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { LessonGraduation } from './LessonGraduation'
 import { Term } from './Term'
-import { Badge, Card, Heading, Stack, Text } from './ui'
+import { Badge, Card, Heading, ScoreRing, Stack, Text } from './ui'
 import {
   buildBeat3Results,
   loadLessonBeat3,
@@ -29,6 +29,8 @@ interface Props {
   onLabelsChange?: (next: Record<string, 'pass' | 'fail'>) => void
   graduated?: boolean
   onGraduatedChange?: (next: boolean) => void
+  /** Replay the whole lesson from the graduation win-moment (journey resets). */
+  onReplay?: () => void
 }
 
 const RUBRIC_LABEL: Record<RubricVariant, string> = {
@@ -58,6 +60,7 @@ export function LessonBeat3({
   onLabelsChange,
   graduated: graduatedProp,
   onGraduatedChange,
+  onReplay,
 }: Props) {
   const data = loadLessonBeat3()
   // Control-props pattern: use the parent's value when provided, else local state.
@@ -136,13 +139,19 @@ export function LessonBeat3({
 
           <Card padding="sm" tone="neutral">
             <Stack gap={2}>
-              <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline' }}>
-                <Text size="sm" weight="semibold">
-                  Mean faithfulness score:
-                </Text>
-                <span className={styles.meanScore} data-testid="beat3-mean-score">
-                  {(meanScore * 100).toFixed(1)}%
-                </span>
+              {/* The score-ring dial from the design system (tokens.css /
+                  reference Beat 3: <ScoreRing size={76} threshold={0.85}>). The
+                  precise figure stays in text beside it for the assertions. */}
+              <div className={styles.scoreRow}>
+                <ScoreRing score={meanScore} size={76} threshold={initialThreshold} />
+                <div>
+                  <Text size="sm" weight="semibold">
+                    Mean faithfulness score:
+                  </Text>{' '}
+                  <span className={styles.meanScore} data-testid="beat3-mean-score">
+                    {(meanScore * 100).toFixed(1)}%
+                  </span>
+                </div>
               </div>
               <Stack gap={1}>
                 <Badge tone="neutral">Active rubric ({rubric})</Badge>
@@ -234,7 +243,12 @@ export function LessonBeat3({
       {/* ── Graduation — the win-moment that routes into the open workbench ─── */}
       <section data-testid="beat3-finish">
         {graduated ? (
-          <LessonGraduation rubric={rubric} labels={labels} threshold={initialThreshold} />
+          <LessonGraduation
+            rubric={rubric}
+            labels={labels}
+            threshold={initialThreshold}
+            onReplay={onReplay}
+          />
         ) : (
           <Card tone="info" padding="md">
             <Stack gap={2}>

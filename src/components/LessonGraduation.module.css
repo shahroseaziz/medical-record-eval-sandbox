@@ -1,30 +1,59 @@
-.recap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+/*
+ * The graduation win-moment — the dark ink card from the reference
+ * (correctness-first2.jsx:196-205): a deep --ink surface, light text, an accent
+ * eyebrow, a primary accent CTA, and a secondary "or replay the lesson" link.
+ *
+ * Token overrides scoped to this card flip the inherited text tokens light, so
+ * the shared Heading/Text primitives read correctly on the dark surface without
+ * per-element color props.
+ */
+.winMoment {
+  --color-text: #fff;
+  --color-text-muted: var(--accent-line);
+  --color-text-subtle: var(--ink-4);
+
+  background: var(--ink);
+  color: #fff;
+  border-radius: var(--r-lg, var(--radius-lg));
+  box-shadow: var(--sh-lg, var(--shadow-lg));
+  padding: var(--s7, var(--space-6));
 }
 
-.recapItem {
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-line);
 }
 
-.recapItem strong {
-  color: var(--color-text);
-}
-
+/* Synthesis + recap panels — translucent light fills on the dark card, not the
+   plain white surfaces the reviewer flagged. */
+.recap,
 .atoms {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.recap {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.recapItem {
+  font-size: var(--text-sm);
+  color: var(--accent-line);
+}
+
+.recapItem strong {
+  color: #fff;
 }
 
 .atomList,
@@ -32,7 +61,7 @@
   margin: 0;
   padding-left: var(--space-5);
   font-size: var(--text-sm);
-  color: var(--color-text);
+  color: #fff;
   line-height: 1.55;
 }
 
@@ -49,16 +78,23 @@
   gap: var(--space-1);
 }
 
-/* The win-moment CTA — a violet accent pill matching the reference's
-   "take all three to the open workbench" button (--sh-accent glow). */
+/* Actions — primary accent CTA pill (with the --sh-accent glow) and a quiet
+   secondary replay link, matching the reference win-moment's two affordances. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
 .cta {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
-  background: var(--color-primary);
-  color: var(--color-text-inverse);
-  border-radius: var(--radius-full, var(--radius-sm));
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--r-pill, var(--radius-full));
   text-decoration: none;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
@@ -69,6 +105,23 @@
 }
 
 .cta:hover {
-  background: var(--color-primary-hover);
+  background: var(--accent-press);
   transform: translateY(-1px);
+}
+
+.replay {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--accent-line);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.replay:hover {
+  color: #fff;
+  text-decoration: underline;
 }

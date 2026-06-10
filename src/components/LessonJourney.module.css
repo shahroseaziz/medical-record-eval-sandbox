@@ -54,6 +54,12 @@
   --radius-md: var(--r-md);
   --radius-lg: var(--r-lg);
   --radius-full: var(--r-pill);
+
+  /* type stack → the loaded Geist faces (next/font, see layout.tsx), scoped to
+   * the lesson so the rest of the app keeps its existing system stack. Body text
+   * inherits --font-sans; eyebrows / mono read --font-mono. */
+  --font-sans: var(--font-ui-face), 'Geist', system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), 'Geist Mono', ui-monospace, 'SF Mono', monospace;
 }
 
 /* Display type for lesson headings — the Schibsted/Geist stack. */
@@ -260,24 +266,6 @@
   color: var(--ink-3);
   max-width: 360px;
   line-height: 1.45;
-}
-
-/* Beat 2's contrast gate — acknowledge the diff-vs-judge contrast to advance. */
-.advanceAck {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: var(--s2);
-  flex-basis: 100%;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-.advanceAck input {
-  margin-top: 2px;
-  accent-color: var(--accent);
-  flex-shrink: 0;
-  cursor: pointer;
 }
 
 /* ── Completed-beat summary (collapses; reopen to review) ─────────────────── */

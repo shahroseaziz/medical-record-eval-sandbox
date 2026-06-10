@@ -1,0 +1,26 @@
+.ring {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.svg {
+  /* Start the arc at 12 o'clock and sweep clockwise. */
+  transform: rotate(-90deg);
+}
+
+.value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-feature-settings: 'tnum' 1;
+  font-weight: var(--weight-semibold);
+  color: var(--ink, var(--color-text));
+  line-height: 1;
+}
+
+.pct {
+  color: var(--ink-3, var(--color-text-subtle));
+}
