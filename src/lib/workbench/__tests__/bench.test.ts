@@ -9,11 +9,46 @@ import {
   FALLBACK_THRESHOLDS,
 } from '../bench'
 import { caseVerdict, caseScore } from '@/lib/eval/user-agreement'
+import { loadLessonBeat3 } from '@/lib/lesson/beat3'
 
 const ALLERGIES = 'beat3-allergies-rubric-sensitive-fail'
 const MEDS = 'beat3-medications-pass'
 
 describe('workbench bench', () => {
+  // ── No fixture drift (R13): the bench is the lesson's last state ────────────
+  // The bench MUST source its cases from the committed Beat 3 fixture, not a fork.
+  // This locks the allergy case (and every other) byte-for-byte against Beat 3 so
+  // a future edit to one file without the other fails CI instead of silently
+  // drifting the two surfaces apart.
+  it('no fixture drift: every bench case mirrors the committed Beat 3 fixture', () => {
+    const benchCases = loadBenchCases()
+    const beat3 = loadLessonBeat3().cases
+    expect(benchCases.map((c) => c.caseId)).toEqual(beat3.map((c) => c.caseId))
+
+    for (const b3 of beat3) {
+      const bc = benchCases.find((c) => c.caseId === b3.caseId)!
+      // The shared atoms — the parts the learner saw in Beat 3 — must be identical.
+      expect(bc.intentLabel).toEqual(b3.intentLabel)
+      expect(bc.taskPrompt).toEqual(b3.taskPrompt)
+      expect(bc.output).toEqual(b3.output)
+      expect(bc.designedReason).toEqual(b3.designedReason)
+      expect(bc.grounding).toEqual(b3.grounding)
+    }
+  })
+
+  it('no fixture drift: the allergy case is the same penicillin/sulfa/aspirin fixture in both surfaces', () => {
+    const benchAllergy = loadBenchCases().find((c) => c.caseId === ALLERGIES)!
+    const beat3Allergy = loadLessonBeat3().cases.find((c) => c.caseId === ALLERGIES)!
+    expect(benchAllergy.output).toEqual(beat3Allergy.output)
+    expect(benchAllergy.grounding).toEqual(beat3Allergy.grounding)
+    // Grounding documents penicillin + sulfa but NOT aspirin — the hallucination
+    // the lenient rubric is fooled by. That contract is what both surfaces share.
+    const groundingText = benchAllergy.grounding.map((g) => g.text).join(' ')
+    expect(groundingText).toContain('Penicillin')
+    expect(groundingText).toContain('Sulfa')
+    expect(groundingText).not.toContain('spirin')
+  })
+
   it('pre-loads the lesson cases joined with an answer-key annex', () => {
     const cases = loadBenchCases()
     expect(cases.length).toBeGreaterThanOrEqual(4)

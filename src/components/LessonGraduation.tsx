@@ -55,6 +55,46 @@ export function LessonGraduation({ rubric, labels, threshold }: Props) {
           </Text>
         </Stack>
 
+        {/* Synthesis — name the model the whole arc was teaching: the three atoms
+            and the three-evaluator palette. Stated once, here, so it lands as a
+            payoff rather than a panel repeated between beats. */}
+        <div className={styles.atoms} data-testid="graduation-three-atoms">
+          <Text as="p" size="sm" weight="semibold">
+            The shape of every eval — three atoms:
+          </Text>
+          <ol className={styles.atomList}>
+            <li>
+              <strong>Prompt</strong> — the thing under test (Beat 1 showed you the seeded
+              generation prompt, fixed and inspectable).
+            </li>
+            <li>
+              <strong>Cases</strong> — the golden set you grade and label.
+            </li>
+            <li>
+              <strong>Evaluator</strong> — the thing that decides pass/fail. You met all three
+              types, one per beat:
+            </li>
+          </ol>
+          <ul className={styles.evalList}>
+            <li>
+              <strong>Deterministic diff</strong> — structured output, you know exactly what is
+              right. Free and instant (Beat 1).
+            </li>
+            <li>
+              <strong>Reference judge</strong> — you have an expected answer, but it is prose, so an
+              LLM compares meaning (Beat 2).
+            </li>
+            <li>
+              <strong>Faithfulness judge</strong> — no expected answer; an LLM checks the output
+              against its source (Beat 3).
+            </li>
+          </ul>
+          <Text as="p" size="sm" tone="muted">
+            Choosing the evaluator is choosing the <em>kind</em> of eval — a knob, not a gate. That
+            is the whole palette the open workbench hands you.
+          </Text>
+        </div>
+
         {/* Recap — make the win concrete with the learner's own numbers. */}
         <div className={styles.recap} data-testid="graduation-recap">
           <span className={styles.recapItem}>
@@ -72,6 +112,15 @@ export function LessonGraduation({ rubric, labels, threshold }: Props) {
             </strong>
           </span>
         </div>
+
+        {/* Directional-agreement honesty — the same caveat the DisagreementTable
+            carries, so the recap number above never reads as a validated score. */}
+        <Text as="p" size="xs" tone="muted" data-testid="graduation-agreement-honesty">
+          That agreement is <strong>directional</strong>, not a validation: it is how often the judge
+          matched your own labels on a handful of cases, not a statistical test. At this sample size
+          it cannot tell you the judge is calibrated — only a held-out, human-labeled set (Cohen&apos;s
+          κ) can.
+        </Text>
 
         <Text as="p" size="sm" tone="muted">
           Now take the knobs off the rails. The open workbench opens{' '}
