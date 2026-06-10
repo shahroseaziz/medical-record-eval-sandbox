@@ -20,18 +20,37 @@ async function mockRun(page: Page, onBody?: (body: Record<string, unknown>) => v
   })
 }
 
-test.describe('open workbench (R11)', () => {
-  test('lands pre-loaded with results on first paint', async ({ page }) => {
+test.describe('open workbench (R11 / R16)', () => {
+  test('lands on the pipeline with a results badge; "open the bench" expands to the panels', async ({
+    page,
+  }) => {
     await mockRun(page)
     await page.goto('/workbench')
     await expect(page.getByTestId('workbench')).toBeVisible()
+    // Landing = the three-atom pipeline with results showing (the badge).
+    await expect(page.getByTestId('workbench-pipeline')).toBeVisible()
+    await expect(page.getByTestId('pipeline-results-badge')).toContainText('agree')
+    // The dense panels + results table are not mounted until the bench is opened.
+    await expect(page.getByTestId('disagreement-table')).toHaveCount(0)
+
+    await page.getByTestId('open-the-bench-btn').click()
     await expect(page.getByTestId('disagreement-table')).toBeVisible()
     await expect(page.getByTestId(`disagreement-row-${ALLERGIES}`)).toBeVisible()
+    await expect(page.getByTestId('workbench-pipeline')).toHaveCount(0)
+
+    // The cost strip distinguishes the metered faithfulness judge.
+    await expect(page.getByTestId('cost-strip')).toHaveAttribute('data-metered', 'true')
+
+    // Collapse back to the pipeline.
+    await page.getByTestId('pipeline-view-btn').click()
+    await expect(page.getByTestId('workbench-pipeline')).toBeVisible()
+    await expect(page.getByTestId('disagreement-table')).toHaveCount(0)
   })
 
   test('the red-cell aha reproduces on the rubric knob', async ({ page }) => {
     await mockRun(page)
     await page.goto('/workbench')
+    await page.getByTestId('open-the-bench-btn').click()
     // Strict (default): the allergies case agrees with its designed-fail label.
     await expect(page.getByTestId(`disagreement-row-${ALLERGIES}`)).toHaveAttribute(
       'data-disagrees',
@@ -50,6 +69,7 @@ test.describe('open workbench (R11)', () => {
   }) => {
     await mockRun(page)
     await page.goto('/workbench')
+    await page.getByTestId('open-the-bench-btn').click()
     await expect(page.getByTestId('expected-column-header')).toHaveCount(0)
 
     await page.getByTestId('evaluator-option-reference-judge').click()
@@ -97,9 +117,12 @@ test.describe('open workbench (R11)', () => {
     await expect(page).toHaveURL(/\/workbench\?/)
     await expect(page.getByTestId('workbench')).toBeVisible()
 
-    // ...pre-loaded with the carried state: the banner, the lenient rubric, and
-    // the flipped label all survived the handoff.
+    // ...pre-loaded with the carried state: the banner is on the landing, and the
+    // pipeline badge already reflects the carried run. Open the bench to confirm
+    // the lenient rubric and the flipped label survived the handoff.
     await expect(page.getByTestId('carryover-banner')).toBeVisible()
+    await expect(page.getByTestId('pipeline-results-badge')).toContainText('agree')
+    await page.getByTestId('open-the-bench-btn').click()
     await expect(page.getByTestId('rubric-lenient')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByTestId(`disagreement-row-${ALLERGIES}`)).toHaveAttribute(
       'data-disagrees',
@@ -117,6 +140,7 @@ test.describe('open workbench (R11)', () => {
     const bodies: Record<string, unknown>[] = []
     await mockRun(page, (b) => bodies.push(b))
     await page.goto('/workbench')
+    await page.getByTestId('open-the-bench-btn').click()
 
     const custom = 'Be extremely terse. List medications only.'
     await page.getByTestId('generation-prompt-input').fill(custom)
