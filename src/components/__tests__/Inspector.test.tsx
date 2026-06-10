@@ -69,8 +69,34 @@ describe('Inspector', () => {
     expect(screen.getByTestId('chunk-1-similarity')).toHaveTextContent('0.8200')
   })
 
-  it('renders "X of Y sections" summary', () => {
+  it('renders "X of Y sections" summary when no budget trimming occurred', () => {
     render(<Inspector trace={FIXTURE_TRACE} />)
+    expect(screen.getByTestId('chunks-summary')).toHaveTextContent('retrieved 2 of 2 sections')
+  })
+
+  it('renders "X retrieved · Y fit budget" when token-budget trimming dropped chunks (SHA-75)', () => {
+    const trimmed: RunTrace = {
+      ...FIXTURE_TRACE,
+      retrieval: {
+        ...FIXTURE_TRACE.retrieval!,
+        retrievedCount: 6,
+        inBudgetCount: 4,
+      },
+    }
+    render(<Inspector trace={trimmed} />)
+    expect(screen.getByTestId('chunks-summary')).toHaveTextContent('6 retrieved · 4 fit budget')
+  })
+
+  it('falls back to "X of Y sections" when all retrieved chunks fit the budget', () => {
+    const allFit: RunTrace = {
+      ...FIXTURE_TRACE,
+      retrieval: {
+        ...FIXTURE_TRACE.retrieval!,
+        retrievedCount: 2,
+        inBudgetCount: 2,
+      },
+    }
+    render(<Inspector trace={allFit} />)
     expect(screen.getByTestId('chunks-summary')).toHaveTextContent('retrieved 2 of 2 sections')
   })
 

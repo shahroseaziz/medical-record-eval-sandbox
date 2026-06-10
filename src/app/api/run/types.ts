@@ -14,6 +14,10 @@ export interface RunTrace {
     groundingContext: string
     /** Full assembled prompt, or a "[REDACTED sha256=… length=…]" marker when the caller supplied a custom prompt. */
     assembledPrompt: string
+    /** How many chunks retrieval returned before token-budget trimming (SHA-75). */
+    retrievedCount?: number
+    /** How many of those fit the input budget and were actually sent (SHA-75). */
+    inBudgetCount?: number
   }
   sectionHit: SectionHitResult
   output: string

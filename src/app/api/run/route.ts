@@ -6,12 +6,12 @@ import { NextRequest } from 'next/server'
 import { createDataStreamResponse, streamText, type JSONValue } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import Anthropic from '@anthropic-ai/sdk'
-import { retrieve } from '@/lib/rag/index'
+import { retrieve, fitChunksToBudget } from '@/lib/rag/index'
 import type { RetrievedChunk } from '@/lib/rag/index'
 import { scoreFaithfulness, scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
-import { estimateTokens, countInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '@/lib/tokens'
+import { estimateTokens, estimateInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '@/lib/tokens'
 import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
@@ -64,15 +64,35 @@ function redactForTrace(text: string): string {
   return `[REDACTED sha256=${hash} length=${text.length}]`
 }
 
+// Context-overflow is an APP-FAULT class, not a 4xx-only signal. Classify ALL
+// three surfaces (SHA-78 / arch S25) — never assume an HTTP 400:
+//   • 413 request_too_large  — oversized payload rejected by the API
+//   • HTTP 200 + stop_reason "model_context_window_exceeded" — Claude 4.5+ returns
+//     this on a *successful* response, so it can arrive via finishReason/metadata
+//     rather than a thrown error
+//   • legacy 400 "prompt is too long" / "context window" phrasings
 function isOverContextError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error)
+  const status = error instanceof Anthropic.APIError ? error.status : undefined
   return (
+    status === 413 ||
+    msg.includes('request_too_large') ||
+    msg.includes('model_context_window_exceeded') ||
     msg.includes('prompt is too long') ||
     msg.includes('context window') ||
     msg.includes('too many tokens') ||
     msg.includes('Input is too long') ||
-    (error instanceof Anthropic.APIError && error.status === 400 && msg.includes('token'))
+    (status === 400 && msg.includes('token'))
   )
+}
+
+// Remediation copy that NEVER advises the caller's CURRENT mode (arch S25:
+// "Error copy never advises the current mode"). Switching to retrieve mode is
+// only useful advice when you are NOT already in retrieve mode.
+function overBudgetAdvice(mode: 'retrieve' | 'stuff'): string {
+  return mode === 'stuff'
+    ? 'Reduce the record size, or switch to retrieve mode to send only the most relevant sections.'
+    : 'Use a more focused query, or lower k to retrieve fewer sections.'
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -156,11 +176,35 @@ export async function POST(req: NextRequest): Promise<Response> {
   const aiProvider = createAnthropic({ apiKey: generationKey })
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
 
-  // ── 2. Retrieval (retrieve mode only) ────────────────────────────────────
+  // BYO callers bypass the 12k free-tier ceiling (only the model-context guard
+  // applies); used both by the budget below and the spend-cap gating later.
+  const isByo = Boolean(byoKey)
+  // Input budget for assembly: the 12k metered ceiling for free-tier callers,
+  // the model context window for BYO (their key, their budget).
+  const inputBudget = isByo ? MODEL_CONTEXT_LIMIT : MAX_INPUT_TOKENS
+
+  // ── 2. Retrieval + budget-bounded assembly (retrieve mode only) ──────────
+  // SHA-75 fix: assembly bounds by TOKEN COUNT, not k alone. retrieve() returns
+  // up to k chunks; we append them in relevance order until the input budget is
+  // reached, then stop. Partial sets are valid; the Inspector reports
+  // "X retrieved · Y fit budget" from these counts.
   let chunks: RetrievedChunk[] = []
+  let retrievedCount = 0
+  let inBudgetCount = 0
   if (mode === 'retrieve') {
     const retrieveResult = await retrieve(patientId, query, k)
-    chunks = retrieveResult.chunks
+    // Overhead = the prompt with NO grounding (system + query + scaffolding).
+    const empty = buildPrompt(query, '', generationPrompt)
+    const overheadTokens = estimateInputTokens(`${empty.systemPrompt}\n\n${empty.userTurnPrompt}`)
+    const assembly = fitChunksToBudget(
+      retrieveResult.chunks,
+      inputBudget,
+      overheadTokens,
+      (cs) => buildGroundingContext('retrieve', cs),
+    )
+    chunks = assembly.chunks
+    retrievedCount = assembly.retrievedCount
+    inBudgetCount = assembly.inBudgetCount
   }
 
   // ── 3. Assemble prompt ───────────────────────────────────────────────────
@@ -172,7 +216,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   // ── 4. Killswitch — book estimated spend (free-tier only) ────────────────
   // BYO callers (key provided via header) bypass Anthropic spend caps but still
   // share the rate-limit bucket above. Fail closed if Upstash is unreachable.
-  const isByo = Boolean(byoKey)
+  // (isByo is computed above, alongside the input budget.)
   let refundSpend: (() => Promise<void>) | null = null
   if (!isByo) {
     try {
@@ -198,30 +242,46 @@ export async function POST(req: NextRequest): Promise<Response> {
   return createDataStreamResponse({
     execute: async (dataStream) => {
       try {
-        // ── 5. Token limit pre-check (fail closed) ────────────────────────
-        // The 12k ceiling is the FREE-TIER infra control; a BYO key LIFTS it
-        // (only the 190k model-context guard below applies to BYO) — mirroring
-        // the !isByo spend-cap gating above. Uses the Anthropic countTokens
-        // API; falls back to char/4 when the API is unavailable.
+        // ── 5. Token-budget pre-checks (fail closed, no API round-trip) ────
+        // SHA-78 / arch S25: counting is a LOCAL approximation with a safety
+        // margin (estimateInputTokens) — no per-run count_tokens round-trip.
+        // When the local approximation under-counts, this same 12k ceiling
+        // still rejects the payload pre-call, so Anthropic is never reached
+        // (a true-free, refunded app-fault on the metered path).
+
+        // 5a. Retrieve mode: a patient whose single most-relevant section can't
+        //     fit even one chunk surfaces a NAMED, non-circular error (never
+        //     advises the current mode).
+        if (mode === 'retrieve' && retrievedCount > 0 && inBudgetCount === 0) {
+          if (refundSpend) { await refundSpend(); refundSpend = null }
+          dataStream.writeData({
+            type: 'error',
+            message: `Patient ${patientId}: the most relevant retrieved section alone exceeds the ${inputBudget}-token input budget, so no context could be assembled. ${overBudgetAdvice('retrieve')}`,
+          })
+          return
+        }
+
+        // 5b. 12k free-tier ceiling (lifted for BYO — only the model-context
+        //     guard below applies there).
         if (!isByo) {
-          const inputCount = await countInputTokens(fullAssembledPrompt, judgeClient)
+          const inputCount = estimateInputTokens(fullAssembledPrompt)
           if (inputCount > MAX_INPUT_TOKENS) {
             if (refundSpend) { await refundSpend(); refundSpend = null }
             dataStream.writeData({
               type: 'error',
-              message: `Assembled context exceeds the ${MAX_INPUT_TOKENS}-token limit (${inputCount} tokens). Reduce record size or use retrieve mode.`,
+              message: `Assembled context exceeds the ${MAX_INPUT_TOKENS}-token limit (~${inputCount} tokens). ${overBudgetAdvice(mode)}`,
             })
             return
           }
         }
 
-        // Fallback 190k pre-check via char estimate (extra safety net)
-        const estimatedInputTokens = estimateTokens(fullAssembledPrompt)
+        // 5c. Model-context guard (applies to all callers, BYO included).
+        const estimatedInputTokens = estimateInputTokens(fullAssembledPrompt)
         if (estimatedInputTokens > MODEL_CONTEXT_LIMIT) {
           if (refundSpend) { await refundSpend(); refundSpend = null }
           dataStream.writeData({
             type: 'error',
-            message: `Assembled context (~${estimatedInputTokens} tokens) exceeds model context limit (${MODEL_CONTEXT_LIMIT} tokens). Reduce record size or use retrieve mode.`,
+            message: `Assembled context (~${estimatedInputTokens} tokens) exceeds the model context limit (${MODEL_CONTEXT_LIMIT} tokens). ${overBudgetAdvice(mode)}`,
           })
           return
         }
@@ -237,6 +297,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               similarity: c.similarity,
             })),
             groundingContext,
+            retrievedCount,
+            inBudgetCount,
           })
         }
 
@@ -251,7 +313,27 @@ export async function POST(req: NextRequest): Promise<Response> {
         result.mergeIntoDataStream(dataStream)
 
         // ── 8. Collect full output + usage ────────────────────────────────
-        const [output, usage] = await Promise.all([result.text, result.usage])
+        const [output, usage, finishReason] = await Promise.all([
+          result.text,
+          result.usage,
+          result.finishReason,
+        ])
+
+        // 8a. HTTP-200 + stop_reason "model_context_window_exceeded" surface
+        //     (Claude 4.5+): the request succeeds (no thrown error) but the model
+        //     truncates because the context window was exceeded. The provider
+        //     maps this unrecognised stop_reason to finishReason "unknown" with no
+        //     usable output. Classify it as the same app-fault as the thrown
+        //     surfaces (413) rather than persisting an empty result. Reachable
+        //     only on the BYO/raised-budget path, so spend is the user's key — no
+        //     cap refund applies here.
+        if (finishReason === 'unknown' && output.trim() === '') {
+          dataStream.writeData({
+            type: 'error',
+            message: `Request exceeds the model context window. ${overBudgetAdvice(mode)}`,
+          })
+          return
+        }
 
         // ── 9. Run scorers ────────────────────────────────────────────────
         const evalCase: EvalCase = {
@@ -313,6 +395,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                   })),
                   groundingContext,
                   assembledPrompt: assembledPromptForTrace,
+                  retrievedCount,
+                  inBudgetCount,
                 }
               : undefined,
           sectionHit: sectionHitResult,
@@ -350,9 +434,11 @@ export async function POST(req: NextRequest): Promise<Response> {
     },
 
     onError: (error) => {
-      // Convert Anthropic over-context 400s to a graceful user-facing message
+      // Convert Anthropic context-overflow surfaces (413 request_too_large, 200 +
+      // model_context_window_exceeded, legacy 400) to a graceful, app-fault
+      // message whose remediation never advises the caller's current mode.
       if (isOverContextError(error)) {
-        return 'Request exceeds model context. Please reduce the record size or use retrieve mode with a smaller k value.'
+        return `Request exceeds the model context window. ${overBudgetAdvice(mode)}`
       }
       return error instanceof Error ? error.message : 'An unexpected error occurred.'
     },

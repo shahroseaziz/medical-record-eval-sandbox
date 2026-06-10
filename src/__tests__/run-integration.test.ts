@@ -90,17 +90,23 @@ vi.mock('../lib/voyage', () => ({
   embed: vi.fn().mockResolvedValue([[...Array(1024).fill(0.1)]]),
 }))
 
-// Mock lib/rag retrieve so we can control what chunks come back
-vi.mock('../lib/rag/index', () => ({
-  retrieve: vi.fn().mockResolvedValue({
-    chunks: [
-      { section: 'medications', text: 'Patient takes Lisinopril 10mg daily.', distance: 0.1, similarity: 0.9 },
-      { section: 'problems', text: 'Hypertension diagnosed 2020.', distance: 0.2, similarity: 0.8 },
-    ],
-    sql: 'SELECT ...',
-    summary: 'retrieved 2 of 10 sections',
-  }),
-}))
+// Mock lib/rag retrieve so we can control what chunks come back. Keep the real
+// fitChunksToBudget (a pure function, no DB) so the budget-bounded assembly path
+// is exercised end-to-end.
+vi.mock('../lib/rag/index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/rag/index')>()
+  return {
+    ...actual,
+    retrieve: vi.fn().mockResolvedValue({
+      chunks: [
+        { section: 'medications', text: 'Patient takes Lisinopril 10mg daily.', distance: 0.1, similarity: 0.9 },
+        { section: 'problems', text: 'Hypertension diagnosed 2020.', distance: 0.2, similarity: 0.8 },
+      ],
+      sql: 'SELECT ...',
+      summary: 'retrieved 2 of 10 sections',
+    }),
+  }
+})
 
 // Mock the AI SDK streamText to produce controlled text output
 const MOCK_OUTPUT = 'The patient takes Lisinopril 10mg daily for hypertension.'
@@ -462,19 +468,18 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
   })
 
   describe('BYO lifts the 12k free-tier input ceiling', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let mockCountTokens: any
-    beforeEach(async () => {
+    beforeEach(() => {
       process.env.ANTHROPIC_API_KEY = 'test-key'
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockCountTokens = (await import('@anthropic-ai/sdk') as any).__mockCountTokens
     })
 
+    // SHA-78: the 12k ceiling is now a LOCAL approximation (no count_tokens API
+    // call), so over-limit is driven by real input size. ~30k chars of dense
+    // text estimates to ~15.7k tokens — over the 12k ceiling, under the 190k guard.
+    const overTwelveK = 'lorem ipsum dolor '.repeat(1_700) // ~30k chars
+
     it('FREE-TIER: still rejects a >12k context with the 12k limit error', async () => {
-      // >12k (trips the free-tier ceiling) but a tiny record (well under the 190k guard)
-      mockCountTokens.mockResolvedValueOnce({ input_tokens: 13_000 })
       const res = await handler(
-        makeReq({ patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: 'small record' }) as never
+        makeReq({ patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: overTwelveK }) as never
       )
       const parts = parseDataStreamParts(await res.text())
       const errorPart = parts.find(
@@ -485,15 +490,13 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
     })
 
     it('BYO: skips the 12k ceiling entirely (the BYO key lifts it)', async () => {
-      mockCountTokens.mockClear()
       const res = await handler(
         makeReq(
-          { patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: 'small record' },
+          { patientId: 'p1', query: 'Summarize.', mode: 'stuff', record: overTwelveK },
           { 'X-Byo-Api-Key': 'sk-ant-test-byo-key' },
         ) as never
       )
-      // The 12k pre-check (and its token-count call) is gated on !isByo, so BYO never hits it.
-      expect(mockCountTokens).not.toHaveBeenCalled()
+      // The 12k pre-check is gated on !isByo, so a BYO caller never hits it.
       const parts = parseDataStreamParts(await res.text())
       const ceilingError = parts.find(
         (p) => p.type === 'data'

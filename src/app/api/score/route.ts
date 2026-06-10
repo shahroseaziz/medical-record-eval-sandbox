@@ -328,18 +328,18 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     // ── 5a. Input size guard ────────────────────────────────────────────────
     // Reject oversized inputs before any judge call so that actual spend
-    // stays within the booked JUDGE_SCORE_ESTIMATE_MICRO_USD. Uses the free
-    // countTokens API (char/4 fallback when unavailable). Applies to all
-    // callers — BYO and free-tier — because a 1 MB grounding would blow the
-    // real token cap regardless of spend-cap status.
-    // TokenLimitError propagates to the outer catch, which refunds spend and
-    // returns 413.
+    // stays within the booked JUDGE_SCORE_ESTIMATE_MICRO_USD. Uses a LOCAL
+    // token approximation with a safety margin (SHA-78 — no per-call
+    // count_tokens round-trip). Applies to all callers — BYO and free-tier —
+    // because a 1 MB grounding would blow the real token cap regardless of
+    // spend-cap status. TokenLimitError propagates to the outer catch, which
+    // refunds spend and returns 413.
     const combinedInput = [
       parsedReq.capturedOutput,
       groundingText,
       parsedReq.userVerdictRubric ?? '',
     ].join('\n')
-    await assertWithinTokenLimit(combinedInput, judgeClient)
+    assertWithinTokenLimit(combinedInput)
 
     faithfulnessResult = await abortable(
       scoreFaithfulness(evalCase, judgeClient, parsedReq.userVerdictRubric, {

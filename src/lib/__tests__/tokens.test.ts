@@ -1,103 +1,141 @@
-import { describe, it, expect, vi } from 'vitest'
-import type Anthropic from '@anthropic-ai/sdk'
+import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import {
-  estimateTokensFromChars,
-  countInputTokens,
+  approxTokens,
+  estimateTokens,
+  estimateInputTokens,
   assertWithinTokenLimit,
   TokenLimitError,
   MAX_INPUT_TOKENS,
+  CHARS_PER_TOKEN,
+  TOKEN_SAFETY_MARGIN,
 } from '../tokens'
+import tokenCounts from '../../../evals/fixtures/token-counts.json'
 
-// Build a minimal mock Anthropic client with a controllable countTokens response.
-function makeClient(inputTokens: number): Anthropic {
-  return {
-    messages: {
-      countTokens: vi.fn().mockResolvedValue({ input_tokens: inputTokens }),
-    },
-  } as unknown as Anthropic
+// SHA-78 / arch S25: the hot path approximates token counts LOCALLY — no per-run
+// count_tokens round-trip. These fixtures are the committed, API-counted reference
+// set (maintainer count_tokens pass, evals/fixtures/token-counts.json). The worker
+// asserts the local counter against them and NEVER calls the Anthropic API.
+
+interface TokenFixture {
+  id: string
+  sha256: string
+  chars: number
+  api_input_tokens: number
+  text: string
 }
 
-function makeFailingClient(): Anthropic {
-  return {
-    messages: {
-      countTokens: vi.fn().mockRejectedValue(new Error('API unavailable')),
-    },
-  } as unknown as Anthropic
-}
+const fixtures = tokenCounts.fixtures as TokenFixture[]
 
-describe('estimateTokensFromChars()', () => {
-  it('returns ceil(length / 4)', () => {
-    expect(estimateTokensFromChars('abcd')).toBe(1)
-    expect(estimateTokensFromChars('abcde')).toBe(2)
-    expect(estimateTokensFromChars('')).toBe(0)
+// The approximation is fit to record-sized inputs; per-token overhead dominates
+// tiny strings (a 20-token query is unrepresentative). Margin assertions apply to
+// fixtures large enough to be budget-relevant; the fail-closed invariant applies
+// to ALL fixtures regardless of size.
+const SUBSTANTIAL_MIN_TOKENS = 100
+// Verified headroom: the approximation lands within ~7% of the API count on every
+// substantial fixture. 15% is the asserted bound — comfortably above the observed
+// error without being brittle.
+const APPROX_MARGIN = 0.15
+
+describe('token-count reference fixtures', () => {
+  it('are intact (sha256 of each fixture text matches the committed hash)', () => {
+    for (const fx of fixtures) {
+      const sha = createHash('sha256').update(fx.text).digest('hex')
+      expect(sha, `fixture ${fx.id} text drifted from its committed sha256`).toBe(fx.sha256)
+      expect(fx.text.length).toBe(fx.chars)
+    }
+  })
+
+  it('covers the pinned Agustin437 Hills818 retrieve-mode assembly', () => {
+    const ids = fixtures.map((f) => f.id)
+    expect(ids).toContain('agustin437-hills818-full-record')
+    expect(ids).toContain('agustin437-hills818-k6-assembly')
   })
 })
 
-describe('countInputTokens()', () => {
-  it('uses the Anthropic countTokens API when available', async () => {
-    const client = makeClient(8_000)
-    const count = await countInputTokens('hello world', client)
-    expect(count).toBe(8_000)
-    expect(
-      (client.messages.countTokens as ReturnType<typeof vi.fn>).mock.calls,
-    ).toHaveLength(1)
+describe('approxTokens() vs committed API counts', () => {
+  const substantial = fixtures.filter((f) => f.api_input_tokens >= SUBSTANTIAL_MIN_TOKENS)
+
+  it('has fixtures to assert against', () => {
+    expect(substantial.length).toBeGreaterThan(0)
   })
 
-  it('falls back to char/4 estimate when the API throws', async () => {
-    const text = 'a'.repeat(8_000) // 8000 chars → 2000 tokens estimated
-    const client = makeFailingClient()
-    const count = await countInputTokens(text, client)
-    expect(count).toBe(2_000) // 8000 / 4
+  for (const fx of fixtures.filter((f) => f.api_input_tokens >= SUBSTANTIAL_MIN_TOKENS)) {
+    it(`is within ±${APPROX_MARGIN * 100}% of the API count for ${fx.id}`, () => {
+      const approx = approxTokens(fx.text)
+      const relErr = Math.abs(approx - fx.api_input_tokens) / fx.api_input_tokens
+      expect(
+        relErr,
+        `${fx.id}: approx=${approx} api=${fx.api_input_tokens} relErr=${relErr.toFixed(3)}`,
+      ).toBeLessThanOrEqual(APPROX_MARGIN)
+    })
+  }
+})
+
+describe('estimateInputTokens() fails closed against the reference set', () => {
+  // The safety-margined estimate must NEVER under-count the true API count —
+  // otherwise an oversized payload could slip past a budget gate. This holds for
+  // EVERY fixture, including the tiny ones the raw approximation over-estimates.
+  for (const fx of fixtures) {
+    it(`never under-counts ${fx.id}`, () => {
+      expect(
+        estimateInputTokens(fx.text),
+        `${fx.id}: estimate must be >= api count ${fx.api_input_tokens}`,
+      ).toBeGreaterThanOrEqual(fx.api_input_tokens)
+    })
+  }
+})
+
+describe('approxTokens() / estimateTokens()', () => {
+  it('uses CHARS_PER_TOKEN with ceiling division', () => {
+    const text = 'a'.repeat(2200)
+    expect(approxTokens(text)).toBe(Math.ceil(2200 / CHARS_PER_TOKEN))
+    expect(approxTokens('')).toBe(0)
+  })
+
+  it('estimateTokens is the raw approximation (no safety margin) for cost/trace use', () => {
+    const text = 'lorem ipsum '.repeat(50)
+    expect(estimateTokens(text)).toBe(approxTokens(text))
+  })
+
+  it('estimateInputTokens applies the safety margin on top of the approximation', () => {
+    const text = 'x'.repeat(10_000)
+    expect(estimateInputTokens(text)).toBe(Math.ceil(approxTokens(text) * TOKEN_SAFETY_MARGIN))
+    expect(estimateInputTokens(text)).toBeGreaterThan(approxTokens(text))
   })
 })
 
-describe('assertWithinTokenLimit()', () => {
-  it('resolves with the token count when within limit', async () => {
-    const client = makeClient(MAX_INPUT_TOKENS - 1)
-    const count = await assertWithinTokenLimit('safe input', client)
-    expect(count).toBe(MAX_INPUT_TOKENS - 1)
+describe('assertWithinTokenLimit() (synchronous, no API call)', () => {
+  it('returns the estimate when within the limit', () => {
+    const count = assertWithinTokenLimit('safe input')
+    expect(count).toBe(estimateInputTokens('safe input'))
   })
 
-  it('throws TokenLimitError when API returns count > MAX_INPUT_TOKENS', async () => {
-    const client = makeClient(MAX_INPUT_TOKENS + 1)
-    await expect(assertWithinTokenLimit('too long', client)).rejects.toBeInstanceOf(
-      TokenLimitError,
-    )
+  it('throws TokenLimitError when the estimate exceeds the limit', () => {
+    // ~12k tokens worth of dense text → over MAX_INPUT_TOKENS once margined.
+    const tooLong = 'x'.repeat(MAX_INPUT_TOKENS * CHARS_PER_TOKEN)
+    expect(() => assertWithinTokenLimit(tooLong)).toThrow(TokenLimitError)
   })
 
-  it('rejects a 6 MB record via the API path (over-12k rejected pre-call)', async () => {
-    // A 6 MB record is ~1.5M tokens — clearly over the 12k limit
+  it('rejects a 6 MB record (clearly over the 12k ceiling)', () => {
     const sixMb = 'x'.repeat(6 * 1024 * 1024)
-    const client = makeClient(1_500_000)
-    await expect(assertWithinTokenLimit(sixMb, client)).rejects.toBeInstanceOf(TokenLimitError)
+    expect(() => assertWithinTokenLimit(sixMb)).toThrow(TokenLimitError)
   })
 
-  // ── Tokenizer-fallback fails closed ──────────────────────────────────────
-  // When the Anthropic API is unavailable, the char/4 fallback is used.
-  // Inputs that the fallback estimates as > 12k must still be rejected.
-
-  it('tokenizer-fallback fails closed: rejects >12k chars via fallback estimate', async () => {
-    // 12k tokens × 4 chars/token = 48k chars → fallback returns 12k, which equals MAX
-    // Use 48001 chars to push just above 12k with ceiling division
-    const overLimit = 'a'.repeat(MAX_INPUT_TOKENS * 4 + 4) // → estimateTokensFromChars = 12001
-    const client = makeFailingClient()
-    await expect(assertWithinTokenLimit(overLimit, client)).rejects.toBeInstanceOf(
-      TokenLimitError,
-    )
+  it('honours a custom limit argument', () => {
+    const text = 'x'.repeat(4_400) // ~2000 approx tokens
+    expect(() => assertWithinTokenLimit(text, 100)).toThrow(TokenLimitError)
+    expect(assertWithinTokenLimit(text, 1_000_000)).toBe(estimateInputTokens(text))
   })
 
-  it('tokenizer-fallback: allows input that estimates within limit', async () => {
-    // 40k chars → char/4 = 10k tokens < 12k limit
-    const withinLimit = 'a'.repeat(40_000)
-    const client = makeFailingClient()
-    const count = await assertWithinTokenLimit(withinLimit, client)
-    expect(count).toBe(10_000)
-  })
-
-  it('TokenLimitError carries the token count', async () => {
-    const client = makeClient(99_999)
-    const err = await assertWithinTokenLimit('x', client).catch((e) => e)
-    expect(err).toBeInstanceOf(TokenLimitError)
-    expect((err as TokenLimitError).tokenCount).toBe(99_999)
+  it('TokenLimitError carries the (margined) estimate', () => {
+    const tooLong = 'x'.repeat(MAX_INPUT_TOKENS * CHARS_PER_TOKEN * 2)
+    try {
+      assertWithinTokenLimit(tooLong)
+      throw new Error('expected TokenLimitError')
+    } catch (e) {
+      expect(e).toBeInstanceOf(TokenLimitError)
+      expect((e as TokenLimitError).tokenCount).toBe(estimateInputTokens(tooLong))
+    }
   })
 })
