@@ -10,6 +10,8 @@ const compat = new FlatCompat({
 })
 
 const eslintConfig = [
+  // design/ holds non-compilable UX reference prototypes (see design/reference/README.md)
+  { ignores: ['design/**'] },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
 ]
 
