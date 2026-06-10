@@ -41,7 +41,16 @@ function pct(n: number): string {
  * The surface is fully determined by `source` + the committed fixture, so it
  * renders identically on every load (rule 20).
  */
-export function LessonBeat1() {
+interface Beat1Props {
+  /**
+   * Fired when the learner runs the diff — the journey shell latches this as
+   * Beat 1's completion gate (advancing to Beat 2 is blocked until it fires).
+   * Optional so the component still renders standalone (tests, storybook).
+   */
+  onRun?: () => void
+}
+
+export function LessonBeat1({ onRun }: Beat1Props = {}) {
   const data = loadLessonBeat1()
   const [source, setSource] = useState<SourcePath | null>(null)
   const [hasRun, setHasRun] = useState(false)
@@ -183,7 +192,10 @@ export function LessonBeat1() {
             <Button
               data-testid="beat1-run"
               disabled={!source}
-              onClick={() => setHasRun(true)}
+              onClick={() => {
+                setHasRun(true)
+                onRun?.()
+              }}
             >
               Run the diff
             </Button>

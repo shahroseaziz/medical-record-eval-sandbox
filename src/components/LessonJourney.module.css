@@ -1,0 +1,347 @@
+/*
+ * Lesson app-shell — the stepper journey (SHA-71 R15).
+ *
+ * The `.journey` root remaps the shared semantic tokens (--color-*) to the
+ * violet "clinical-calm" lesson family (--accent / --ink / --pass …). Because
+ * custom properties cascade, every lesson surface below — the shared Card,
+ * Badge, Button primitives and the Beat modules — re-themes to violet WITHOUT
+ * touching the rest of the app (home / workbench stay on the blue family).
+ * :where() keeps specificity at zero so component rules still win.
+ */
+.journey {
+  min-height: 100vh;
+  background: var(--canvas);
+}
+
+:where(.journey) {
+  /* primary → violet accent */
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--accent-press);
+  --color-primary-subtle: var(--accent-soft);
+  --color-primary-border: var(--accent-line);
+  --color-primary-text: var(--accent-ink);
+
+  /* success → supported (green) */
+  --color-success: var(--pass);
+  --color-success-subtle: var(--pass-soft);
+  --color-success-text: var(--pass-ink);
+
+  /* warning → partial (amber) */
+  --color-warning: var(--partial);
+  --color-warning-subtle: var(--partial-soft);
+  --color-warning-text: var(--partial-ink);
+
+  /* danger → unsupported (red) */
+  --color-danger: var(--fail);
+  --color-danger-hover: var(--fail-ink);
+  --color-danger-subtle: var(--fail-soft);
+  --color-danger-text: var(--fail-ink);
+
+  /* surfaces, borders, ink */
+  --color-bg: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-2);
+  --color-surface-sunken: var(--surface-3);
+  --color-border: var(--line);
+  --color-border-strong: var(--line-2);
+  --color-text: var(--ink);
+  --color-text-muted: var(--ink-2);
+  --color-text-subtle: var(--ink-3);
+  --color-focus-ring: var(--accent);
+
+  /* tokens.css radii → the lesson's softer scale */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-full: var(--r-pill);
+}
+
+/* Display type for lesson headings — the Schibsted/Geist stack. */
+.journey :is(h1, h2, h3, h4) {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* ── Sticky stepper rail ─────────────────────────────────────────────────── */
+.stepper {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  background: rgba(247, 246, 250, 0.85);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.stepperInner {
+  max-width: var(--layout-max-width);
+  margin: 0 auto;
+  padding: 11px var(--layout-gutter);
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.brand:hover {
+  color: var(--accent-ink);
+}
+
+.brandMark {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sh-accent);
+  font-size: 14px;
+}
+
+.stops {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stopItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  border: 1px solid transparent;
+  font-family: inherit;
+  cursor: default;
+}
+.stopClickable {
+  cursor: pointer;
+}
+.stopActive {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.stopNum {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-3);
+  color: var(--ink-4);
+}
+.stopActive .stopNum {
+  background: var(--accent);
+  color: #fff;
+}
+.stopPast .stopNum {
+  background: var(--pass-soft);
+  border: 1px solid var(--pass-line);
+  color: var(--pass);
+}
+
+.stopLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-4);
+}
+.stopActive .stopLabel {
+  color: var(--accent-ink);
+}
+.stopPast .stopLabel {
+  color: var(--ink-2);
+}
+
+.stopArrow {
+  color: var(--line-2);
+  font-size: 12px;
+  user-select: none;
+}
+
+/* ── Content column ──────────────────────────────────────────────────────── */
+.content {
+  padding-block: var(--s7) var(--s10);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.backLink {
+  font-size: var(--text-sm);
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+.backLink:hover {
+  text-decoration: underline;
+}
+
+/* The active beat fades up as the learner advances. */
+.activeBeat {
+  animation: fadeUp 0.3s both;
+}
+
+/* ── Advance footer (gated next-beat control) ────────────────────────────── */
+.advance {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-top: var(--s2);
+  padding-top: var(--s5);
+  border-top: 1px solid var(--line);
+}
+
+.advanceBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--sh-accent);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14.5px;
+  padding: 10px 18px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+.advanceBtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--accent-press);
+}
+.advanceBtn:disabled {
+  background: var(--surface-3);
+  color: var(--ink-4);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.advanceHint {
+  font-size: 12px;
+  color: var(--ink-3);
+  max-width: 360px;
+  line-height: 1.45;
+}
+
+/* ── Completed-beat summary (collapses; reopen to review) ─────────────────── */
+.summaryCard {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--sh-sm);
+  overflow: hidden;
+}
+
+.summaryHead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 12px 15px;
+  background: var(--surface-2);
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.summaryHead:hover {
+  background: var(--surface-3);
+}
+
+.summaryCheck {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pass-soft);
+  border: 1px solid var(--pass-line);
+  color: var(--pass);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summaryText {
+  display: block;
+}
+
+.summaryLine {
+  display: block;
+}
+
+.summaryTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.summaryEyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-right: 6px;
+}
+
+.summaryGist {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.summaryReopen {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.summaryBody {
+  padding: var(--s5) 15px;
+  border-top: 1px solid var(--line);
+  animation: fadeUp 0.2s both;
+}

@@ -150,3 +150,73 @@
     --transition-base: 0ms;
   }
 }
+
+/*
+ * ── Lesson design system (violet · clinical-calm) ─────────────────────────
+ * Ported from design/reference/tokens.css — the canonical correctness-first
+ * visual language. These are ADDITIVE primitives (distinct names from the
+ * blue --color-* / --space-* system above, so no existing surface changes).
+ * The lesson surfaces opt in by remapping the semantic tokens to this family
+ * inside a scoped root (see LessonJourney.module.css :where(.journey)).
+ */
+:root {
+  /* surface & ink (cool, low-saturation neutrals) */
+  --canvas: #f7f6fa;
+  --surface: #ffffff;
+  --surface-2: #fbfaff;
+  --surface-3: #f2f0f7;
+
+  --ink: #1d1a2b;
+  --ink-2: #56506b;
+  --ink-3: #8b8499;
+  --ink-4: #b4aec2;
+
+  --line: #ebe8f1;
+  --line-2: #e0dcea;
+
+  /* accent (violet) */
+  --accent: #6d5ae0;
+  --accent-press: #5a47c9;
+  --accent-ink: #4a3aa8;
+  --accent-soft: #f1edfd;
+  --accent-soft-2: #e7e0fb;
+  --accent-line: #d6ccf6;
+
+  /* semantic (supported / unsupported / partial) */
+  --pass: #1f8a5b;
+  --pass-ink: #176b46;
+  --pass-soft: #e7f4ed;
+  --pass-line: #bfe3ce;
+
+  --fail: #cf4839;
+  --fail-ink: #a8362a;
+  --fail-soft: #fbeae7;
+  --fail-line: #f1c7bf;
+
+  --partial: #b07219;
+  --partial-ink: #8a5912;
+  --partial-soft: #faf0dd;
+  --partial-line: #ecd4a6;
+
+  /* disagreement spotlight */
+  --spot: #f4a418;
+  --spot-soft: #fff5e3;
+  --spot-line: #f3d79a;
+
+  /* display type stack (declares the intended faces; degrades gracefully) */
+  --font-display: 'Schibsted Grotesk', 'Geist', system-ui, sans-serif;
+
+  /* radii */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --r-pill: 999px;
+
+  /* soft, violet-tinted shadows */
+  --sh-sm: 0 1px 2px rgba(29, 26, 43, 0.05), 0 1px 1px rgba(29, 26, 43, 0.04);
+  --sh-md: 0 4px 16px -4px rgba(46, 38, 84, 0.1), 0 2px 6px -2px rgba(46, 38, 84, 0.06);
+  --sh-lg: 0 18px 48px -14px rgba(46, 38, 84, 0.22), 0 6px 18px -8px rgba(46, 38, 84, 0.12);
+  --sh-accent: 0 8px 22px -8px rgba(109, 90, 224, 0.45);
+}
