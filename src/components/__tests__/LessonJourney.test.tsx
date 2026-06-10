@@ -7,8 +7,11 @@ import { LessonBeat2 } from '../LessonBeat2'
  * Acceptance test for SHA-71 R15 — the lesson app shell:
  *  1. a persistent stepper rail (Match → Meaning → Grounding),
  *  2. exactly one beat interactive at a time,
- *  3. advancing is GATED on completing the current beat (Beat 1's run),
- *  4. finished beats collapse to a reopenable summary,
+ *  3. advancing is GATED on completing the current beat (Beat 1's run AND
+ *     Beat 2's contrast acknowledgement),
+ *  4. finished beats collapse to a reopenable summary that PRESERVES the
+ *     learner's state (reopening is a review, not a reset), and stepping back
+ *     and forward never wipes a later beat's state,
  *  5. graduation stays gated (reached only after stepping through).
  */
 describe('LessonJourney (stepper app shell)', () => {
@@ -58,10 +61,51 @@ describe('LessonJourney (stepper app shell)', () => {
     expect(screen.getByTestId('lesson-stepper-stop-1')).toHaveAttribute('data-state', 'past')
     expect(screen.getByTestId('lesson-stepper-stop-2')).toHaveAttribute('data-state', 'active')
 
-    // Reopening the summary re-mounts Beat 1 for review.
+    // Reopening the summary re-mounts Beat 1 for review WITH the learner's state
+    // intact — the source they authored from is still selected (a review, not a
+    // reset). The lifted state survives the collapse/reopen round-trip.
     fireEvent.click(screen.getByTestId('beat-1-summary-toggle'))
     expect(screen.getByTestId('beat-1-summary-body')).toBeInTheDocument()
-    expect(screen.getByTestId('lesson-beat-1-interactive')).toBeInTheDocument()
+    const reopened = screen.getByTestId('lesson-beat-1-interactive')
+    expect(reopened).toBeInTheDocument()
+    expect(screen.getByTestId('beat1-source-summary')).toHaveAttribute('aria-pressed', 'true')
+    // The run result is preserved too — the diff is still on screen, not reset.
+    expect(screen.getByTestId('beat1-diff-table')).toBeInTheDocument()
+  })
+
+  it('gates the advance to Beat 3 behind acknowledging Beat 2’s contrast', () => {
+    render(<LessonJourney initialThreshold={0.85} beat2={<LessonBeat2 />} />)
+    fireEvent.click(screen.getByTestId('beat1-source-summary'))
+    fireEvent.click(screen.getByTestId('beat1-run'))
+    fireEvent.click(screen.getByTestId('beat-1-advance'))
+
+    // On Beat 2, advancing is disabled until the contrast is acknowledged.
+    expect(screen.getByTestId('beat-2-advance')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('beat-2-ack'))
+    expect(screen.getByTestId('beat-2-advance')).toBeEnabled()
+  })
+
+  it('preserves Beat 3 state when stepping back to an earlier beat and returning', () => {
+    render(<LessonJourney initialThreshold={0.85} beat2={<LessonBeat2 />} />)
+    fireEvent.click(screen.getByTestId('beat1-source-summary'))
+    fireEvent.click(screen.getByTestId('beat1-run'))
+    fireEvent.click(screen.getByTestId('beat-1-advance'))
+    fireEvent.click(screen.getByTestId('beat-2-ack'))
+    fireEvent.click(screen.getByTestId('beat-2-advance'))
+
+    // On Beat 3, move the rubric to lenient — this is the state graduation hands
+    // off to the workbench.
+    fireEvent.click(screen.getByTestId('beat3-rubric-lenient'))
+    expect(screen.getByTestId('beat3-mean-score')).toHaveTextContent('75.0%')
+
+    // Step back to Beat 1 via the stepper, then forward again to Beat 3.
+    fireEvent.click(screen.getByTestId('lesson-stepper-stop-1'))
+    expect(screen.getByTestId('beat-1-active')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('lesson-stepper-stop-3'))
+
+    // Beat 3's lenient rubric survived the round-trip — it was not wiped.
+    expect(screen.getByTestId('beat3-rubric-lenient')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('beat3-mean-score')).toHaveTextContent('75.0%')
   })
 
   it('reaches the gated graduation only after stepping through all beats', () => {
@@ -72,6 +116,7 @@ describe('LessonJourney (stepper app shell)', () => {
     fireEvent.click(screen.getByTestId('beat1-source-summary'))
     fireEvent.click(screen.getByTestId('beat1-run'))
     fireEvent.click(screen.getByTestId('beat-1-advance'))
+    fireEvent.click(screen.getByTestId('beat-2-ack'))
     fireEvent.click(screen.getByTestId('beat-2-advance'))
 
     // Beat 3 is now active and still gates the graduation behind "finish".

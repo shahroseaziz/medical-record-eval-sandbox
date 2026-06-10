@@ -262,6 +262,24 @@
   line-height: 1.45;
 }
 
+/* Beat 2's contrast gate — acknowledge the diff-vs-judge contrast to advance. */
+.advanceAck {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  flex-basis: 100%;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.advanceAck input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
 /* ── Completed-beat summary (collapses; reopen to review) ─────────────────── */
 .summaryCard {
   border: 1px solid var(--line);

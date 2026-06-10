@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { Container, Heading, Stack, Text } from './ui'
 import { LessonBeat1 } from './LessonBeat1'
 import { LessonBeat3 } from './LessonBeat3'
+import type { SourcePath } from '@/lib/lesson/beat1'
+import type { RubricVariant } from '@/lib/lesson/beat3'
 import styles from './LessonJourney.module.css'
 
 interface Props {
@@ -60,11 +62,29 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
   const [beat, setBeat] = useState<BeatNumber>(1)
   // The furthest beat unlocked — stops at/below it are clickable for review.
   const [furthest, setFurthest] = useState<BeatNumber>(1)
-  // Beat 1's completion latch: set when the diff runs, never cleared (so a
-  // re-author inside Beat 1 doesn't re-lock the journey).
-  const [beat1Ran, setBeat1Ran] = useState(false)
   // Which finished beats the learner has expanded for review.
   const [reopened, setReopened] = useState<Record<number, boolean>>({})
+
+  // ── Beat state is lifted into the shell ───────────────────────────────────
+  // Non-active beats unmount (one beat on screen at a time), so their state
+  // cannot live inside the beat components — it would be wiped on remount.
+  // Holding it here means reopening a collapsed Beat 1 is a real review, and
+  // stepping back from Beat 3 and returning preserves the rubric/labels the
+  // gated graduation hands off to the workbench.
+  //
+  // Beat 1 authoring state + a run latch (set on first run, never cleared, so a
+  // re-author doesn't re-lock the already-earned advance).
+  const [b1Source, setB1Source] = useState<SourcePath | null>(null)
+  const [b1HasRun, setB1HasRun] = useState(false)
+  const [beat1Ran, setBeat1Ran] = useState(false)
+  // Beat 2's contrast gate: a latch set when the learner acknowledges that the
+  // structured diff couldn't grade the prose but the reference judge resolved
+  // it. Never cleared, so revisiting Beat 2 doesn't re-lock Grounding.
+  const [beat2Seen, setBeat2Seen] = useState(false)
+  // Beat 3 capstone state (rubric / labels / graduation latch).
+  const [b3Rubric, setB3Rubric] = useState<RubricVariant>('strict')
+  const [b3Labels, setB3Labels] = useState<Record<string, 'pass' | 'fail'>>({})
+  const [b3Graduated, setB3Graduated] = useState(false)
 
   const goTo = useCallback((n: BeatNumber) => {
     setBeat(n)
@@ -79,9 +99,28 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
     setReopened((prev) => ({ ...prev, [n]: !prev[n] }))
 
   function renderBeatBody(n: BeatNumber) {
-    if (n === 1) return <LessonBeat1 onRun={() => setBeat1Ran(true)} />
+    if (n === 1)
+      return (
+        <LessonBeat1
+          onRun={() => setBeat1Ran(true)}
+          source={b1Source}
+          onSourceChange={setB1Source}
+          hasRun={b1HasRun}
+          onHasRunChange={setB1HasRun}
+        />
+      )
     if (n === 2) return beat2
-    return <LessonBeat3 initialThreshold={initialThreshold} />
+    return (
+      <LessonBeat3
+        initialThreshold={initialThreshold}
+        rubric={b3Rubric}
+        onRubricChange={setB3Rubric}
+        labels={b3Labels}
+        onLabelsChange={setB3Labels}
+        graduated={b3Graduated}
+        onGraduatedChange={setB3Graduated}
+      />
+    )
   }
 
   return (
@@ -214,14 +253,33 @@ export function LessonJourney({ initialThreshold, beat2 }: Props) {
           )}
           {beat === 2 && (
             <div className={styles.advance} data-testid="beat-advance">
+              <label className={styles.advanceAck}>
+                <input
+                  type="checkbox"
+                  data-testid="beat-2-ack"
+                  checked={beat2Seen}
+                  onChange={(e) => setBeat2Seen(e.target.checked)}
+                />
+                <span>
+                  I see the contrast — the structured diff couldn&apos;t grade the prose, and the
+                  reference judge resolved it on meaning.
+                </span>
+              </label>
               <button
                 type="button"
                 className={styles.advanceBtn}
                 data-testid="beat-2-advance"
+                disabled={!beat2Seen}
                 onClick={() => goTo(3)}
               >
                 Continue to Grounding →
               </button>
+              {!beat2Seen && (
+                <span className={styles.advanceHint}>
+                  Confirm you&apos;ve seen the contrast — the diff failed, the judge resolved it — to
+                  continue.
+                </span>
+              )}
             </div>
           )}
         </Stack>

@@ -77,6 +77,9 @@ test.describe('open workbench (R11)', () => {
     await page.getByTestId('beat1-source-summary').click()
     await page.getByTestId('beat1-run').click()
     await page.getByTestId('beat-1-advance').click()
+    // Beat 2's advance is gated on acknowledging the diff-vs-judge contrast.
+    await expect(page.getByTestId('beat-2-advance')).toBeDisabled()
+    await page.getByTestId('beat-2-ack').check()
     await page.getByTestId('beat-2-advance').click()
     await expect(page.getByTestId('beat-3-active')).toBeVisible()
 

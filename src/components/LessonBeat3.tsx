@@ -16,6 +16,19 @@ import styles from './LessonBeat3.module.css'
 interface Props {
   /** Pass threshold, read from config (evals/thresholds.yaml) by the page. */
   initialThreshold: number
+  /**
+   * Optional CONTROLLED capstone state. When the journey shell passes these, the
+   * rubric, intent labels, and graduation latch live in the parent — so stepping
+   * BACK to an earlier beat and returning (or finishing) preserves exactly the
+   * state the gated graduation hands off to the workbench, rather than wiping it
+   * on remount. Omitted in standalone renders (tests), where state is internal.
+   */
+  rubric?: RubricVariant
+  onRubricChange?: (next: RubricVariant) => void
+  labels?: Record<string, 'pass' | 'fail'>
+  onLabelsChange?: (next: Record<string, 'pass' | 'fail'>) => void
+  graduated?: boolean
+  onGraduatedChange?: (next: boolean) => void
 }
 
 const RUBRIC_LABEL: Record<RubricVariant, string> = {
@@ -37,19 +50,36 @@ const RUBRIC_LABEL: Record<RubricVariant, string> = {
  * load (rule 20). The DisagreementTable does the you-vs-judge roll-up (R6 result
  * type); this component supplies the rubric knob and the editable labels.
  */
-export function LessonBeat3({ initialThreshold }: Props) {
+export function LessonBeat3({
+  initialThreshold,
+  rubric: rubricProp,
+  onRubricChange,
+  labels: labelsProp,
+  onLabelsChange,
+  graduated: graduatedProp,
+  onGraduatedChange,
+}: Props) {
   const data = loadLessonBeat3()
-  const [rubric, setRubric] = useState<RubricVariant>('strict')
-  const [labels, setLabels] = useState<Record<string, 'pass' | 'fail'>>({})
+  // Control-props pattern: use the parent's value when provided, else local state.
+  const [rubricLocal, setRubricLocal] = useState<RubricVariant>('strict')
+  const [labelsLocal, setLabelsLocal] = useState<Record<string, 'pass' | 'fail'>>({})
   // The graduation is gated behind an explicit "finish" so it reads as an earned
   // win-moment, not a card that was always on screen.
-  const [graduated, setGraduated] = useState(false)
+  const [graduatedLocal, setGraduatedLocal] = useState(false)
+
+  const rubric = rubricProp !== undefined ? rubricProp : rubricLocal
+  const labels = labelsProp !== undefined ? labelsProp : labelsLocal
+  const graduated = graduatedProp !== undefined ? graduatedProp : graduatedLocal
+  const setRubric = onRubricChange ?? setRubricLocal
+  const setGraduated = onGraduatedChange ?? setGraduatedLocal
 
   const results = useMemo(() => buildBeat3Results(rubric, labels), [rubric, labels])
   const meanScore = meanBeat3Score(rubric)
 
   function handleIntentLabelChange(caseId: string, label: 'pass' | 'fail') {
-    setLabels((prev) => ({ ...prev, [caseId]: label }))
+    const next = { ...labels, [caseId]: label }
+    if (onLabelsChange) onLabelsChange(next)
+    else setLabelsLocal(next)
   }
 
   return (
