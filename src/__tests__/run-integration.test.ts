@@ -8,7 +8,7 @@
  *   3. BYO over-context graceful-reject (no raw 400 to client)
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { withClient, applySchema } from '../lib/db/index'
 import type { RunTrace } from '../app/api/run/types'
 
@@ -82,6 +82,24 @@ vi.mock('@upstash/ratelimit', () => {
 vi.mock('@ai-sdk/anthropic', () => ({
   createAnthropic: () => (modelId: string) => ({ provider: 'anthropic', modelId }),
 }))
+
+// The stop_reason capture tees a live SSE response; under mocks there is no real
+// fetch, so substitute a capture whose raw stop_reason each test controls via
+// `stopReasonState`. The pure classifier (classifyGenerationOutcome) stays REAL so
+// the 200 + model_context_window_exceeded / abnormal-finish branches are exercised
+// end-to-end through the route, not stubbed.
+const stopReasonState = vi.hoisted(() => ({ value: null as string | null }))
+vi.mock('../app/api/run/stop-reason', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../app/api/run/stop-reason')>()
+  return {
+    ...actual,
+    makeStopReasonCapture: () => ({
+      fetch: globalThis.fetch,
+      stopReason: () => stopReasonState.value,
+      done: Promise.resolve(),
+    }),
+  }
+})
 
 // Mock Voyage embed so retrieve() doesn't need a real API key
 vi.mock('../lib/voyage', () => ({
@@ -165,15 +183,33 @@ vi.mock('ai', () => {
     onError: ((e: unknown) => string) | undefined
   }
 
-  // Fake StreamTextResult
-  const makeFakeResult = (text: string, usage = { promptTokens: 50, completionTokens: 20, totalTokens: 70 }) => ({
-    text: Promise.resolve(text),
-    usage: Promise.resolve(usage),
-    mergeIntoDataStream(writer: DataStreamWriterLike) {
-      // Emit one text delta in data stream format
-      writer.write(`0:${JSON.stringify(text)}\n`)
-    },
-  })
+  // Fake StreamTextResult. `finishReason` defaults to a normal 'stop'; tests that
+  // exercise the over-context / abnormal-finish branches override it (and the raw
+  // stop_reason via stopReasonState). `rejectWith` simulates a thrown provider
+  // error (e.g. a 413) surfacing through result.text → the route's onError.
+  const makeFakeResult = (opts: {
+    text?: string
+    usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+    finishReason?: string
+    rejectWith?: unknown
+  } = {}) => {
+    const {
+      text = MOCK_OUTPUT,
+      usage = { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
+      finishReason = 'stop',
+      rejectWith = null,
+    } = opts
+    return {
+      text: rejectWith ? Promise.reject(rejectWith) : Promise.resolve(text),
+      usage: Promise.resolve(usage),
+      finishReason: Promise.resolve(finishReason),
+      mergeIntoDataStream(writer: DataStreamWriterLike) {
+        if (rejectWith) return // error surfaces via result.text, nothing streamed
+        // Emit one text delta in data stream format
+        writer.write(`0:${JSON.stringify(text)}\n`)
+      },
+    }
+  }
 
   return {
     createDataStreamResponse: (opts: {
@@ -185,7 +221,10 @@ vi.mock('ai', () => {
         await opts.execute(writer)
       })
     },
-    streamText: vi.fn().mockReturnValue(makeFakeResult(MOCK_OUTPUT)),
+    streamText: vi.fn().mockImplementation(() => makeFakeResult()),
+    // Exposed so tests can stage a specific result (finishReason / partial text /
+    // rejection) for one run via streamText.mockReturnValueOnce(__makeResult(...)).
+    __makeResult: makeFakeResult,
   }
 })
 
@@ -473,9 +512,10 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
     })
 
     // SHA-78: the 12k ceiling is now a LOCAL approximation (no count_tokens API
-    // call), so over-limit is driven by real input size. ~30k chars of dense
-    // text estimates to ~15.7k tokens — over the 12k ceiling, under the 190k guard.
-    const overTwelveK = 'lorem ipsum dolor '.repeat(1_700) // ~30k chars
+    // call), so over-limit is driven by real input size. This is PROSE-density
+    // text (~3.5 chars/token under the adaptive estimator), so ~41k chars margins
+    // to ~13.6k tokens — over the 12k ceiling, well under the 190k guard.
+    const overTwelveK = 'lorem ipsum dolor '.repeat(2_300) // ~41k chars
 
     it('FREE-TIER: still rejects a >12k context with the 12k limit error', async () => {
       const res = await handler(
@@ -505,6 +545,199 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       )
       expect(ceilingError).toBeUndefined()
       expect(res.status).toBe(200)
+    })
+  })
+
+  // ── Over-context app-fault classes (413 / 200 model_context_window_exceeded) ─
+  // SHA-78 / arch S25: the spec names THREE over-context surfaces, all handled as
+  // app-faults (graceful in-stream error, never a raw 4xx, never scored/persisted,
+  // remediation never advises the caller's CURRENT mode). These exercise each.
+
+  describe('over-context app-fault classes', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mockStreamText: any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let makeResult: any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let APIError: any
+
+    beforeAll(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ai = (await import('ai')) as any
+      mockStreamText = ai.streamText
+      makeResult = ai.__makeResult
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      APIError = ((await import('@anthropic-ai/sdk')) as any).APIError
+    })
+
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'test-key'
+      process.env.VOYAGE_API_KEY = 'test-voyage-key'
+      stopReasonState.value = null
+    })
+
+    afterEach(() => {
+      stopReasonState.value = null
+      mockStreamText.mockImplementation(() => makeResult())
+    })
+
+    function dataError(parts: Array<{ type: string; value: unknown }>) {
+      return parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'error',
+      )
+    }
+
+    it('413 request_too_large surfaces as a graceful over-context error (not a raw 4xx) and never advises the current (retrieve) mode', async () => {
+      mockStreamText.mockReturnValueOnce(
+        makeResult({ rejectWith: new APIError('request_too_large: prompt is too long', 413) }),
+      )
+
+      const res = await handler(
+        makeReq({ patientId: 'p1', query: 'q', mode: 'retrieve', k: 2 }) as never,
+      )
+      // App-fault: 200 with the error inside the stream, not a propagated 4xx.
+      expect(res.status).toBe(200)
+
+      const parts = parseDataStreamParts(await res.text())
+      // onError emits a `3:` stream-error line (type 'error' in the parser).
+      const err = parts.find((p) => p.type === 'error')
+      expect(err).toBeDefined()
+      const msg = String(err!.value)
+      expect(msg.toLowerCase()).toContain('context')
+      // Current mode is retrieve → copy must NOT advise switching to retrieve.
+      expect(msg.toLowerCase()).not.toContain('switch to retrieve')
+    })
+
+    it.each([
+      ['legacy 400 "prompt is too long"', () => new APIError('prompt is too long: 200000 tokens', 400)],
+      ['plain "context window" message', () => new Error('the context window was exceeded')],
+      ['413 with request_too_large code', () => new APIError('request_too_large', 413)],
+    ])('maps %s through onError to graceful context copy', async (_label, makeErr) => {
+      mockStreamText.mockReturnValueOnce(makeResult({ rejectWith: makeErr() }))
+      const res = await handler(
+        makeReq({ patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' }) as never,
+      )
+      expect(res.status).toBe(200)
+      const parts = parseDataStreamParts(await res.text())
+      const err = parts.find((p) => p.type === 'error')
+      expect(err).toBeDefined()
+      expect(String(err!.value).toLowerCase()).toContain('context window')
+    })
+
+    it('a NON-context provider error keeps its own message (not misclassified as over-context)', async () => {
+      mockStreamText.mockReturnValueOnce(
+        makeResult({ rejectWith: new APIError('overloaded_error: the service is overloaded', 529) }),
+      )
+      const res = await handler(
+        makeReq({ patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' }) as never,
+      )
+      const parts = parseDataStreamParts(await res.text())
+      const err = parts.find((p) => p.type === 'error')
+      expect(err).toBeDefined()
+      const msg = String(err!.value)
+      expect(msg).toContain('overloaded')
+      expect(msg.toLowerCase()).not.toContain('context window')
+    })
+
+    it('HTTP-200 model_context_window_exceeded with PARTIAL output is rejected, NOT scored/persisted', async () => {
+      // The reviewer's core (a): the model emits partial text BEFORE the window is
+      // hit. Keying off empty output would let this slip through; we key off the
+      // provider's verbatim stop_reason instead.
+      stopReasonState.value = 'model_context_window_exceeded'
+      mockStreamText.mockReturnValueOnce(
+        makeResult({ text: 'The patient was prescribed and then the answer was cut o', finishReason: 'unknown' }),
+      )
+
+      const res = await handler(
+        makeReq(
+          { patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' },
+          { 'X-Byo-Api-Key': 'sk-ant-test-byo-key' },
+        ) as never,
+      )
+      expect(res.status).toBe(200)
+      const parts = parseDataStreamParts(await res.text())
+
+      const err = dataError(parts)
+      expect(err).toBeDefined()
+      expect(String((err!.value as Record<string, unknown>).message).toLowerCase()).toContain(
+        'context window',
+      )
+      // Truncated run must NOT be scored or persisted as a complete result.
+      expect(
+        parts.find((p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'eval'),
+      ).toBeUndefined()
+      expect(
+        parts.find((p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'),
+      ).toBeUndefined()
+    })
+
+    it('unknown finish + empty output + NO raw stop_reason → generic abnormal copy, not context misclassification', async () => {
+      // The reviewer's (b): a different unknown stop_reason must NOT inherit the
+      // context-overflow remediation. No raw stop_reason captured here.
+      stopReasonState.value = null
+      mockStreamText.mockReturnValueOnce(makeResult({ text: '', finishReason: 'unknown' }))
+
+      const res = await handler(
+        makeReq(
+          { patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' },
+          { 'X-Byo-Api-Key': 'sk-ant-test-byo-key' },
+        ) as never,
+      )
+      const parts = parseDataStreamParts(await res.text())
+      const err = dataError(parts)
+      expect(err).toBeDefined()
+      const msg = String((err!.value as Record<string, unknown>).message)
+      expect(msg.toLowerCase()).toContain('unexpected')
+      expect(msg.toLowerCase()).not.toContain('context window')
+      // Not scored/persisted.
+      expect(
+        parts.find((p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'),
+      ).toBeUndefined()
+    })
+
+    it('a normal finish with output is NOT misclassified (control: scores and persists)', async () => {
+      stopReasonState.value = 'end_turn'
+      // default streamText impl: finishReason 'stop', non-empty output
+      const res = await handler(
+        makeReq({ patientId: 'p1', query: 'q', mode: 'stuff', record: 'r' }) as never,
+      )
+      const parts = parseDataStreamParts(await res.text())
+      expect(dataError(parts)).toBeUndefined()
+      expect(
+        parts.find((p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'),
+      ).toBeDefined()
+    })
+
+    it('retrieve mode 5a: first retrieved section alone exceeds budget → named error end-to-end, never advises retrieve', async () => {
+      // End-to-end exercise of the 5a precondition (distinct from the pure
+      // fitChunksToBudget unit test): retrieval returns one section too large to
+      // fit even alone, so inBudgetCount === 0 with retrievedCount > 0.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rag = (await import('../lib/rag/index')) as any
+      rag.retrieve.mockResolvedValueOnce({
+        chunks: [
+          { section: 'huge', text: 'x'.repeat(60_000), distance: 0.1, similarity: 0.9 },
+        ],
+        sql: 'SELECT ...',
+        summary: 'retrieved 1 of 10 sections',
+      })
+
+      const res = await handler(
+        makeReq({ patientId: 'Agustin437 Hills818', query: 'meds?', mode: 'retrieve', k: 6 }) as never,
+      )
+      expect(res.status).toBe(200)
+      const parts = parseDataStreamParts(await res.text())
+      const err = dataError(parts)
+      expect(err).toBeDefined()
+      const msg = String((err!.value as Record<string, unknown>).message)
+      expect(msg).toContain('most relevant retrieved section')
+      expect(msg).toContain('Agustin437 Hills818')
+      // Current mode is retrieve → copy must NOT advise switching to retrieve.
+      expect(msg.toLowerCase()).not.toContain('switch to retrieve')
+      // Generation never ran; nothing scored or persisted.
+      expect(
+        parts.find((p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'trace'),
+      ).toBeUndefined()
     })
   })
 

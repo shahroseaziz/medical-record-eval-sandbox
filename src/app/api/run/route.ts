@@ -16,6 +16,7 @@ import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { resolveJudgeKey } from './judge-key'
+import { makeStopReasonCapture, classifyGenerationOutcome } from './stop-reason'
 import type { RunTrace, RunRequest } from './types'
 
 const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
@@ -173,7 +174,11 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   const judgeClient = new Anthropic({ apiKey: judgeKey })
-  const aiProvider = createAnthropic({ apiKey: generationKey })
+  // Tee the generation provider's raw SSE so we can read the provider's verbatim
+  // stop_reason (model_context_window_exceeded etc.) rather than the SDK's lossy,
+  // version-dependent finishReason mapping. See ./stop-reason.
+  const stopCapture = makeStopReasonCapture()
+  const aiProvider = createAnthropic({ apiKey: generationKey, fetch: stopCapture.fetch })
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
 
   // BYO callers bypass the 12k free-tier ceiling (only the model-context guard
@@ -318,19 +323,32 @@ export async function POST(req: NextRequest): Promise<Response> {
           result.usage,
           result.finishReason,
         ])
+        // Wait for the raw-SSE scan to finish so the provider stop_reason is final.
+        await stopCapture.done
 
         // 8a. HTTP-200 + stop_reason "model_context_window_exceeded" surface
         //     (Claude 4.5+): the request succeeds (no thrown error) but the model
-        //     truncates because the context window was exceeded. The provider
-        //     maps this unrecognised stop_reason to finishReason "unknown" with no
-        //     usable output. Classify it as the same app-fault as the thrown
-        //     surfaces (413) rather than persisting an empty result. Reachable
-        //     only on the BYO/raised-budget path, so spend is the user's key — no
-        //     cap refund applies here.
-        if (finishReason === 'unknown' && output.trim() === '') {
+        //     truncates because the context window was exceeded. We classify off
+        //     the provider's VERBATIM stop_reason (read from the raw SSE), not the
+        //     SDK's "unknown" finishReason proxy — so a run that emitted partial
+        //     output before overflowing is still caught (never scored/persisted as
+        //     complete), other unknown stop_reasons (refusal/pause) are not
+        //     misclassified as context overflow, and a dep bump cannot silently
+        //     break detection. An abnormal finish with no raw stop_reason and no
+        //     usable output falls back to generic copy. Reachable only on the
+        //     BYO/raised-budget path, so spend is the user's key — no cap refund.
+        const outcome = classifyGenerationOutcome({
+          rawStopReason: stopCapture.stopReason(),
+          finishReason: String(finishReason),
+          output,
+        })
+        if (!outcome.ok) {
           dataStream.writeData({
             type: 'error',
-            message: `Request exceeds the model context window. ${overBudgetAdvice(mode)}`,
+            message:
+              outcome.kind === 'context_overflow'
+                ? `Request exceeds the model context window. ${overBudgetAdvice(mode)}`
+                : 'The model stopped unexpectedly without returning a usable answer. Please retry.',
           })
           return
         }

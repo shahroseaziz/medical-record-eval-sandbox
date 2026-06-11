@@ -5,9 +5,13 @@ import {
   estimateTokens,
   estimateInputTokens,
   assertWithinTokenLimit,
+  charsPerToken,
+  denseCharFraction,
   TokenLimitError,
   MAX_INPUT_TOKENS,
   CHARS_PER_TOKEN,
+  CHARS_PER_TOKEN_DENSE,
+  CHARS_PER_TOKEN_PROSE,
   TOKEN_SAFETY_MARGIN,
 } from '../tokens'
 import tokenCounts from '../../../evals/fixtures/token-counts.json'
@@ -86,10 +90,79 @@ describe('estimateInputTokens() fails closed against the reference set', () => {
   }
 })
 
+describe('charsPerToken() / denseCharFraction() (per-input density)', () => {
+  const DENSE = '2024-01-15T08:30:00Z 73211007 |Hypertension| 250604008 http://snomed.info/sct/900'
+  const PROSE = 'The patient was seen in the clinic today and reported feeling generally well.'
+
+  it('classifies code/timestamp-heavy text as dense (uses the dense ratio)', () => {
+    expect(denseCharFraction(DENSE)).toBeGreaterThan(0.25)
+    expect(charsPerToken(DENSE)).toBeCloseTo(CHARS_PER_TOKEN_DENSE, 5)
+  })
+
+  it('classifies natural-language prose as low-density (near the prose ratio)', () => {
+    expect(denseCharFraction(PROSE)).toBeLessThan(0.05)
+    expect(charsPerToken(PROSE)).toBeGreaterThan(CHARS_PER_TOKEN_DENSE)
+    expect(charsPerToken(PROSE)).toBeLessThanOrEqual(CHARS_PER_TOKEN_PROSE)
+  })
+
+  it('clamps within [dense, prose] and is monotone in density', () => {
+    expect(charsPerToken('aaaaaaaa')).toBe(CHARS_PER_TOKEN_PROSE) // 0% dense → prose end
+    expect(charsPerToken('12345678')).toBe(CHARS_PER_TOKEN_DENSE) // 100% dense → dense end
+    expect(charsPerToken('aaaa1234')).toBeLessThan(CHARS_PER_TOKEN_PROSE)
+    expect(charsPerToken('aaaa1234')).toBeGreaterThanOrEqual(CHARS_PER_TOKEN_DENSE)
+  })
+
+  it('CHARS_PER_TOKEN back-compat alias is the dense baseline', () => {
+    expect(CHARS_PER_TOKEN).toBe(CHARS_PER_TOKEN_DENSE)
+  })
+})
+
+describe('prose-density inputs: fail-closed but no gross over-count (SHA-78 reviewer fix)', () => {
+  // Previously the margin assertions only ran on clinical-density fixtures (the
+  // ±15% block filters to ≥100 tokens, which are all dense). These validate the
+  // PROSE side: still never under-counts, but the flat-2.2 ~2x over-count is gone.
+  const proseFixtures = fixtures.filter((f) => denseCharFraction(f.text) < 0.15)
+
+  it('the committed set includes prose-density fixtures', () => {
+    expect(proseFixtures.length).toBeGreaterThan(0)
+  })
+
+  for (const fx of proseFixtures) {
+    it(`never under-counts prose fixture ${fx.id}`, () => {
+      expect(estimateInputTokens(fx.text)).toBeGreaterThanOrEqual(fx.api_input_tokens)
+    })
+  }
+
+  // The adaptive estimator keeps the margined prose estimate within ~1.6x of the
+  // API count, so the 12k ceiling no longer rejects ordinary prose at ~5.7k real
+  // tokens. A flat 2.2 chars/token produced up to ~2.3x here.
+  const PROSE_OVERCOUNT_CEILING = 1.6
+  for (const fx of proseFixtures) {
+    it(`estimate stays within ${PROSE_OVERCOUNT_CEILING}x of the API count for ${fx.id}`, () => {
+      const ratio = estimateInputTokens(fx.text) / fx.api_input_tokens
+      expect(
+        ratio,
+        `${fx.id}: estimate ${estimateInputTokens(fx.text)} vs api ${fx.api_input_tokens}`,
+      ).toBeLessThanOrEqual(PROSE_OVERCOUNT_CEILING)
+    })
+  }
+
+  it('a long English narrative is fail-closed yet not over-rejected (~1.3x, not the old ~2.1x)', () => {
+    const narrative =
+      'The patient was seen in the clinic today and reported feeling generally well overall. '.repeat(60)
+    const realTokensApprox = narrative.length / 4 // English prose ≈ 4 chars/token
+    const estimate = estimateInputTokens(narrative)
+    expect(estimate).toBeGreaterThanOrEqual(Math.ceil(realTokensApprox)) // fail-closed
+    expect(estimate / realTokensApprox).toBeLessThan(1.6) // not the flat-2.2 blow-up
+  })
+})
+
 describe('approxTokens() / estimateTokens()', () => {
-  it('uses CHARS_PER_TOKEN with ceiling division', () => {
-    const text = 'a'.repeat(2200)
-    expect(approxTokens(text)).toBe(Math.ceil(2200 / CHARS_PER_TOKEN))
+  it('uses the per-input chars/token with ceiling division', () => {
+    const prose = 'a'.repeat(2200) // all-alpha → prose ratio
+    expect(approxTokens(prose)).toBe(Math.ceil(2200 / CHARS_PER_TOKEN_PROSE))
+    const dense = '1'.repeat(2200) // all-digit → dense ratio
+    expect(approxTokens(dense)).toBe(Math.ceil(2200 / CHARS_PER_TOKEN_DENSE))
     expect(approxTokens('')).toBe(0)
   })
 
@@ -112,8 +185,9 @@ describe('assertWithinTokenLimit() (synchronous, no API call)', () => {
   })
 
   it('throws TokenLimitError when the estimate exceeds the limit', () => {
-    // ~12k tokens worth of dense text → over MAX_INPUT_TOKENS once margined.
-    const tooLong = 'x'.repeat(MAX_INPUT_TOKENS * CHARS_PER_TOKEN)
+    // Prose-density text (CHARS_PER_TOKEN_PROSE) large enough to clear the ceiling
+    // once margined: ~48k chars → ~13.7k approx → ~15.8k margined > 12k.
+    const tooLong = 'x'.repeat(MAX_INPUT_TOKENS * 4)
     expect(() => assertWithinTokenLimit(tooLong)).toThrow(TokenLimitError)
   })
 
