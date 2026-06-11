@@ -24,6 +24,7 @@ import { scoreRow } from '@/lib/eval/row-aggregate'
 import type { FieldScoreOutcome } from '@/lib/eval/row-aggregate'
 import { scoreStructuredDiff } from '@/lib/eval/scorers/structured-diff'
 import type { ExpectedField, EvalCase, FieldScorerMap } from '@/lib/eval/types'
+import { deriveFieldScorers, scorerChips } from '@/lib/workbench/scorer-assignment'
 import type { Thresholds } from '@/lib/eval/thresholds'
 import { getByoHeaders } from './ApiKeyInput'
 import { Term } from './Term'
@@ -511,9 +512,13 @@ export function GoldenSetBuilder({
       capturedOutput: runOutput,
       capturedGrounding,
       expectedStructured: undefined,
-      // The hand-authored prose reference; faithfulness grades it when present.
+      // The hand-authored prose reference. Scorer assignment is DERIVED from what
+      // was authored (E25): an authored prose reference defaults to reference-judge,
+      // not the old hardcoded faithfulness (pitfall #15786 — a reference that never
+      // reached the scorer). With no expected output, faithfulness grades against
+      // grounding.
       expectedProse,
-      fieldScorers: expectedProse !== undefined ? { prose: 'faithfulness' } : {},
+      fieldScorers: deriveFieldScorers({ expectedProse }),
       intentLabel,
       designedFailReason: intentLabel === 'fail' && failReason ? failReason : undefined,
       provenance: {
@@ -1012,6 +1017,40 @@ export function GoldenSetBuilder({
                         </span>
                       )}
                     </div>
+
+                    {/* Scorer chips — derived per-field assignment (E25). A
+                        non-default (overridden) scorer is marked so authorship
+                        choice stays visible. */}
+                    {(() => {
+                      const chips = scorerChips(uc)
+                      if (chips.length === 0) return null
+                      return (
+                        <div
+                          data-testid={`scorer-chips-${uc.id}`}
+                          style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 4 }}
+                        >
+                          {chips.map((chip) => (
+                            <span
+                              key={chip.field}
+                              data-testid={`scorer-chip-${uc.id}-${chip.field}`}
+                              title={chip.isDefault ? 'derived default' : 'overridden'}
+                              style={{
+                                padding: '1px 6px',
+                                borderRadius: 3,
+                                fontSize: '0.70rem',
+                                fontWeight: 600,
+                                background: '#eef2ff',
+                                border: `1px solid ${chip.isDefault ? '#aab8ff' : '#6a4cff'}`,
+                                color: '#3a3a8a',
+                              }}
+                            >
+                              {chip.fieldLabel}: {chip.scorerLabel}
+                              {chip.isDefault ? '' : ' ✎'}
+                            </span>
+                          ))}
+                        </div>
+                      )
+                    })()}
 
                     {/* Task prompt */}
                     <div style={{ color: '#333', wordBreak: 'break-word' }}>

@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
-import type { RunMode, RunRequest } from '@/app/api/run/types'
+import type { RunMode } from '@/app/api/run/types'
 import { getByoHeaders, getJudgeUsesByo } from '@/components/ApiKeyInput'
+import { buildBenchGenerationRequest } from '@/lib/workbench/firewall'
 import { parseLine } from './useRun'
 
 // ── The live-generation fan-out ──────────────────────────────────────────────
@@ -87,16 +88,20 @@ async function generateOneCase(
   const timeoutId = setTimeout(() => controller.abort(), GEN_TIMEOUT_MS)
 
   try {
-    const body: RunRequest & { generateOnly: boolean } = {
-      patientId: c.patientId,
-      query: c.query,
-      mode: c.mode,
-      record: c.mode === 'stuff' ? c.record : undefined,
-      k: c.mode === 'retrieve' ? c.k : undefined,
-      generationPrompt: generationPrompt || undefined,
-      judgeUsesByo: getJudgeUsesByo(),
-      generateOnly: true,
-    }
+    // Build the POST /api/run body through the E25 firewall chokepoint — answer-key
+    // fields (expectedProse/expectedStructured/fieldScorers) have no path into the
+    // request because only the narrow generation fields are read. This is the single
+    // surface every bench regeneration routes through.
+    const body = buildBenchGenerationRequest(
+      { patientId: c.patientId, query: c.query, mode: c.mode },
+      {
+        record: c.mode === 'stuff' ? c.record : undefined,
+        k: c.mode === 'retrieve' ? c.k : undefined,
+        generationPrompt: generationPrompt || undefined,
+        judgeUsesByo: getJudgeUsesByo(),
+        generateOnly: true,
+      },
+    )
 
     const res = await fetch('/api/run', {
       method: 'POST',

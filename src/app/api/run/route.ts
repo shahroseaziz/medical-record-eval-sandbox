@@ -8,6 +8,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import Anthropic from '@anthropic-ai/sdk'
 import { retrieve, fitChunksToBudget } from '@/lib/rag/index'
 import type { RetrievedChunk } from '@/lib/rag/index'
+import { buildPrompt, buildGroundingContext } from '@/lib/run/prompt'
 import { scoreFaithfulness, scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
@@ -17,7 +18,8 @@ import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { resolveJudgeKey } from './judge-key'
 import { makeStopReasonCapture, classifyGenerationOutcome } from './stop-reason'
-import type { RunTrace, RunRequest } from './types'
+import { assembleRunTrace } from './trace'
+import type { RunRequest } from './types'
 
 const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
 const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
@@ -29,33 +31,6 @@ const MODEL_CONTEXT_LIMIT = 190_000
 const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000   // $0.80/1M input tokens
 const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000   // $4.00/1M output tokens
 const EMBED_COST_PER_TOKEN = 0.02 / 1_000_000   // Voyage-3.5 $0.02/1M tokens
-
-function buildGroundingContext(
-  mode: 'retrieve' | 'stuff',
-  chunks: RetrievedChunk[],
-  record?: string
-): string {
-  if (mode === 'retrieve') {
-    if (chunks.length === 0) return '(no retrieved context available)'
-    return chunks.map((c) => `[${c.section}]\n${c.text}`).join('\n\n---\n\n')
-  }
-  return record ?? '(no record provided)'
-}
-
-const DEFAULT_SYSTEM_PROMPT =
-  'You are a medical record analyst. Answer the question based ONLY on the provided medical record context. Do not use outside knowledge or make assumptions beyond what is stated.'
-
-function buildPrompt(
-  query: string,
-  groundingContext: string,
-  generationPrompt?: string,
-): { systemPrompt: string; userTurnPrompt: string; isUserAuthored: boolean } {
-  return {
-    systemPrompt: generationPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    userTurnPrompt: `MEDICAL RECORD CONTEXT:\n${groundingContext}\n\nQUESTION:\n${query}\n\nProvide a thorough, accurate answer based solely on the information in the medical record context above. If the context does not contain sufficient information to answer the question, say so explicitly.`,
-    isUserAuthored: Boolean(generationPrompt),
-  }
-}
 
 // When the caller supplies a custom generation prompt, store a hash+length in the
 // trace rather than the text itself (privacy rule: user-authored prompt text must
@@ -397,44 +372,28 @@ export async function POST(req: NextRequest): Promise<Response> {
           ? redactForTrace(fullAssembledPrompt)
           : fullAssembledPrompt
 
-        const trace: RunTrace = {
+        const trace = assembleRunTrace({
           caseId,
-          ragMode: mode,
-          grounding: groundingContext,
-          generationPromptIsUserAuthored: isUserAuthored,
-          retrieval:
-            mode === 'retrieve'
-              ? {
-                  chunks: chunks.map((c) => ({
-                    section: c.section,
-                    text: c.text,
-                    distance: c.distance,
-                    similarity: c.similarity,
-                  })),
-                  groundingContext,
-                  assembledPrompt: assembledPromptForTrace,
-                  retrievedCount,
-                  inBudgetCount,
-                }
-              : undefined,
+          mode,
+          groundingContext,
+          isUserAuthored,
+          assembledPromptForTrace,
+          chunks,
+          retrievedCount,
+          inBudgetCount,
           sectionHit: sectionHitResult,
+          faithfulness: faithfulnessResult,
           output,
-          scorerResults: faithfulnessResult
-            ? [faithfulnessResult, sectionHitResult]
-            : [sectionHitResult],
           generationModel: model,
           judgeModel,
           embeddingModel: mode === 'retrieve' ? EMBEDDING_MODEL : 'none',
-          inputType: 'query',
           tokens: {
             input: usage.promptTokens,
             output: usage.completionTokens,
             estCostUsd,
           },
-          claimCount: faithfulnessResult ? faithfulnessResult.claims.length : 0,
-          outputLength: output.length,
           judgeUsesByo: judgeKeyIsByo,
-        }
+        })
 
         dataStream.writeData({ type: 'trace', trace } as unknown as JSONValue)
 
