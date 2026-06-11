@@ -29,6 +29,13 @@ describe('EvalScorecard', () => {
     expect(agreement).toHaveTextContent('Designed-label agreement')
   })
 
+  it('links the "in the open source" claim to the real repository (G7 copy-truth)', () => {
+    render(<EvalScorecard aggregate={AGG} cases={CASES} />)
+    const link = screen.getByTestId('scorecard-repo-link')
+    expect(link).toHaveTextContent('in the open source')
+    expect(link).toHaveAttribute('href', expect.stringContaining('github.com/'))
+  })
+
   it('renders the self-preference disclosure (E26)', () => {
     render(<EvalScorecard aggregate={AGG} cases={CASES} />)
     expect(screen.getByTestId('scorecard-self-preference')).toHaveTextContent('Self-preference')

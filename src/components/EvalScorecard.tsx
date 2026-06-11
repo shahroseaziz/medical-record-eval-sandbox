@@ -1,5 +1,7 @@
 'use client'
 
+import { REPO_URL } from '@/lib/site'
+
 export interface ScorecardAggregate {
   passRate: number
   judgeReferenceAgreement: number
@@ -157,8 +159,11 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
         your browser only — nothing is stored server-side or shared between users. Two things
         are deliberately absent: <em>accounts</em> (close the tab and the session ends unless
         you export), and <em>custom scorer code</em> (you author rubrics in plain text, not
-        code). The judge prompts and the seeded case set are both visible in the Inspector and
-        in the open source.
+        code). The judge prompts and the seeded case set are both visible in the Inspector and{' '}
+        <a href={REPO_URL} data-testid="scorecard-repo-link" target="_blank" rel="noreferrer">
+          in the open source
+        </a>
+        .
       </div>
     </section>
   )

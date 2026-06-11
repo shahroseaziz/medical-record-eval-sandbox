@@ -49,7 +49,9 @@ test.describe('landing: persona router at /', () => {
     await page.route('/api/**', async (route) => route.abort())
     await page.goto('/')
 
-    await expect(page.getByText(/synthetic/i)).toBeVisible()
+    // "synthetic" appears in both the lede and the chip — target the chip claim
+    // specifically (strict-mode: getByText(/synthetic/i) matches both).
+    await expect(page.getByText(/Synthetic records only/)).toBeVisible()
     await expect(page.getByText(/no sign-up/i)).toBeVisible()
   })
 
