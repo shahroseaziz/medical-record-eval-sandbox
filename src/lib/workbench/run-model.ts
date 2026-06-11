@@ -214,6 +214,28 @@ export function rotateCompletedRun(set: BenchSet): BenchSet {
   }
 }
 
+// ── G5 user labels (E26) — persist independently of runs ─────────────────────
+//
+// The agreement labels (the user's pass/fail marks on scored outputs) are the
+// user's most durable asset after the authored set itself: they live in
+// `BenchSet.labels`, NOT inside any run, so they survive a baseline-vs-current
+// swap, a regeneration, and a rotation untouched. These transforms thread
+// `runs` through by reference — structurally guaranteeing label writes never
+// perturb the run-slot lifecycle, and rotation/regeneration never drop a label.
+
+/** Set one case's user label. Pure: returns a new set with `runs` untouched. */
+export function setLabel(set: BenchSet, caseId: string, label: 'pass' | 'fail'): BenchSet {
+  return { ...set, labels: { ...set.labels, [caseId]: label }, runs: set.runs }
+}
+
+/** Clear one case's user label. Pure: returns a new set with `runs` untouched. */
+export function unsetLabel(set: BenchSet, caseId: string): BenchSet {
+  if (set.labels[caseId] === undefined) return set
+  const labels = { ...set.labels }
+  delete labels[caseId]
+  return { ...set, labels, runs: set.runs }
+}
+
 // ── Store wrappers (impure: load → transform → persist-immediately) ──────────
 
 /** Find a set in the live store by id (undefined when absent). */
@@ -304,6 +326,57 @@ export function currentOutputs(setId: string): Record<string, BenchRunOutput> {
  */
 export function currentScores(setId: string): Record<string, RowResult> {
   return findSet(setId)?.runs.current?.scores ?? {}
+}
+
+/**
+ * Read a set's user labels (empty when no set). The rehydration source for the
+ * clinician-agreement surface — labels live on the set, not a run, so this is
+ * stable across regenerations and reloads.
+ */
+export function currentLabels(setId: string): Record<string, 'pass' | 'fail'> {
+  return findSet(setId)?.labels ?? {}
+}
+
+/**
+ * Persist one case's user label, writing to localStorage immediately. Creates the
+ * set on first label (a user may label the pre-loaded bench outputs before ever
+ * starting a run of their own), preserving an empty run-slot pair so labels and
+ * runs stay orthogonal. Routes through `saveBenchSet`, so the quota gate applies.
+ * Returns the persisted set.
+ */
+export function persistLabel(setId: string, caseId: string, label: 'pass' | 'fail'): BenchSet {
+  const base: BenchSet = findSet(setId) ?? {
+    id: setId,
+    name: setId,
+    createdAt: 0,
+    cases: [],
+    labels: {},
+    runs: { current: null, previous: null },
+  }
+  const next = setLabel(base, caseId, label)
+  saveBenchSet(next)
+  return next
+}
+
+/**
+ * Clear one case's user label, persisting immediately. No-op (returns the set
+ * unchanged, still persisted) when the set or label is absent. Returns the set.
+ */
+export function clearLabel(setId: string, caseId: string): BenchSet {
+  const set = findSet(setId)
+  if (!set) {
+    return {
+      id: setId,
+      name: setId,
+      createdAt: 0,
+      cases: [],
+      labels: {},
+      runs: { current: null, previous: null },
+    }
+  }
+  const next = unsetLabel(set, caseId)
+  saveBenchSet(next)
+  return next
 }
 
 /**

@@ -22,9 +22,16 @@ describe('EvalScorecard', () => {
     expect(screen.getByTestId('scorecard-pass-rate')).toHaveTextContent('75.0%')
   })
 
-  it('renders judge-reference agreement', () => {
+  it('renders the seeded agreement as "designed-label agreement" (E26), not clinician copy', () => {
     render(<EvalScorecard aggregate={AGG} cases={CASES} />)
-    expect(screen.getByTestId('scorecard-judge-agreement')).toHaveTextContent('100.0%')
+    const agreement = screen.getByTestId('scorecard-judge-agreement')
+    expect(agreement).toHaveTextContent('100.0%')
+    expect(agreement).toHaveTextContent('Designed-label agreement')
+  })
+
+  it('renders the self-preference disclosure (E26)', () => {
+    render(<EvalScorecard aggregate={AGG} cases={CASES} />)
+    expect(screen.getByTestId('scorecard-self-preference')).toHaveTextContent('Self-preference')
   })
 
   it('renders judge-human Cohen kappa', () => {

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { EvaluatorResultsTable } from './EvaluatorResultsTable'
+import { ClinicianAgreement } from './ClinicianAgreement'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { CaseComposer } from './CaseComposer'
 import { RagInspector } from './RagInspector'
@@ -39,6 +40,9 @@ import {
   persistScore,
   currentOutputs,
   currentScores,
+  currentLabels,
+  persistLabel,
+  clearLabel,
   type RunScorerAssignments,
 } from '@/lib/workbench/run-model'
 import { scoreRunCase } from '@/lib/workbench/run-scoring'
@@ -258,9 +262,14 @@ export function Workbench({
   // scores for the surface and is rehydrated on mount so a reload restores both the
   // outputs the user generated AND the scores they ran (resume-scoring, S22).
   const [runScores, setRunScores] = useState<Record<string, RowResult>>({})
+  // The G5 clinician labels (E26) — the user's pass/fail marks on scored outputs,
+  // persisted in BenchSet.labels INDEPENDENTLY of runs. Rehydrated on mount so a
+  // reload (or a baseline-vs-current swap) never discards them.
+  const [userLabels, setUserLabels] = useState<Record<string, 'pass' | 'fail'>>({})
   useEffect(() => {
     setRestoredOutputs(currentOutputs(WORKBENCH_SET_ID))
     setRunScores(currentScores(WORKBENCH_SET_ID))
+    setUserLabels(currentLabels(WORKBENCH_SET_ID))
   }, [])
 
   // A non-fatal note when a persist write is refused (quota). The completed in-memory
@@ -312,6 +321,25 @@ export function Workbench({
 
   function handleIntentLabelChange(caseId: string, label: 'pass' | 'fail') {
     setLabelOverrides((prev) => ({ ...prev, [caseId]: label }))
+  }
+
+  // Mark / clear a clinician label on a scored output (G5). Persists to
+  // BenchSet.labels immediately (independent of runs), then mirrors into state.
+  function handleUserLabel(caseId: string, label: 'pass' | 'fail') {
+    try {
+      const set = persistLabel(WORKBENCH_SET_ID, caseId, label)
+      setUserLabels({ ...set.labels })
+    } catch (err) {
+      setPersistError(err instanceof Error ? err.message : 'Could not save label')
+    }
+  }
+  function handleClearUserLabel(caseId: string) {
+    try {
+      const set = clearLabel(WORKBENCH_SET_ID, caseId)
+      setUserLabels({ ...set.labels })
+    } catch (err) {
+      setPersistError(err instanceof Error ? err.message : 'Could not clear label')
+    }
   }
 
   // Stuff mode: the committed grounding IS the record, so the live run grounds on
@@ -978,6 +1006,20 @@ export function Workbench({
             onIntentLabelChange={handleIntentLabelChange}
           />
         )}
+          </section>
+
+          {/* ── Clinician seat (G5 / E26) — the user labels scored outputs and the
+               agreement metric reports how often the judge agrees. Distinct from the
+               designed intent labels above: these are the clinician's own verdicts,
+               persisted in BenchSet.labels independently of runs. ──────────────── */}
+          <section className={styles.resultsSection}>
+            <ClinicianAgreement
+              results={results}
+              labels={userLabels}
+              threshold={evaluatorThreshold}
+              onLabel={handleUserLabel}
+              onClearLabel={handleClearUserLabel}
+            />
           </section>
         </>
       )}

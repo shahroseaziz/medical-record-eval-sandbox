@@ -189,6 +189,79 @@ export function computeUserAgreement(
   return { agreement: agreeCount / n, n, nExcluded, agreeCount }
 }
 
+// ── User-label agreement (the G5 "judge agrees with the clinician" metric, E26) ─
+
+/**
+ * The user-path agreement metric (E26 / design G5). DISTINCT from
+ * `computeUserAgreement` above: that one reads each case's authored `intentLabel`
+ * (the designed pass/fail baked into the golden set). THIS one reads the user's
+ * own pass/fail labels — a separate artifact the clinician marks on *scored
+ * outputs* at disagreement review, persisted independently of runs in
+ * `BenchSet.labels`. Only labeled cases enter the metric, so it answers "where the
+ * judge and the clinician's own verdicts disagree", not "where the judge disagrees
+ * with the case's design".
+ *
+ * - `populated` is false until the user has labeled ≥1 output. An unpopulated
+ *   metric NEVER renders as a vacuous 100% (adversarial-review amendment): the
+ *   surface shows the "label an output to populate this" empty state instead.
+ * - Inclusion rules mirror `computeUserAgreement`: zero-claim / non-scoreable
+ *   labeled cases are EXCLUDED from the denominator (E11, faithfulness path);
+ *   designed-fail labels ('fail') are RETAINED. Scorer-agnostic via `caseVerdict`.
+ * - `disagreers` lists the labeled cases whose judge verdict ≠ the user's label,
+ *   so the disagreeing cases are "one click away".
+ *
+ * Still NOT chance-corrected: κ is never labeled on the user path (E21/E26) — at
+ * user N the statistic is unstable, so directional agreement is reported.
+ */
+export interface LabelAgreementResult {
+  /** False until ≥1 user label exists — drives the "unpopulated" empty state. */
+  populated: boolean
+  /** Fraction of labeled, scoreable cases where the judge verdict matches the user label; null when none scoreable. */
+  agreement: number | null
+  /** Labeled cases in the denominator (zero-claim excluded, designed-fail retained). */
+  n: number
+  /** Labeled cases excluded (nothing scoreable). */
+  nExcluded: number
+  /** Raw agreeing count. */
+  agreeCount: number
+  /** Case ids where the judge verdict disagrees with the user's label (one click away). */
+  disagreers: string[]
+}
+
+export function computeLabelAgreement(
+  cases: UserRunCaseResult[],
+  labels: Record<string, 'pass' | 'fail'>,
+  threshold: number,
+): LabelAgreementResult {
+  // Only cases the user has actually labeled enter the metric.
+  const labeled = cases.filter((c) => labels[c.caseId] !== undefined)
+  if (labeled.length === 0) {
+    return { populated: false, agreement: null, n: 0, nExcluded: 0, agreeCount: 0, disagreers: [] }
+  }
+
+  const eligible = labeled.filter((c) => !caseExcluded(c) && caseScore(c) !== null)
+  const n = eligible.length
+  const nExcluded = labeled.length - n
+
+  const disagreers: string[] = []
+  let agreeCount = 0
+  for (const c of eligible) {
+    const verdict = caseVerdict(c, threshold)
+    if (verdict === null) continue
+    if (verdict === labels[c.caseId]) agreeCount++
+    else disagreers.push(c.caseId)
+  }
+
+  return {
+    populated: true,
+    agreement: n === 0 ? null : agreeCount / n,
+    n,
+    nExcluded,
+    agreeCount,
+    disagreers,
+  }
+}
+
 export interface StoredEvalRun {
   timestamp: number
   threshold: number
