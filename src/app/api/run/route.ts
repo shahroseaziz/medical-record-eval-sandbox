@@ -28,8 +28,8 @@ const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
 const MODEL_CONTEXT_LIMIT = 190_000
 
 // Approximate pricing (USD per token)
-const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000   // $0.80/1M input tokens
-const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000   // $4.00/1M output tokens
+// Anthropic-leg rates + cache multipliers live in lib/run/cost (O6b: single µ$ source).
+import { estimateGenCostUsd } from '@/lib/run/cost'
 const EMBED_COST_PER_TOKEN = 0.02 / 1_000_000   // Voyage-3.5 $0.02/1M tokens
 
 // When the caller supplies a custom generation prompt, store a hash+length in the
@@ -427,11 +427,12 @@ export async function POST(req: NextRequest): Promise<Response> {
         // the freshly-processed input is counted there), so add the cache legs at
         // their own multipliers for a faithful cost estimate.
         const estCostUsd =
-          usage.promptTokens * INPUT_COST_PER_TOKEN +
-          usage.completionTokens * OUTPUT_COST_PER_TOKEN +
-          cacheReadTokens * INPUT_COST_PER_TOKEN * 0.1 +
-          cacheWriteTokens * INPUT_COST_PER_TOKEN * 1.25 +
-          embeddingTokens * EMBED_COST_PER_TOKEN
+          estimateGenCostUsd({
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+          }) + embeddingTokens * EMBED_COST_PER_TOKEN
 
         const assembledPromptForTrace = isUserAuthored
           ? redactForTrace(fullAssembledPrompt)

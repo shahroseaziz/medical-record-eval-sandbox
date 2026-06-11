@@ -703,3 +703,19 @@
     margin-left: 0;
   }
 }
+
+/* O6b — selective fan-out */
+.caseRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+}
+.caseCheck {
+  accent-color: var(--color-accent, var(--accent));
+  flex: 0 0 auto;
+}
+.costPreview {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--color-text-muted, var(--text-muted));
+  margin-left: var(--space-2, 0.5rem);
+}

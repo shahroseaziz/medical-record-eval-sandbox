@@ -46,6 +46,7 @@ import {
   type RunScorerAssignments,
 } from '@/lib/workbench/run-model'
 import { scoreRunCase } from '@/lib/workbench/run-scoring'
+import { meteredCallsForCase, deterministicFirst, scoreSelectionSummary } from '@/lib/workbench/fanout'
 import { computeRunDelta, deltaAnnotation, floorCaveat } from '@/lib/workbench/delta'
 import styles from './Workbench.module.css'
 
@@ -231,6 +232,19 @@ export function Workbench({
     initialLabelOverrides ?? {},
   )
   const [selectedCaseId, setSelectedCaseId] = useState<string>(cases[0]?.caseId ?? '')
+  // O6b/S23: per-case selection for Generate/Score — no all-or-nothing fan-outs.
+  // All checked by default (the pre-O6b behavior is the all-selected special case).
+  const [checkedCaseIds, setCheckedCaseIds] = useState<ReadonlySet<string>>(
+    () => new Set(cases.map((c) => c.caseId)),
+  )
+  function toggleChecked(caseId: string) {
+    setCheckedCaseIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) next.delete(caseId)
+      else next.add(caseId)
+      return next
+    })
+  }
   const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_GENERATION_PROMPT)
 
   // Land on the pipeline; "open the bench" expands to the panels (R16).
@@ -366,7 +380,8 @@ export function Workbench({
   )
 
   function toGenerationCases(): GenerationCase[] {
-    return cases.map((c) => ({
+    // Selected cases only (O6b) — generation books exactly what was checked.
+    return cases.filter((c) => checkedCaseIds.has(c.caseId)).map((c) => ({
       id: c.caseId,
       patientId: c.caseId,
       query: c.taskPrompt,
@@ -416,7 +431,7 @@ export function Workbench({
   }
 
   function regenerate() {
-    if (gen.running || scoring) return
+    if (gen.running || scoring || checkedCaseIds.size === 0) return
     setPersistError(null)
     setScoreError(null)
     // Open a fresh run. startRun's rotation gate (S22) promotes a FULLY-scored prior
@@ -451,16 +466,30 @@ export function Workbench({
   // resume-scoring). Already-scored cases are skipped — a second pass resumes the
   // ones a rate-limit left unscored. A completed pass leaves current fully scored, so
   // the NEXT regenerate rotates it into the baseline.
+  // O6b/D9: pre-commit cost preview for the Score action, from the runtime rates.
+  const scoreSummary = scoreSelectionSummary(
+    toBenchCases(),
+    checkedCaseIds,
+    (c) => caseRecords.get(c.id) ?? '',
+  )
+
   async function scoreRun() {
     if (scoring || gen.running) return
     const set = getBenchSet(WORKBENCH_SET_ID)
     const run = set?.runs.current
     if (!set || !run) return
 
-    const entries = Object.entries(run.outputs)
-    if (entries.length === 0) return
-
     const caseById = new Map(set.cases.map((c) => [c.id, c]))
+    // O6b: score only checked cases; free/deterministic cases first (E29c) so
+    // instant results render before any metered judge call books.
+    const entries = deterministicFirst(
+      Object.entries(run.outputs).filter(([caseId]) => checkedCaseIds.has(caseId)),
+      ([caseId]) => {
+        const c = caseById.get(caseId)
+        return c ? meteredCallsForCase(c) : 0
+      },
+    )
+    if (entries.length === 0) return
     setScoring(true)
     setScoreError(null)
     setScoreRateLimited(false)
@@ -661,7 +690,7 @@ export function Workbench({
                 onClick={regenerate}
                 disabled={gen.running}
               >
-                {gen.running ? 'Regenerating…' : `Regenerate all (${cases.length})`}
+                {gen.running ? 'Regenerating…' : `Generate selected (${checkedCaseIds.size})`}
               </button>
               {gen.running && (
                 <button
@@ -697,8 +726,13 @@ export function Workbench({
                   ? 'Scoring…'
                   : scoreRateLimited
                     ? `Resume scoring (${scoredCount}/${scoreTotal})`
-                    : `Score outputs (${generatedCount})`}
+                    : `Score selected (${scoreSummary.k} · ~${scoreSummary.meteredCalls} metered calls)`}
               </button>
+              {scoreSummary.meteredCalls > 0 && (
+                <span className={styles.costPreview} data-testid="cost-preview">
+                  est. ~${scoreSummary.estUsd.toFixed(4)} before booking — free scorers run first
+                </span>
+              )}
             </div>
 
             {(scoring || scoredCount > 0) && scoreTotal > 0 && (
@@ -833,7 +867,15 @@ export function Workbench({
 
             <ul className={styles.caseList}>
               {cases.map((c) => (
-                <li key={c.caseId}>
+                <li key={c.caseId} className={styles.caseRow}>
+                  <input
+                    type="checkbox"
+                    data-testid={`case-check-${c.caseId}`}
+                    aria-label={`Include ${c.caseId} in generate/score`}
+                    className={styles.caseCheck}
+                    checked={checkedCaseIds.has(c.caseId)}
+                    onChange={() => toggleChecked(c.caseId)}
+                  />
                   <button
                     type="button"
                     data-testid={`case-select-${c.caseId}`}
