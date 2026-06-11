@@ -1,0 +1,362 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5, 1.5rem);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3, 0.75rem);
+  padding: var(--s4, 1rem);
+  border: 1px solid var(--line, #e5e3ec);
+  border-radius: var(--r-md, 10px);
+  background: var(--surface, #fff);
+}
+
+.stepHeader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3, 0.75rem);
+  flex-wrap: wrap;
+}
+
+.stepEyebrow {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent, #6b4ff5);
+  font-weight: 600;
+}
+
+.stepHint {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--ink-3, #6b6878);
+}
+
+/* ── Picker ─────────────────────────────────────────────────────────────── */
+.pickerControls {
+  display: flex;
+  align-items: center;
+  gap: var(--s2, 0.5rem);
+}
+
+.nLabel {
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--ink-2, #2f2c3d);
+  font-weight: 600;
+}
+
+.nInput {
+  width: 56px;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line-2, #cfccda);
+  border-radius: var(--r-sm, 6px);
+  font: inherit;
+}
+
+.primaryBtn {
+  cursor: pointer;
+  padding: 0.45rem 0.9rem;
+  border: none;
+  border-radius: var(--r-md, 8px);
+  background: var(--accent, #6b4ff5);
+  color: #fff;
+  font-weight: 600;
+  font-size: var(--text-sm, 0.875rem);
+}
+.primaryBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sectionChips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2, 0.4rem);
+}
+
+.chipsLabel {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--ink-3, #6b6878);
+}
+
+.chip {
+  cursor: pointer;
+  padding: 2px 9px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--line-2, #cfccda);
+  background: var(--surface, #fff);
+  color: var(--ink-2, #2f2c3d);
+  font-size: var(--text-xs, 0.75rem);
+}
+.chipActive {
+  background: var(--accent-soft, #efeaff);
+  border-color: var(--accent, #6b4ff5);
+  color: var(--accent-ink, #432fb0);
+  font-weight: 600;
+}
+
+.errorNote {
+  color: var(--fail-ink, #b4232a);
+  font-size: var(--text-sm, 0.85rem);
+}
+.warnNote {
+  color: var(--partial-ink, #8a5a00);
+  font-size: var(--text-sm, 0.85rem);
+}
+
+.patientGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--s3, 0.75rem);
+}
+
+.patientCard {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line-2, #cfccda);
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, #fff);
+}
+.patientCardActive {
+  border-color: var(--accent, #6b4ff5);
+  background: var(--accent-soft, #efeaff);
+}
+
+.patientName {
+  font-weight: 600;
+  font-size: var(--text-sm, 0.9rem);
+  color: var(--ink, #1d1a2b);
+}
+.patientMeta {
+  font-size: var(--text-xs, 0.72rem);
+  color: var(--ink-3, #6b6878);
+  font-family: var(--font-mono, monospace);
+}
+.patientSections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+.miniChip {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: var(--r-sm, 4px);
+  background: var(--surface-3, #f2f0f7);
+  color: var(--ink-3, #6b6878);
+}
+
+/* ── Record view ────────────────────────────────────────────────────────── */
+.recordHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3, 0.75rem);
+}
+.recordName {
+  font-size: var(--text-base, 1rem);
+  color: var(--ink, #1d1a2b);
+}
+.recordDob {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--ink-3, #6b6878);
+}
+.recordBody {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface-2, #faf9fd);
+  border: 1px solid var(--line, #e5e3ec);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--ink-2, #2f2c3d);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Query / prose ──────────────────────────────────────────────────────── */
+.queryInput {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line-2, #cfccda);
+  border-radius: var(--r-sm, 6px);
+  font: inherit;
+  font-size: var(--text-sm, 0.875rem);
+  resize: vertical;
+}
+
+/* ── Expected segmented ─────────────────────────────────────────────────── */
+.segmented {
+  display: inline-flex;
+  background: var(--surface-3, #f2f0f7);
+  border-radius: var(--r-pill, 999px);
+  padding: 3px;
+  gap: 2px;
+  width: fit-content;
+}
+.segment {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--r-pill, 999px);
+  padding: 5px 13px;
+  font-size: var(--text-xs, 0.78rem);
+  font-weight: 600;
+  background: transparent;
+  color: var(--ink-3, #6b6878);
+}
+.segmentActive {
+  background: var(--surface, #fff);
+  color: var(--accent-ink, #432fb0);
+  box-shadow: var(--sh-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+
+.absenceHint {
+  font-size: var(--text-sm, 0.82rem);
+  line-height: 1.5;
+  color: var(--ink-2, #2f2c3d);
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-sm, 6px);
+  background: var(--spot-soft, #eef4ff);
+  border: 1px solid var(--spot-line, #cfe0ff);
+}
+
+/* ── Field builder ──────────────────────────────────────────────────────── */
+.fieldBuilder {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.fbHeaderRow,
+.fbRow {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 28px;
+  gap: 6px;
+  align-items: center;
+}
+.fbColHead {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-3, #6b6878);
+}
+.fbReq {
+  color: var(--fail-ink, #b4232a);
+}
+.fbInput {
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line-2, #cfccda);
+  border-radius: var(--r-sm, 5px);
+  font: inherit;
+  font-size: var(--text-xs, 0.8rem);
+}
+.fbRowIncomplete .fbInput {
+  border-color: var(--fail-line, #f0b7ba);
+  background: var(--fail-soft, #fdf1f1);
+}
+.fbRemove {
+  cursor: pointer;
+  border: 1px solid var(--line-2, #cfccda);
+  background: var(--surface, #fff);
+  border-radius: var(--r-sm, 5px);
+  color: var(--ink-3, #6b6878);
+  height: 28px;
+}
+.fbAddRow {
+  cursor: pointer;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0.3rem 0.7rem;
+  border: 1px dashed var(--line-2, #cfccda);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface, #fff);
+  color: var(--accent-ink, #432fb0);
+  font-size: var(--text-xs, 0.78rem);
+  font-weight: 600;
+}
+.fbEmpty,
+.fbHint {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--ink-3, #6b6878);
+}
+.fbHint {
+  color: var(--fail-ink, #b4232a);
+}
+
+/* ── Derived scorer chip ────────────────────────────────────────────────── */
+.scorerRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3, 0.6rem);
+  margin-top: var(--s1, 0.25rem);
+}
+.scorerChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--accent-soft, #efeaff);
+  border: 1px solid var(--accent-line, #d8cffb);
+  font-size: var(--text-xs, 0.75rem);
+}
+.scorerField {
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: var(--ink, #1d1a2b);
+}
+.scorerDot {
+  color: var(--ink-4, #9a96a8);
+}
+.scorerName {
+  color: var(--accent-ink, #432fb0);
+  font-weight: 600;
+}
+.scorerDerivedNote {
+  font-size: var(--text-xs, 0.72rem);
+  color: var(--ink-3, #6b6878);
+  font-style: italic;
+}
+.overrideLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--ink-3, #6b6878);
+}
+.overrideSelect {
+  font: inherit;
+  font-size: var(--text-xs, 0.78rem);
+  padding: 2px 4px;
+  border: 1px solid var(--line-2, #cfccda);
+  border-radius: var(--r-sm, 5px);
+}
+
+/* ── Add ────────────────────────────────────────────────────────────────── */
+.addRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3, 0.75rem);
+}
+.addHint {
+  font-size: var(--text-xs, 0.78rem);
+  color: var(--ink-3, #6b6878);
+}
+.savedNote {
+  font-size: var(--text-sm, 0.82rem);
+  color: var(--pass-ink, #1c7a3d);
+  font-weight: 600;
+}

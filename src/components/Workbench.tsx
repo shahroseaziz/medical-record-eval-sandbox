@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { EvaluatorResultsTable } from './EvaluatorResultsTable'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
+import { CaseComposer } from './CaseComposer'
 import { Term } from './Term'
 import { useGenerationRun, type GenerationCase } from '@/hooks/useGenerationRun'
 import { computeUserAgreement } from '@/lib/eval/user-agreement'
@@ -199,6 +200,13 @@ export function Workbench({
 
   // Land on the pipeline; "open the bench" expands to the panels (R16).
   const [view, setView] = useState<BenchView>('pipeline')
+
+  // The add-case composer (S24) lives in the cases atom — toggled open, it walks
+  // the author through the guarded picker → record → query → expected → derived
+  // chips flow and persists into the "My cases" BenchSet (O2 store). The count of
+  // authored cases is surfaced so the add lands as a visible consequence.
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [authoredCount, setAuthoredCount] = useState(0)
 
   // The live generation fan-out (R1). Editing the prompt and regenerating re-runs
   // generation over every case — the keystone the prototype faked.
@@ -462,12 +470,31 @@ export function Workbench({
               <Icon name="target" size={12} />
             </span>
             <span className={styles.atomEyebrow}>atom 2 · cases</span>
-            <span className={styles.atomHeaderCount}>{cases.length} selected</span>
+            <span className={styles.atomHeaderCount}>
+              {cases.length} selected
+              {authoredCount > 0 ? ` · ${authoredCount} authored` : ''}
+            </span>
           </header>
           <div className={styles.atomBody}>
             <p className={styles.panelHint}>
               Pre-loaded from the lesson&apos;s last state. Select one to inspect its record.
             </p>
+
+            {/* Add-case flow (S24) — the composer in the cases atom. */}
+            <button
+              type="button"
+              data-testid="add-case-toggle"
+              aria-expanded={composerOpen}
+              className={styles.ghostBtn}
+              onClick={() => setComposerOpen((v) => !v)}
+            >
+              {composerOpen ? 'Close composer' : '+ Add case'}
+            </button>
+            {composerOpen && (
+              <div className={styles.composerMount} data-testid="composer-mount">
+                <CaseComposer onAdded={(set) => setAuthoredCount(set.cases.length)} />
+              </div>
+            )}
             <ul className={styles.caseList}>
               {cases.map((c) => (
                 <li key={c.caseId}>

@@ -639,7 +639,7 @@ function validateFieldScorers(v: unknown, field: string): Record<string, BenchFi
   return out
 }
 
-function validateBenchCase(v: unknown, field: string): BenchCaseV4 {
+export function validateBenchCase(v: unknown, field: string): BenchCaseV4 {
   if (!isPlainObject(v))
     throw new BenchSetValidationError(field, `expected object, got ${describe(v)}`)
   if (v.version !== 4)
