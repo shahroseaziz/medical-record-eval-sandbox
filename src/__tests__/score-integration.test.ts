@@ -421,9 +421,9 @@ describe('/api/score integration (mocked Claude)', () => {
     })
 
     it('returns 413 when combined input exceeds the token limit', async () => {
-      // 50 000 chars ÷ 4 ≈ 12 500 tokens > MAX_INPUT_TOKENS (12 000).
-      // The countTokens API is not mocked, so countInputTokens falls back to
-      // char/4 estimation — still sufficient to trip the guard.
+      // 50 000 chars is well over MAX_INPUT_TOKENS once run through the local
+      // approximation + safety margin (SHA-78 — no countTokens API call), so the
+      // synchronous guard trips and the route returns 413.
       const largeGrounding = 'x'.repeat(50_000)
 
       const res = await handler(makeReq({

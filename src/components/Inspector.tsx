@@ -36,7 +36,16 @@ export function Inspector({ trace, baselineEntry }: InspectorProps) {
             data-testid="chunks-summary"
             style={{ fontWeight: 600, marginBottom: '0.4rem' }}
           >
-            retrieved {sectionHit.retrievedSections.length} of {total} sections
+            {typeof retrieval.retrievedCount === 'number' &&
+            typeof retrieval.inBudgetCount === 'number' &&
+            retrieval.retrievedCount !== retrieval.inBudgetCount ? (
+              // SHA-75: token-budget trimming dropped some retrieved chunks.
+              <>
+                {retrieval.retrievedCount} retrieved · {retrieval.inBudgetCount} fit budget
+              </>
+            ) : (
+              <>retrieved {sectionHit.retrievedSections.length} of {total} sections</>
+            )}
           </div>
 
           <ul style={{ paddingLeft: 16, margin: 0 }}>

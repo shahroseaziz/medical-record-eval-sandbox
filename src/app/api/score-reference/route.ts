@@ -184,7 +184,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     // blows the real token cap regardless of spend-cap status. The combined
     // string mirrors what the prompt embeds (expected + actual + criteria).
     const combinedInput = [parsedReq.actual, parsedReq.expected, parsedReq.criteria ?? ''].join('\n')
-    await assertWithinTokenLimit(combinedInput, judgeClient)
+    assertWithinTokenLimit(combinedInput)
 
     result = await abortable(
       scoreReferenceJudge(parsedReq.actual, parsedReq.expected, judgeClient, {
