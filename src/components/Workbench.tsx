@@ -24,19 +24,24 @@ import {
 import type { Thresholds } from '@/lib/eval/thresholds'
 import {
   genPromptHash,
+  getBenchSet,
   type BenchCaseV4,
   type BenchFieldScorer,
   type BenchRunOutput,
 } from '@/lib/cases'
+import type { RowResult } from '@/lib/eval/row-aggregate'
 import {
   WORKBENCH_SET_ID,
   WORKBENCH_SET_NAME,
   hashRubric,
   startRun,
   persistOutput,
+  persistScore,
   currentOutputs,
+  currentScores,
   type RunScorerAssignments,
 } from '@/lib/workbench/run-model'
+import { scoreRunCase } from '@/lib/workbench/run-scoring'
 import styles from './Workbench.module.css'
 
 // The active evaluator's field→scorer assignment, snapshotted into every run's
@@ -248,13 +253,29 @@ export function Workbench({
   // stream takes precedence; this is the fallback the inspector reads after a reload
   // before anything is regenerated again.
   const [restoredOutputs, setRestoredOutputs] = useState<Record<string, BenchRunOutput>>({})
+  // Fresh per-case row scores for the CURRENT run (O7b). Scoring consumes
+  // runs.current.outputs and writes runs.current.scores; this mirrors the persisted
+  // scores for the surface and is rehydrated on mount so a reload restores both the
+  // outputs the user generated AND the scores they ran (resume-scoring, S22).
+  const [runScores, setRunScores] = useState<Record<string, RowResult>>({})
   useEffect(() => {
     setRestoredOutputs(currentOutputs(WORKBENCH_SET_ID))
+    setRunScores(currentScores(WORKBENCH_SET_ID))
   }, [])
 
   // A non-fatal note when a persist write is refused (quota). The completed in-memory
   // outputs are retained either way (S22) — the full quota-export prompt is O6.
   const [persistError, setPersistError] = useState<string | null>(null)
+
+  // Scoring-pass state (O7b). `scoring` guards re-entry; `scoredCount`/`scoreTotal`
+  // drive the progress line; `scoreRateLimited` offers resume; `scoreError` is a
+  // non-fatal note. Scoring runs over the PERSISTED run (runs.current.outputs), so a
+  // surviving (reloaded) set can be scored with no in-session generation.
+  const [scoring, setScoring] = useState(false)
+  const [scoredCount, setScoredCount] = useState(0)
+  const [scoreTotal, setScoreTotal] = useState(0)
+  const [scoreRateLimited, setScoreRateLimited] = useState(false)
+  const [scoreError, setScoreError] = useState<string | null>(null)
 
   // Results recompute synchronously whenever the evaluator, rubric, or labels
   // change — that is "changing any knob re-runs" for the deterministic knobs.
@@ -354,10 +375,14 @@ export function Workbench({
   }
 
   function regenerate() {
-    if (gen.running) return
+    if (gen.running || scoring) return
     setPersistError(null)
-    // Open a fresh run: stamps the E27 fingerprint and — critically — leaves
-    // runs.previous (the last scored baseline) untouched (S22 baseline preservation).
+    setScoreError(null)
+    // Open a fresh run. startRun's rotation gate (S22) promotes a FULLY-scored prior
+    // run into runs.previous (the new baseline) before dropping current; a partial /
+    // unscored prior run does not rotate. Either way runs.previous (the last scored
+    // baseline) is preserved. The fresh current has no scores yet, so clear the
+    // surface scores — the new outputs must be re-scored (no display-only carry-over).
     try {
       startRun(WORKBENCH_SET_ID, {
         name: WORKBENCH_SET_NAME,
@@ -368,11 +393,68 @@ export function Workbench({
         timestamp: Date.now(),
       })
       setRestoredOutputs({})
+      setRunScores({})
+      setScoredCount(0)
+      setScoreTotal(0)
+      setScoreRateLimited(false)
     } catch (err) {
       setPersistError(err instanceof Error ? err.message : 'Could not start run')
       return
     }
     gen.run(toGenerationCases(), generationPrompt, { onCaseDone: persistGeneratedOutput })
+  }
+
+  // Score the CURRENT run (O7b). Consumes runs.current.outputs (the freshly
+  // regenerated text + its captured grounding) and writes runs.current.scores. Reads
+  // the PERSISTED run, so it scores the surviving outputs after a reload too (S22
+  // resume-scoring). Already-scored cases are skipped — a second pass resumes the
+  // ones a rate-limit left unscored. A completed pass leaves current fully scored, so
+  // the NEXT regenerate rotates it into the baseline.
+  async function scoreRun() {
+    if (scoring || gen.running) return
+    const set = getBenchSet(WORKBENCH_SET_ID)
+    const run = set?.runs.current
+    if (!set || !run) return
+
+    const entries = Object.entries(run.outputs)
+    if (entries.length === 0) return
+
+    const caseById = new Map(set.cases.map((c) => [c.id, c]))
+    setScoring(true)
+    setScoreError(null)
+    setScoreRateLimited(false)
+    setScoreTotal(entries.length)
+    let done = Object.keys(run.scores).length
+    setScoredCount(done)
+
+    try {
+      for (const [caseId, output] of entries) {
+        // Resume: a case already scored in this (surviving) run is not re-scored.
+        if (run.scores[caseId]) continue
+        const benchCase = caseById.get(caseId)
+        if (!benchCase) continue
+
+        const { row, rateLimited } = await scoreRunCase(benchCase, output, thresholds)
+        if (rateLimited) {
+          // Throttled — stop with progress preserved; the surviving outputs resume later.
+          setScoreRateLimited(true)
+          break
+        }
+        if (!row) continue
+
+        try {
+          persistScore(WORKBENCH_SET_ID, caseId, row)
+        } catch (err) {
+          setScoreError(err instanceof Error ? err.message : 'Could not save score')
+          break
+        }
+        done++
+        setRunScores((prev) => ({ ...prev, [caseId]: row }))
+        setScoredCount(done)
+      }
+    } finally {
+      setScoring(false)
+    }
   }
 
   function resumeRegenerate() {
@@ -381,6 +463,10 @@ export function Workbench({
     // which would wipe current.outputs. Already-done cases are skipped by the hook.
     gen.resume(toGenerationCases(), generationPrompt, { onCaseDone: persistGeneratedOutput })
   }
+
+  // Outputs available to score = the persisted run's outputs, mirrored into
+  // restoredOutputs as each lands (and rehydrated on mount). Drives the Score CTA.
+  const generatedCount = Object.keys(restoredOutputs).length
 
   const activeMeta = EVALUATOR_META[evaluator]
   const fieldScorers = FIELD_SCORERS[evaluator]
@@ -556,7 +642,42 @@ export function Workbench({
                   Resume ({gen.completed}/{gen.total})
                 </button>
               )}
+              {/* Score the regenerated run (O7b) — grades runs.current.outputs, not a
+                  frozen capture. Available whenever there are outputs to score
+                  (including a run rehydrated after a reload). */}
+              <button
+                type="button"
+                data-testid="score-run-btn"
+                className={styles.primaryBtn}
+                onClick={scoreRun}
+                disabled={gen.running || scoring || generatedCount === 0}
+              >
+                {scoring
+                  ? 'Scoring…'
+                  : scoreRateLimited
+                    ? `Resume scoring (${scoredCount}/${scoreTotal})`
+                    : `Score outputs (${generatedCount})`}
+              </button>
             </div>
+
+            {(scoring || scoredCount > 0) && scoreTotal > 0 && (
+              <div className={styles.progress} data-testid="score-progress">
+                Scored {scoredCount} / {scoreTotal}
+                {scoring ? ' (in progress…)' : ''}
+              </div>
+            )}
+            {scoreRateLimited && !scoring && (
+              <div className={styles.staleNote} data-testid="score-rate-limit-banner">
+                Rate-limited — {scoredCount} of {scoreTotal} scored. Resume scoring when the
+                window resets.
+              </div>
+            )}
+            {scoreError && (
+              <div className={styles.staleNote} data-testid="score-error">
+                Couldn&apos;t save scores: {scoreError} Completed scores are kept — export to free
+                space.
+              </div>
+            )}
 
             {(gen.running || gen.completed > 0) && gen.total > 0 && (
               <div className={styles.progress} data-testid="regenerate-progress">
@@ -694,6 +815,27 @@ export function Workbench({
                         {r.status === 'error'
                           ? (r.error ?? 'Generation failed')
                           : r.output || (r.status === 'running' ? '…' : '')}
+                      </div>
+                    </div>
+                  )
+                })()}
+                {(() => {
+                  // Fresh score for the selected case (O7b) — read from runs.current.scores
+                  // via runScores. Tied to the regenerated output above (not a frozen
+                  // capture): it clears on regenerate and is recomputed on the next score
+                  // pass, so the surface never shows a stale (display-only) score.
+                  const row = runScores[selectedCase.caseId]
+                  if (!row) return null
+                  const scoreLabel = row.score === null ? 'N/A' : row.score.toFixed(2)
+                  return (
+                    <div
+                      className={styles.regenOutput}
+                      data-testid={`run-score-${selectedCase.caseId}`}
+                      data-score-state={row.state}
+                    >
+                      <strong>Score (this run)</strong>
+                      <div>
+                        {scoreLabel} · {row.state}
                       </div>
                     </div>
                   )
