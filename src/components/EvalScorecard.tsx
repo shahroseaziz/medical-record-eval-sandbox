@@ -47,8 +47,9 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
         <span data-testid="scorecard-pass-rate">
           Pass rate: <strong>{(passRate * 100).toFixed(1)}%</strong>
         </span>
-        <span data-testid="scorecard-judge-agreement">
-          Judge-vs-reference: <strong>{(judgeReferenceAgreement * 100).toFixed(1)}%</strong>
+        <span data-testid="scorecard-judge-agreement" title="Agreement with the author's designed labels — not judge-vs-independent-human. The 'judge agrees with the clinician' framing is reserved for the user path, where you are the labeler.">
+          Designed-label agreement:{' '}
+          <strong>{(judgeReferenceAgreement * 100).toFixed(1)}%</strong>
         </span>
         <span data-testid="scorecard-kappa-judge-human">
           Judge–human agreement: <strong>{fmtKappa(judgeHumanKappa)}</strong>
@@ -117,7 +118,28 @@ export function EvalScorecard({ aggregate, cases }: EvalScorecardProps) {
         <strong>Honesty:</strong> The judge is an LLM — it makes mistakes. The 0.85 pass
         threshold was chosen against this seeded set, not calibrated to your use case. The
         human-label comparison uses a small AI-proxy set (strict Haiku vs. lenient Sonnet),
-        not a clinical panel. Treat these numbers as orientation, not ground truth.
+        not a clinical panel. <strong>Designed-label agreement</strong> above is agreement with
+        the author&apos;s own designed labels, not judge-vs-independent-human — &quot;the judge
+        agrees with the clinician&quot; is reserved for the user path, where you are the labeler.
+        Treat these numbers as orientation, not ground truth.
+      </div>
+
+      <div
+        data-testid="scorecard-self-preference"
+        style={{
+          padding: '0.5rem 0.75rem',
+          background: '#fdf1f1',
+          border: '1px solid #e0a0a0',
+          borderRadius: 4,
+          fontSize: '0.8rem',
+          color: '#7a2a2a',
+          marginBottom: '0.5rem',
+        }}
+      >
+        <strong>Self-preference:</strong> the seeded outputs are generated and judged within the
+        same Haiku model family. A model judging its own family is a documented LLM-judge bias; the
+        fixed-judge design is deliberate, but the caveat is named here so the agreement numbers are
+        read with it in mind.
       </div>
 
       <div
