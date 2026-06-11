@@ -1,5 +1,11 @@
 import type { RunMode } from '@/app/api/run/types'
-import type { FieldScorerMap } from '@/lib/eval/types'
+import type {
+  FieldScorerMap,
+  FieldResult,
+  FieldResultState,
+  ScorerName,
+  ExpectedField,
+} from '@/lib/eval/types'
 import type { RowResult } from '@/lib/eval/row-aggregate'
 
 export interface SeededCase {
@@ -679,6 +685,115 @@ function validateBenchCase(v: unknown, field: string): BenchCaseV4 {
   }
 }
 
+// Scorer / state vocabularies (from @/lib/eval/types) — kept here so a malformed
+// run is rejected with a named error instead of cast straight into the store.
+const SCORER_NAMES = new Set<string>([
+  'contains',
+  'faithfulness',
+  'extraction-completeness',
+  'section-hit',
+  'structured-diff',
+  'reference-judge',
+])
+const FIELD_RESULT_STATES = new Set<string>([
+  'matched',
+  'mismatched',
+  'judge-errored',
+  'rate-limited',
+  'skipped',
+])
+const EXPECTED_FIELDS = new Set<string>(['structured', 'prose'])
+
+// number | null (a scoreable field carries a number; a non-scoreable one null).
+function expectScore(v: unknown, field: string): number | null {
+  if (v === null) return null
+  return expectNumber(v, field)
+}
+
+function expectBoolean(v: unknown, field: string): boolean {
+  if (typeof v !== 'boolean')
+    throw new BenchSetValidationError(field, `expected boolean, got ${describe(v)}`)
+  return v
+}
+
+function expectFieldResultState(v: unknown, field: string): FieldResultState {
+  const s = expectString(v, field)
+  if (!FIELD_RESULT_STATES.has(s))
+    throw new BenchSetValidationError(field, `unknown field-result state "${s}"`)
+  return s as FieldResultState
+}
+
+function validateFieldResult(v: unknown, field: string): FieldResult {
+  if (!isPlainObject(v))
+    throw new BenchSetValidationError(field, `expected object, got ${describe(v)}`)
+  const f = expectString(v.field, `${field}.field`)
+  if (!EXPECTED_FIELDS.has(f))
+    throw new BenchSetValidationError(`${field}.field`, `unknown expected field "${f}"`)
+  const scorer = expectString(v.scorer, `${field}.scorer`)
+  if (!SCORER_NAMES.has(scorer))
+    throw new BenchSetValidationError(`${field}.scorer`, `unknown scorer "${scorer}"`)
+  return {
+    field: f as ExpectedField,
+    scorer: scorer as ScorerName,
+    score: expectScore(v.score, `${field}.score`),
+    state: expectFieldResultState(v.state, `${field}.state`),
+  }
+}
+
+// RowResult (row-aggregate.ts R6) — the per-case score record produced by a run.
+function validateRowResult(v: unknown, field: string): RowResult {
+  if (!isPlainObject(v))
+    throw new BenchSetValidationError(field, `expected object, got ${describe(v)}`)
+  if (!Array.isArray(v.fields))
+    throw new BenchSetValidationError(
+      `${field}.fields`,
+      `expected array, got ${describe(v.fields)}`,
+    )
+  return {
+    caseId: expectString(v.caseId, `${field}.caseId`),
+    fields: v.fields.map((fr, i) => validateFieldResult(fr, `${field}.fields[${i}]`)),
+    score: expectScore(v.score, `${field}.score`),
+    state: expectFieldResultState(v.state, `${field}.state`),
+    excluded: expectBoolean(v.excluded, `${field}.excluded`),
+  }
+}
+
+// CapturedGrounding — the grounding an output was produced against (E19).
+function validateCapturedGrounding(v: unknown, field: string): CapturedGrounding {
+  if (!isPlainObject(v))
+    throw new BenchSetValidationError(field, `expected object, got ${describe(v)}`)
+  const mode = expectString(v.mode, `${field}.mode`)
+  if (mode !== 'retrieve' && mode !== 'stuff')
+    throw new BenchSetValidationError(
+      `${field}.mode`,
+      `expected "retrieve" | "stuff", got "${mode}"`,
+    )
+  let chunks: CapturedChunk[] | undefined
+  if (v.chunks !== undefined) {
+    if (!Array.isArray(v.chunks))
+      throw new BenchSetValidationError(
+        `${field}.chunks`,
+        `expected array, got ${describe(v.chunks)}`,
+      )
+    chunks = v.chunks.map((c, i) => {
+      const cf = `${field}.chunks[${i}]`
+      if (!isPlainObject(c))
+        throw new BenchSetValidationError(cf, `expected object, got ${describe(c)}`)
+      return {
+        text: expectString(c.text, `${cf}.text`),
+        section: expectString(c.section, `${cf}.section`),
+        distance: expectNumber(c.distance, `${cf}.distance`),
+        similarity: expectNumber(c.similarity, `${cf}.similarity`),
+      }
+    })
+  }
+  return {
+    mode,
+    chunks,
+    record: v.record === undefined ? undefined : expectString(v.record, `${field}.record`),
+  }
+}
+
 function validateRun(v: unknown, field: string): BenchRun {
   if (!isPlainObject(v))
     throw new BenchSetValidationError(field, `expected object, got ${describe(v)}`)
@@ -705,9 +820,12 @@ function validateRun(v: unknown, field: string): BenchRun {
     outputs[caseId] = {
       text: expectString(out.text, `${of}.text`),
       genPromptHash: expectString(out.genPromptHash, `${of}.genPromptHash`),
-      // capturedGrounding is the runtime /api/score contract (UserCaseV2 shape);
-      // it is round-tripped verbatim — a deep re-validation belongs to /api/score.
-      capturedGrounding: out.capturedGrounding as CapturedGrounding,
+      // Validated against the v4 schema (not cast) so malformed grounding is
+      // rejected with a named error before it lands in the store.
+      capturedGrounding: validateCapturedGrounding(
+        out.capturedGrounding,
+        `${of}.capturedGrounding`,
+      ),
     }
   }
   const scorerAssignments: Record<string, Record<string, BenchFieldScorer>> = {}
@@ -720,8 +838,13 @@ function validateRun(v: unknown, field: string): BenchRun {
     threshold: expectNumber(v.threshold, `${field}.threshold`),
     scorerAssignments,
     outputs,
-    // scores are RowResult records produced by row-aggregate; round-tripped verbatim.
-    scores: v.scores as Record<string, RowResult>,
+    // scores are RowResult records (row-aggregate); validated per-case, not cast.
+    scores: Object.fromEntries(
+      Object.entries(v.scores).map(([caseId, rr]) => [
+        caseId,
+        validateRowResult(rr, `${field}.scores.${caseId}`),
+      ]),
+    ),
     timestamp: expectNumber(v.timestamp, `${field}.timestamp`),
   }
 }
@@ -955,6 +1078,18 @@ export function scanLegacyCases(): LegacyScan {
   return { v1Count: v1.length, v3Count: v3.length, total: v1.length + v3.length, done }
 }
 
+// Export-before-migrate escape hatch (D5 banner / S21 failure-mode table). Serializes
+// the raw legacy stores verbatim — the user can save this BEFORE migrating, so the
+// pre-v4 data is recoverable independently of the (non-destructive) localStorage keys.
+export function exportLegacyCases(): string {
+  return stableStringify({
+    exportedFrom: 'legacy',
+    schema: 'legacy-bench-export-v1',
+    user_cases_v1: readLegacyV1Cases(),
+    user_cases_v3: readLegacyV3Cases(),
+  })
+}
+
 // Pure builder: legacy cases → the v4 cases for a "Migrated" set, deduped by id
 // (v3 golden-set wins over a v1 "My Cases" row on an id collision). Exported for
 // the migration-fixture tests.
@@ -963,6 +1098,18 @@ export function buildMigratedCases(v1: UserCase[], v3: UserCaseV3[]): BenchCaseV
   for (const uc of v1) byId.set(uc.id, migrateV1CaseToV4(uc))
   for (const uc of v3) byId.set(uc.id, migrateV3CaseToV4(uc)) // v3 overrides v1 on id collision
   return [...byId.values()]
+}
+
+// The v3 `intentLabel` ('pass'/'fail') is the G5 agreement label; the v4 schema
+// keeps it ONCE in `BenchSet.labels` (E26), so it relocates there rather than
+// being dropped on migration. v1 "My Cases" rows carry no intent label. Exported
+// for the migration-fixture tests (label carry-over). Deterministic → idempotent.
+export function buildMigratedLabels(v3: UserCaseV3[]): Record<string, 'pass' | 'fail'> {
+  const labels: Record<string, 'pass' | 'fail'> = {}
+  for (const uc of v3) {
+    if (uc.intentLabel === 'pass' || uc.intentLabel === 'fail') labels[uc.id] = uc.intentLabel
+  }
+  return labels
 }
 
 export interface MigrationResult {
@@ -983,7 +1130,9 @@ export function migrateLegacyToV4(): MigrationResult {
     return { ran: false, imported: 0, set: getBenchSet(MIGRATED_SET_ID) ?? null }
   }
 
-  const migratedCases = buildMigratedCases(readLegacyV1Cases(), readLegacyV3Cases())
+  const v3Legacy = readLegacyV3Cases()
+  const migratedCases = buildMigratedCases(readLegacyV1Cases(), v3Legacy)
+  const migratedLabels = buildMigratedLabels(v3Legacy)
   const store = loadBenchStore()
   let set = store.sets.find((s) => s.id === MIGRATED_SET_ID)
   if (!set) {
@@ -1009,6 +1158,9 @@ export function migrateLegacyToV4(): MigrationResult {
     if (existingIds.has(c.id)) continue // case-id dedup → re-run is idempotent
     set.cases.push(c)
     existingIds.add(c.id)
+    // Relocate the v3 intent label into BenchSet.labels (E26), once, alongside
+    // its case. Guarded by the same dedup, so a forced re-run never rewrites it.
+    if (migratedLabels[c.id] !== undefined) set.labels[c.id] = migratedLabels[c.id]
     imported++
   }
 

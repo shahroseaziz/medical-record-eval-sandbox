@@ -7,11 +7,26 @@ import {
   exportBenchSet,
   importBenchSet,
   BenchSetValidationError,
+  BenchQuotaExceededError,
   scanLegacyCases,
   migrateLegacyToV4,
+  exportLegacyCases,
   setCompletion,
   type LegacyScan,
 } from '@/lib/cases'
+
+// Trigger a browser download of a JSON string under the given filename.
+function downloadJson(json: string, filename: string) {
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
 
 interface Props {
   /** The set currently in view — the export target. Null disables export. */
@@ -43,17 +58,14 @@ export function BenchSetIO({ set, onImport, onMigrated }: Props) {
 
   function handleExport() {
     if (!set) return
-    const json = exportBenchSet(set)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${set.name.replace(/[^a-z0-9-_]+/gi, '_') || 'benchset'}.json`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    const filename = `${set.name.replace(/[^a-z0-9-_]+/gi, '_') || 'benchset'}.json`
+    downloadJson(exportBenchSet(set), filename)
     setDismissedPrompt(true)
+  }
+
+  // D5 escape hatch — save the pre-v4 data BEFORE migrating.
+  function handleExportLegacy() {
+    downloadJson(exportLegacyCases(), 'legacy-cases.json')
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -81,7 +93,20 @@ export function BenchSetIO({ set, onImport, onMigrated }: Props) {
   }
 
   function handleMigrate() {
-    migrateLegacyToV4()
+    setError(null)
+    try {
+      migrateLegacyToV4()
+    } catch (err) {
+      // A full store throws BenchQuotaExceededError from saveBenchStore — surface
+      // it (named) instead of letting it escape the click handler unhandled. The
+      // legacy keys are untouched, so the user can still Export legacy JSON.
+      setError(
+        err instanceof BenchQuotaExceededError
+          ? err.message
+          : `Migration failed: ${(err as Error).message}`,
+      )
+      return
+    }
     setLegacy(scanLegacyCases())
     onMigrated?.()
   }
@@ -100,6 +125,14 @@ export function BenchSetIO({ set, onImport, onMigrated }: Props) {
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <Button size="sm" onClick={handleMigrate} data-testid="legacy-migrate-btn">
                 Import {legacy.total} legacy case{legacy.total === 1 ? '' : 's'}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleExportLegacy}
+                data-testid="legacy-export-btn"
+              >
+                Export legacy JSON
               </Button>
             </div>
           </Stack>

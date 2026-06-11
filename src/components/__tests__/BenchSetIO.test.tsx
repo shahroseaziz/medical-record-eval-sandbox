@@ -81,6 +81,34 @@ describe('BenchSetIO', () => {
     expect(screen.queryByTestId('legacy-migration-banner')).toBeNull()
   })
 
+  it('offers BOTH Import and Export-legacy in the D5 banner (escape hatch)', async () => {
+    const v1: UserCase[] = [{ id: 'v1-a', patientId: 'p', query: 'q', mode: 'stuff', createdAt: 1 }]
+    localStorage.setItem('user_cases_v1', JSON.stringify(v1))
+    render(<BenchSetIO set={null} onImport={vi.fn()} />)
+    await screen.findByTestId('legacy-migration-banner')
+    expect(screen.getByTestId('legacy-migrate-btn')).toBeTruthy()
+    // Export-before-migrate escape hatch must be present alongside Import.
+    expect(screen.getByTestId('legacy-export-btn')).toBeTruthy()
+  })
+
+  it('surfaces a quota error from migration instead of letting it escape', async () => {
+    const v1: UserCase[] = [{ id: 'v1-a', patientId: 'p', query: 'q', mode: 'stuff', createdAt: 1 }]
+    localStorage.setItem('user_cases_v1', JSON.stringify(v1))
+    // saveBenchStore inside migrateLegacyToV4 hits a full store.
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key: string) => {
+      if (key === 'bench_sets_v4')
+        throw new DOMException('full', 'QuotaExceededError')
+    })
+    const onMigrated = vi.fn()
+    render(<BenchSetIO set={null} onImport={vi.fn()} onMigrated={onMigrated} />)
+    await screen.findByTestId('legacy-migration-banner')
+    await userEvent.click(screen.getByTestId('legacy-migrate-btn'))
+    const err = await screen.findByTestId('import-error')
+    expect(err.textContent).toMatch(/quota exceeded/)
+    expect(onMigrated).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
   it('prompts export at a set-completion moment', () => {
     render(<BenchSetIO set={makeSet(true)} onImport={vi.fn()} />)
     expect(screen.getByTestId('export-prompt')).toBeTruthy()

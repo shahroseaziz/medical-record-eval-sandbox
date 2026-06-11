@@ -19,6 +19,7 @@ import {
   migrateLegacyToV4,
   scanLegacyCases,
   buildMigratedCases,
+  buildMigratedLabels,
   // export/import + validation
   exportBenchSet,
   importBenchSet,
@@ -208,6 +209,31 @@ describe('legacy → v4 migration (both stores, D5)', () => {
     expect(ccc.fieldScorers).toEqual({ prose: 'faithfulness' }) // v4-valid scorer preserved
   })
 
+  it('relocates the v3 intentLabel into BenchSet.labels (E26 — not dropped)', () => {
+    seedLegacy()
+    migrateLegacyToV4()
+    const set = getBenchSet('migrated-v4')!
+    // v3-ccc was 'pass', v3-ddd was 'fail'; v1 rows carry no intent label.
+    expect(set.labels).toEqual({ 'v3-ccc': 'pass', 'v3-ddd': 'fail' })
+  })
+
+  it('buildMigratedLabels carries pass/fail and skips unlabeled rows', () => {
+    expect(buildMigratedLabels(V3_FIXTURE)).toEqual({ 'v3-ccc': 'pass', 'v3-ddd': 'fail' })
+    const unlabeled: UserCaseV3[] = [
+      { ...V3_FIXTURE[0], id: 'no-label', intentLabel: undefined as unknown as 'pass' },
+    ]
+    expect(buildMigratedLabels(unlabeled)).toEqual({})
+  })
+
+  it('label carry-over is idempotent across a forced re-run (byte-identical store)', () => {
+    seedLegacy()
+    migrateLegacyToV4()
+    const afterFirst = localStorage.getItem(BENCH_KEY)
+    localStorage.removeItem(MIGRATION_FLAG)
+    migrateLegacyToV4()
+    expect(localStorage.getItem(BENCH_KEY)).toBe(afterFirst)
+  })
+
   it('buildMigratedCases dedups by id, v3 winning over v1 on collision', () => {
     const v1: UserCase[] = [{ id: 'dup', patientId: 'p', query: 'q1', mode: 'stuff', createdAt: 1 }]
     const v3: UserCaseV3[] = [{ ...V3_FIXTURE[0], id: 'dup' }]
@@ -307,6 +333,33 @@ describe('schema validation (named errors, never silent partial state)', () => {
   it('accepts null runs and round-trips them', () => {
     const set = makeSet({ runs: { current: null, previous: null } })
     expect(importBenchSet(exportBenchSet(set))).toEqual(set)
+  })
+
+  it('rejects a malformed run score (RowResult) with the field path', () => {
+    const set = makeSet()
+    // score should be a RowResult — make `excluded` a non-boolean.
+    ;(set.runs.current!.scores['case-1'] as { excluded: unknown }).excluded = 'nope'
+    expect(() => validateBenchSet(set)).toThrow(BenchSetValidationError)
+    expect(() => validateBenchSet(set)).toThrow(/expected boolean.*scores\.case-1\.excluded/)
+  })
+
+  it('rejects a malformed run score field-result state', () => {
+    const set = makeSet()
+    set.runs.current!.scores['case-1'].fields = [
+      { field: 'prose', scorer: 'reference-judge', score: 1, state: 'bogus' as never },
+    ]
+    expect(() => validateBenchSet(set)).toThrow(/unknown field-result state "bogus"/)
+  })
+
+  it('rejects malformed capturedGrounding in a run output (no silent partial state)', () => {
+    const set = makeSet()
+    ;(set.runs.current!.outputs['case-1'].capturedGrounding as { mode: string }).mode = 'hybrid'
+    expect(() => validateBenchSet(set)).toThrow(/capturedGrounding\.mode/)
+    const set2 = makeSet()
+    ;(
+      set2.runs.current!.outputs['case-1'].capturedGrounding.chunks![0] as { distance: unknown }
+    ).distance = 'near'
+    expect(() => validateBenchSet(set2)).toThrow(/expected number.*chunks\[0\]\.distance/)
   })
 })
 
