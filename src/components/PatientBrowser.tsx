@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { formatCcdaDate } from '@/lib/ccda/format-date'
 
 export interface PatientSummary {
   demographics: {
@@ -21,11 +22,6 @@ export interface PatientRow {
 interface Props {
   selectedId: string | null
   onSelect: (patient: PatientRow) => void
-}
-
-function formatBirthDate(raw: string): string {
-  if (raw.length !== 8) return raw
-  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
 }
 
 function PatientCard({
@@ -56,7 +52,7 @@ function PatientCard({
         {demographics.firstName} {demographics.lastName}
       </div>
       <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: 6 }}>
-        DOB: {formatBirthDate(demographics.birthDate)} · {demographics.gender === 'M' ? 'Male' : demographics.gender === 'F' ? 'Female' : demographics.gender}
+        DOB: {formatCcdaDate(demographics.birthDate)} · {demographics.gender === 'M' ? 'Male' : demographics.gender === 'F' ? 'Female' : demographics.gender}
       </div>
 
       <button

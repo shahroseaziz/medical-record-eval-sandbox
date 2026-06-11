@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { Chunk, Demographics, ParseResult, SectionResult } from './types';
 
 export type { Chunk, Demographics, ParseResult, SectionResult };
+export { formatCcdaDate } from './format-date';
 
 /** LOINC code → section name for the 7 coded C-CDA sections */
 const LOINC_TO_SECTION: Record<string, string> = {
