@@ -170,6 +170,18 @@ async function generateOneCase(
   }
 }
 
+/**
+ * Side-effect hooks the caller threads in so a completed generation can be
+ * persisted as it lands. `onCaseDone` fires once per case the moment it reaches a
+ * successful terminal `done` state (never on error/abort/rate-limit) — the seam the
+ * run round-trip uses to write each output into `runs.current.outputs` and persist
+ * to localStorage immediately (O7a reload survival). Kept optional so the lesson and
+ * other callers that only want the in-memory stream are unaffected.
+ */
+export interface GenerationRunHooks {
+  onCaseDone?: (caseId: string, output: string) => void
+}
+
 export function useGenerationRun() {
   const [state, setState] = useState<GenerationRunState>(EMPTY_STATE)
 
@@ -184,7 +196,12 @@ export function useGenerationRun() {
   }, [])
 
   const execute = useCallback(
-    async (cases: GenerationCase[], generationPrompt: string, fresh: boolean) => {
+    async (
+      cases: GenerationCase[],
+      generationPrompt: string,
+      fresh: boolean,
+      hooks?: GenerationRunHooks,
+    ) => {
       if (runningRef.current || cases.length === 0) return
 
       // Fresh run resets every case to pending; resume keeps prior `done` results.
@@ -244,6 +261,12 @@ export function useGenerationRun() {
         }
         completed++
         sync({ completed })
+
+        // Persist-as-it-lands seam (O7a): a clean `done` is written through to the
+        // run model immediately, so an output survives a reload the instant it
+        // completes — not only after the whole fan-out finishes. Errors never fire
+        // it (there is no output to persist).
+        if (!outcome.error) hooks?.onCaseDone?.(c.id, outcome.output)
       }
 
       runningRef.current = false
@@ -255,13 +278,15 @@ export function useGenerationRun() {
 
   /** Start fresh: every case is regenerated. */
   const run = useCallback(
-    (cases: GenerationCase[], generationPrompt: string) => execute(cases, generationPrompt, true),
+    (cases: GenerationCase[], generationPrompt: string, hooks?: GenerationRunHooks) =>
+      execute(cases, generationPrompt, true, hooks),
     [execute],
   )
 
   /** Continue after a rate-limit or abort: already-done cases are skipped. */
   const resume = useCallback(
-    (cases: GenerationCase[], generationPrompt: string) => execute(cases, generationPrompt, false),
+    (cases: GenerationCase[], generationPrompt: string, hooks?: GenerationRunHooks) =>
+      execute(cases, generationPrompt, false, hooks),
     [execute],
   )
 

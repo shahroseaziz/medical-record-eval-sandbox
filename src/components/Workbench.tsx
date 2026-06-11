@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { EvaluatorResultsTable } from './EvaluatorResultsTable'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
@@ -22,7 +22,31 @@ import {
   type RubricVariant,
 } from '@/lib/workbench/bench'
 import type { Thresholds } from '@/lib/eval/thresholds'
+import {
+  genPromptHash,
+  type BenchCaseV4,
+  type BenchFieldScorer,
+  type BenchRunOutput,
+} from '@/lib/cases'
+import {
+  WORKBENCH_SET_ID,
+  WORKBENCH_SET_NAME,
+  hashRubric,
+  startRun,
+  persistOutput,
+  currentOutputs,
+  type RunScorerAssignments,
+} from '@/lib/workbench/run-model'
 import styles from './Workbench.module.css'
+
+// The active evaluator's field→scorer assignment, snapshotted into every run's
+// E27 fingerprint (the axis that SUPPRESSES the O8 delta when it moves). Mirrors
+// the per-field chips above, projected onto the v4 scorer vocabulary.
+const EVALUATOR_ASSIGNMENT: Record<EvaluatorType, { field: string; scorer: BenchFieldScorer }> = {
+  faithfulness: { field: 'claims', scorer: 'faithfulness' },
+  'reference-judge': { field: 'prose', scorer: 'reference-judge' },
+  'structured-diff': { field: 'structured', scorer: 'structured-diff' },
+}
 
 interface Props {
   /**
@@ -218,6 +242,20 @@ export function Workbench({
   // generation over every case — the keystone the prototype faked.
   const gen = useGenerationRun()
 
+  // Reload survival (O7a): outputs persisted into runs.current.outputs on the
+  // workbench BenchSet are rehydrated on mount, so a generated-but-unscored output
+  // survives a page refresh (generation is the expensive half). The live `gen`
+  // stream takes precedence; this is the fallback the inspector reads after a reload
+  // before anything is regenerated again.
+  const [restoredOutputs, setRestoredOutputs] = useState<Record<string, BenchRunOutput>>({})
+  useEffect(() => {
+    setRestoredOutputs(currentOutputs(WORKBENCH_SET_ID))
+  }, [])
+
+  // A non-fatal note when a persist write is refused (quota). The completed in-memory
+  // outputs are retained either way (S22) — the full quota-export prompt is O6.
+  const [persistError, setPersistError] = useState<string | null>(null)
+
   // Results recompute synchronously whenever the evaluator, rubric, or labels
   // change — that is "changing any knob re-runs" for the deterministic knobs.
   const results = useMemo(
@@ -255,27 +293,93 @@ export function Workbench({
     setLabelOverrides((prev) => ({ ...prev, [caseId]: label }))
   }
 
+  // Stuff mode: the committed grounding IS the record, so the live run grounds on
+  // exactly what the offline surface showed. patientId is the synthetic case id
+  // (stuff mode never touches the patient table for retrieval). The assembled record
+  // is also the `capturedGrounding` persisted with each output (E19 — score against
+  // the output's own context without a drift-prone re-fetch).
+  const caseRecords = useMemo(
+    () => new Map(cases.map((c) => [c.caseId, assembleGrounding(c.grounding)])),
+    [cases],
+  )
+
   function toGenerationCases(): GenerationCase[] {
-    // Stuff mode: the committed grounding IS the record, so the live run grounds on
-    // exactly what the offline surface showed. patientId is the synthetic case id
-    // (stuff mode never touches the patient table for retrieval).
     return cases.map((c) => ({
       id: c.caseId,
       patientId: c.caseId,
       query: c.taskPrompt,
       mode: 'stuff' as const,
-      record: assembleGrounding(c.grounding),
+      record: caseRecords.get(c.caseId) ?? '',
     }))
+  }
+
+  // Mirror the bench's golden set onto the v4 store as the run's cases, tagged with
+  // the active evaluator's scorer so the persisted run is coherent and scorable (O7b).
+  function toBenchCases(): BenchCaseV4[] {
+    const { field, scorer } = EVALUATOR_ASSIGNMENT[evaluator]
+    return cases.map((c) => ({
+      version: 4 as const,
+      id: c.caseId,
+      taskPrompt: c.taskPrompt,
+      patientId: c.caseId,
+      ragMode: 'stuff' as const,
+      expectedProse: c.expectedProse || undefined,
+      fieldScorers: { [field]: scorer },
+      createdAt: 0, // deterministic mirror stamp (the run carries the real timestamp)
+    }))
+  }
+
+  // The E27 per-case scorer-assignment snapshot for the run fingerprint.
+  function toScorerAssignments(): RunScorerAssignments {
+    const { field, scorer } = EVALUATOR_ASSIGNMENT[evaluator]
+    return Object.fromEntries(cases.map((c) => [c.caseId, { [field]: scorer }]))
+  }
+
+  // The persist-as-it-lands seam (O7a): each completed output is written straight
+  // into runs.current.outputs and flushed to localStorage. genPromptHash is stamped
+  // PER output (selective-regen provenance, S23); the run-level hash is derived from
+  // the merged set. A quota refusal is caught — completed work is retained (S22).
+  function persistGeneratedOutput(caseId: string, output: string) {
+    const grounding: BenchRunOutput = {
+      text: output,
+      genPromptHash: genPromptHash(generationPrompt),
+      capturedGrounding: { mode: 'stuff', record: caseRecords.get(caseId) ?? '' },
+    }
+    try {
+      const set = persistOutput(WORKBENCH_SET_ID, caseId, grounding)
+      setRestoredOutputs({ ...set.runs.current!.outputs })
+    } catch (err) {
+      setPersistError(err instanceof Error ? err.message : 'Could not persist output')
+    }
   }
 
   function regenerate() {
     if (gen.running) return
-    gen.run(toGenerationCases(), generationPrompt)
+    setPersistError(null)
+    // Open a fresh run: stamps the E27 fingerprint and — critically — leaves
+    // runs.previous (the last scored baseline) untouched (S22 baseline preservation).
+    try {
+      startRun(WORKBENCH_SET_ID, {
+        name: WORKBENCH_SET_NAME,
+        cases: toBenchCases(),
+        rubricHash: hashRubric(rubric),
+        threshold: evaluatorThreshold,
+        scorerAssignments: toScorerAssignments(),
+        timestamp: Date.now(),
+      })
+      setRestoredOutputs({})
+    } catch (err) {
+      setPersistError(err instanceof Error ? err.message : 'Could not start run')
+      return
+    }
+    gen.run(toGenerationCases(), generationPrompt, { onCaseDone: persistGeneratedOutput })
   }
 
   function resumeRegenerate() {
     if (gen.running) return
-    gen.resume(toGenerationCases(), generationPrompt)
+    // Resume keeps the in-flight run (and its persisted outputs) — do NOT startRun,
+    // which would wipe current.outputs. Already-done cases are skipped by the hook.
+    gen.resume(toGenerationCases(), generationPrompt, { onCaseDone: persistGeneratedOutput })
   }
 
   const activeMeta = EVALUATOR_META[evaluator]
@@ -466,6 +570,12 @@ export function Workbench({
                 resets.
               </div>
             )}
+            {persistError && (
+              <div className={styles.staleNote} data-testid="regenerate-persist-error">
+                Couldn&apos;t save run to this browser: {persistError} Completed outputs are kept in
+                this session — export to free space.
+              </div>
+            )}
           </div>
         </section>
 
@@ -553,7 +663,23 @@ export function Workbench({
                 ))}
                 {(() => {
                   const r = gen.results[selectedCase.caseId]
-                  if (!r || r.status === 'pending') return null
+                  // Live stream takes precedence; otherwise fall back to the output
+                  // persisted in runs.current.outputs (rehydrated on mount) so a
+                  // reload shows the generated output the user already paid for.
+                  if (!r || r.status === 'pending') {
+                    const restored = restoredOutputs[selectedCase.caseId]
+                    if (!restored) return null
+                    return (
+                      <div
+                        className={styles.regenOutput}
+                        data-testid={`regenerated-output-${selectedCase.caseId}`}
+                        data-restored="true"
+                      >
+                        <strong>Regenerated output (restored)</strong>
+                        <div>{restored.text}</div>
+                      </div>
+                    )
+                  }
                   return (
                     <div
                       className={styles.regenOutput}
