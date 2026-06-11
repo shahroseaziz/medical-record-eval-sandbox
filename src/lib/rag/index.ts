@@ -1,51 +1,14 @@
 import type { Client } from 'pg'
 import { withClient, getSeedMeta } from '../db/index'
 import { embed, MODEL, DIM } from '../voyage'
-import { estimateInputTokens } from '../tokens'
 
-export interface RetrievedChunk {
-  section: string
-  text: string
-  distance: number
-  similarity: number
-}
+// The budget seam lives in a dependency-free module so client-bundled surfaces
+// can reuse it without pulling `pg`/Voyage. Re-exported here so server-side
+// importers (the run route, the assembly-budget tests) keep their import path.
+export { fitChunksToBudget } from './budget'
+export type { RetrievedChunk, BudgetedAssembly } from './budget'
 
-export interface BudgetedAssembly {
-  /** The in-budget subset of chunks, in retrieval (relevance) order. */
-  chunks: RetrievedChunk[]
-  /** How many chunks retrieval returned (before budget trimming). */
-  retrievedCount: number
-  /** How many of those fit the input budget and were actually assembled. */
-  inBudgetCount: number
-}
-
-// SHA-78 / arch S25: retrieve-mode context assembly bounds by token COUNT, not k
-// alone. Chunks are appended in retrieval (relevance) order until the next chunk
-// would push the assembled prompt past the input budget, then assembly stops —
-// partial chunk sets are valid. `overheadTokens` is the cost of everything in the
-// prompt that is NOT chunk text (system prompt, query, template scaffolding), so
-// the per-chunk budget is what's left after that fixed overhead.
-//
-// `render` formats a candidate chunk list into the grounding string exactly as the
-// caller will send it, so the budget reflects the real joined payload (separators
-// included), not a sum of isolated chunk estimates.
-export function fitChunksToBudget(
-  chunks: RetrievedChunk[],
-  budgetTokens: number,
-  overheadTokens: number,
-  render: (chunks: RetrievedChunk[]) => string,
-): BudgetedAssembly {
-  const fit: RetrievedChunk[] = []
-  for (const chunk of chunks) {
-    const candidate = [...fit, chunk]
-    const groundingTokens = estimateInputTokens(render(candidate))
-    if (overheadTokens + groundingTokens > budgetTokens) {
-      break
-    }
-    fit.push(chunk)
-  }
-  return { chunks: fit, retrievedCount: chunks.length, inBudgetCount: fit.length }
-}
+import type { RetrievedChunk } from './budget'
 
 export interface RetrieveResult {
   chunks: RetrievedChunk[]

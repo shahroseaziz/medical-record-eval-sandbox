@@ -5,6 +5,7 @@ import { DisagreementTable } from './DisagreementTable'
 import { EvaluatorResultsTable } from './EvaluatorResultsTable'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { CaseComposer } from './CaseComposer'
+import { RagInspector } from './RagInspector'
 import { Term } from './Term'
 import { useGenerationRun, type GenerationCase } from '@/hooks/useGenerationRun'
 import { computeUserAgreement } from '@/lib/eval/user-agreement'
@@ -207,6 +208,11 @@ export function Workbench({
   // authored cases is surfaced so the add lands as a visible consequence.
   const [composerOpen, setComposerOpen] = useState(false)
   const [authoredCount, setAuthoredCount] = useState(0)
+
+  // RAG mode in the bench (O10 / G4). The retrieve-vs-stuff practice — chunk view,
+  // distance/similarity, section_hit over the inBudget subset — lives in the cases
+  // atom, toggled open. Deterministic and offline (rule 20); see RagInspector.
+  const [ragOpen, setRagOpen] = useState(false)
 
   // The live generation fan-out (R1). Editing the prompt and regenerating re-runs
   // generation over every case — the keystone the prototype faked.
@@ -495,6 +501,23 @@ export function Workbench({
                 <CaseComposer onAdded={(set) => setAuthoredCount(set.cases.length)} />
               </div>
             )}
+
+            {/* RAG mode (O10 / G4) — retrieve vs stuff, made part of the practice. */}
+            <button
+              type="button"
+              data-testid="rag-mode-toggle"
+              aria-expanded={ragOpen}
+              className={styles.ghostBtn}
+              onClick={() => setRagOpen((v) => !v)}
+            >
+              {ragOpen ? 'Close RAG mode' : 'RAG mode (retrieve vs stuff)'}
+            </button>
+            {ragOpen && (
+              <div className={styles.composerMount} data-testid="rag-mount">
+                <RagInspector />
+              </div>
+            )}
+
             <ul className={styles.caseList}>
               {cases.map((c) => (
                 <li key={c.caseId}>

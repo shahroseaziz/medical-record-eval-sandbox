@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { createWriteStream, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { execSync } from 'node:child_process'
@@ -7,6 +7,7 @@ import { createGzip } from 'node:zlib'
 import { parseCcda } from '../src/lib/ccda/index.js'
 import { SCHEMA_SQL, withClient } from '../src/lib/db/index.js'
 import { embed } from '../src/lib/voyage.js'
+import { chunkCountHistogram } from '../src/lib/rag/histogram.js'
 
 const DRY_RUN = process.argv.includes('--dry-run')
 const LOCAL_IDX = process.argv.indexOf('--local')
@@ -144,6 +145,19 @@ async function main(): Promise<void> {
     console.log(`  → patient ${patient.id}, ${chunks.length} chunks`)
   }
 
+  // Emit the chunk-count distribution over the corpus actually ingested. This is
+  // the source the RAG bench replays — surfaced as a histogram (not a "~6–9"
+  // point claim) so the small-patient majority and the lone outlier are both
+  // visible and measured, never asserted.
+  const perPatientCounts = patientRows.map(
+    (p) => chunkRows.filter((c) => c.patientId === p.id).length,
+  )
+  const histogram = chunkCountHistogram(perPatientCounts)
+  console.log('\nChunk-count histogram (per patient):')
+  for (const b of histogram) {
+    console.log(`  ${b.range.padEnd(7)} ${b.patients}`)
+  }
+
   if (DRY_RUN) {
     console.log(`\nDry run complete: ${patientRows.length} patients, ${chunkRows.length} total chunks`)
     if (patientRows[0]) {
@@ -191,6 +205,14 @@ async function main(): Promise<void> {
   // Generate seed/embeddings.sql.gz
   console.log('Generating seed dump...')
   mkdirSync('seed', { recursive: true })
+
+  // Persist the measured distribution next to the seed so the bench's committed
+  // histogram can be diffed against a real ingest (provenance, not invention).
+  writeFileSync(
+    'seed/chunk-histogram.json',
+    JSON.stringify({ patients: patientRows.length, buckets: histogram }, null, 2) + '\n',
+  )
+  console.log('Chunk-count histogram written to seed/chunk-histogram.json')
 
   const lines: string[] = []
 
