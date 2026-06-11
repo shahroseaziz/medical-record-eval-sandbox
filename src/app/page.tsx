@@ -1,6 +1,7 @@
 export const dynamic = 'force-static'
 
 import Link from 'next/link'
+import { REPO_URL } from '@/lib/site'
 import styles from './page.module.css'
 
 /**
@@ -92,6 +93,19 @@ export default function Home() {
           <Link href="/example" className={styles.footerLink} data-testid="example-link">
             worked example run
           </Link>
+          .
+        </p>
+        <p className={styles.footerText}>
+          Every prompt, scorer, and seeded case in here is open source —{' '}
+          <a
+            href={REPO_URL}
+            className={styles.footerLink}
+            data-testid="repo-link"
+            target="_blank"
+            rel="noreferrer"
+          >
+            read the whole thing on GitHub
+          </a>
           .
         </p>
       </footer>

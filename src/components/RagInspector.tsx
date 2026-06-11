@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Term } from './Term'
+import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
 import {
   loadRagBenchCases,
   isBudgetTrimmed,
@@ -206,6 +207,12 @@ export function RagInspector() {
           </Term>{' '}
           is <strong>N/A</strong> — there are no chunks to hit or miss. The whole record (
           {active.fullRecord.length} sections) goes into the prompt.
+          <span className={styles.stuffBound} data-testid="rag-stuff-narrative-bound">
+            Grounding bound: stuff sends the record&apos;s <strong>narrative text only</strong> — the
+            parser embeds <code>&lt;text&gt;</code>, not the coded <code>&lt;entry&gt;</code> data, so
+            a fact present <em>only</em> in a coded field scores as <strong>unsupported</strong>.
+            Grounding fidelity is capped by that extraction choice, in both modes.
+          </span>
         </div>
       )}
 
@@ -248,6 +255,23 @@ export function RagInspector() {
             </div>
           )
         })}
+      </div>
+
+      {/* ── Embedding-model rationale + voyage-space teaching (O12a / S27 specialist one-liners) ── */}
+      <div className={`${styles.note} ${styles.noteInfo}`} data-testid="rag-embedding-rationale">
+        <strong>Embeddings: {EMBEDDING_MODEL}.</strong> There is no clinical-specific Voyage model —
+        the general model is the correct choice here; <code>{EMBEDDING_MODEL}</code> is the
+        validated-in-stack option and the cost fit. (<code>voyage-4-nano</code>, open-weight, is the
+        keyless-fork path.)
+        <span className={styles.embedSpace} data-testid="rag-embedding-space">
+          Reproducibility guard: a shared dimension does <strong>not</strong> mean a shared vector
+          space <em>across embedding generations</em> — a silent <code>voyage-3</code>→<code>4</code>{' '}
+          swap would compare vectors from a <strong>silently different space</strong> and quietly
+          return garbage. Within the voyage-4 family that space is engineered shared, so the
+          &ldquo;different space&rdquo; caveat scopes to <strong>cross-generation</strong> bumps only.
+          The committed seed-meta guard pins embedder name, version, and dim so retrieval can&apos;t
+          change underneath the baseline unnoticed.
+        </span>
       </div>
     </div>
   )
