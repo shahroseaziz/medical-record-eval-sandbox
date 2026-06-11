@@ -72,16 +72,30 @@ function overBudgetAdvice(mode: 'retrieve' | 'stuff'): string {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  // The BYO key (caller's own Anthropic key, via header) decides whether this run
+  // draws the shared $5 spend cap. Read it FIRST: it governs how an Upstash outage
+  // is handled at the rate-limit gate below. Used in-flight only, never persisted.
+  const byoKey = req.headers.get('x-byo-api-key') ?? undefined
+  const isByo = Boolean(byoKey)
+
   // ── 0. Rate limit (shared bucket across all routes, per client IP) ──────
-  // Fail closed: if Upstash is unreachable, reject rather than allow traffic.
+  // Fail-closed posture (arch S9a): an Upstash outage must never fail OPEN into
+  // uncapped SHARED spend. For a free-tier run (which would book the $5 cap) we
+  // reject (503). A BYO run books no shared spend — it bills the caller's own key
+  // — so per S9a "BYO survive": an Upstash outage does not take the BYO path down.
+  // A live limiter returning !ok is a genuine 429 and applies to everyone.
   let rlResult: { ok: boolean; headers: Record<string, string> }
   try {
     rlResult = await checkRateLimit(req)
   } catch {
-    return Response.json(
-      { error: 'Service temporarily unavailable.' },
-      { status: 503 },
-    )
+    if (!isByo) {
+      return Response.json(
+        { error: 'Service temporarily unavailable.' },
+        { status: 503 },
+      )
+    }
+    // BYO survives a limiter outage — no shared spend at risk.
+    rlResult = { ok: true, headers: {} }
   }
   if (!rlResult.ok) {
     return Response.json(
@@ -127,9 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     )
   }
 
-  // BYO key comes from a request header, never from the request body.
-  // It is used in-flight only and is never logged or persisted.
-  const byoKey = req.headers.get('x-byo-api-key') ?? undefined
+  // BYO key was read at the top of the handler (it governs the fail-closed gate).
   const envKey = process.env.ANTHROPIC_API_KEY
 
   // Generation always uses the BYO key when provided; falls back to env.
@@ -157,8 +169,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
 
   // BYO callers bypass the 12k free-tier ceiling (only the model-context guard
-  // applies); used both by the budget below and the spend-cap gating later.
-  const isByo = Boolean(byoKey)
+  // applies). isByo was computed at the top of the handler.
   // Input budget for assembly: the 12k metered ceiling for free-tier callers,
   // the model context window for BYO (their key, their budget).
   const inputBudget = isByo ? MODEL_CONTEXT_LIMIT : MAX_INPUT_TOKENS
@@ -349,14 +360,23 @@ export async function POST(req: NextRequest): Promise<Response> {
         //     complete), other unknown stop_reasons (refusal/pause) are not
         //     misclassified as context overflow, and a dep bump cannot silently
         //     break detection. An abnormal finish with no raw stop_reason and no
-        //     usable output falls back to generic copy. Reachable only on the
-        //     BYO/raised-budget path, so spend is the user's key — no cap refund.
+        //     usable output falls back to generic copy.
+        //
+        //     App-fault refund (E29d/S23): this terminated abnormally and is never
+        //     scored/persisted, so any booked spend is refunded — the same fault
+        //     class as the pre-call token-limit guards (5a/5b/5c). On the metered
+        //     path the 12k ceiling (5b) precludes the context-overflow surface, so
+        //     refundSpend is null here (BYO) and the refund is a no-op; wiring it
+        //     keeps the invariant "every app-fault refunds" true regardless of
+        //     which path reaches it. A genuine 429 never reaches this point (it is
+        //     rejected at booking, before generation), so it never refunds.
         const outcome = classifyGenerationOutcome({
           rawStopReason: stopCapture.stopReason(),
           finishReason: String(finishReason),
           output,
         })
         if (!outcome.ok) {
+          if (refundSpend) { await refundSpend(); refundSpend = null }
           dataStream.writeData({
             type: 'error',
             message:
