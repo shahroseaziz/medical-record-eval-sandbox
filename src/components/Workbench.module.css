@@ -561,6 +561,35 @@
   padding: var(--space-2);
 }
 
+/* O8 iteration delta (E27 / G3). A sober panel — flips + n, never a celebratory
+   metric. The annotation and the ≥100-case-floor caveat sit under the number in a
+   muted register so the small-n tension reads as a caution, not a victory. */
+.deltaPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.deltaHeadline {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.deltaNote {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.deltaCaveat {
+  font-size: var(--text-xs);
+  color: var(--color-warning-text);
+}
+
 /* Buttons. */
 .actions {
   display: flex;
