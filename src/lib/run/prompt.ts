@@ -31,14 +31,43 @@ export interface AssembledPrompt {
   isUserAuthored: boolean
 }
 
+// Split form of the user turn for prompt caching (D8). The cacheable STATIC
+// prefix (system prompt + record/chunk context) is invariant across regenerations
+// of the same case, so it is the natural Anthropic `cache_control` breakpoint; the
+// QUESTION suffix is the only varying part. Concatenating contextPrefix +
+// questionSuffix is byte-identical to AssembledPrompt.userTurnPrompt, so token
+// counting and trace assembly stay unchanged.
+export interface AssembledPromptParts {
+  systemPrompt: string
+  /** Static, cacheable prefix of the user turn: the medical-record/chunk context. */
+  contextPrefix: string
+  /** Variable suffix: the question plus answer instruction. */
+  questionSuffix: string
+  isUserAuthored: boolean
+}
+
+export function buildPromptParts(
+  query: string,
+  groundingContext: string,
+  generationPrompt?: string,
+): AssembledPromptParts {
+  return {
+    systemPrompt: generationPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    contextPrefix: `MEDICAL RECORD CONTEXT:\n${groundingContext}`,
+    questionSuffix: `\n\nQUESTION:\n${query}\n\nProvide a thorough, accurate answer based solely on the information in the medical record context above. If the context does not contain sufficient information to answer the question, say so explicitly.`,
+    isUserAuthored: Boolean(generationPrompt),
+  }
+}
+
 export function buildPrompt(
   query: string,
   groundingContext: string,
   generationPrompt?: string,
 ): AssembledPrompt {
+  const parts = buildPromptParts(query, groundingContext, generationPrompt)
   return {
-    systemPrompt: generationPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    userTurnPrompt: `MEDICAL RECORD CONTEXT:\n${groundingContext}\n\nQUESTION:\n${query}\n\nProvide a thorough, accurate answer based solely on the information in the medical record context above. If the context does not contain sufficient information to answer the question, say so explicitly.`,
-    isUserAuthored: Boolean(generationPrompt),
+    systemPrompt: parts.systemPrompt,
+    userTurnPrompt: `${parts.contextPrefix}${parts.questionSuffix}`,
+    isUserAuthored: parts.isUserAuthored,
   }
 }

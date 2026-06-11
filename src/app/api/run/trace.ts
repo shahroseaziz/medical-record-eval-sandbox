@@ -30,7 +30,14 @@ export interface TraceAssemblyInput {
   generationModel: string
   judgeModel: string
   embeddingModel: string
-  tokens: { input: number; output: number; estCostUsd: number }
+  tokens: {
+    input: number
+    output: number
+    estCostUsd: number
+    /** Prompt-cache read/write token counts from the provider (D8); 0 when absent. */
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+  }
   /** Whether the judge used the caller's BYO key (scores non-comparable to baseline). */
   judgeUsesByo: boolean
 }
