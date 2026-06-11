@@ -18,7 +18,8 @@ import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { resolveJudgeKey } from './judge-key'
 import { makeStopReasonCapture, classifyGenerationOutcome } from './stop-reason'
-import type { RunTrace, RunRequest } from './types'
+import { assembleRunTrace } from './trace'
+import type { RunRequest } from './types'
 
 const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
 const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
@@ -371,44 +372,28 @@ export async function POST(req: NextRequest): Promise<Response> {
           ? redactForTrace(fullAssembledPrompt)
           : fullAssembledPrompt
 
-        const trace: RunTrace = {
+        const trace = assembleRunTrace({
           caseId,
-          ragMode: mode,
-          grounding: groundingContext,
-          generationPromptIsUserAuthored: isUserAuthored,
-          retrieval:
-            mode === 'retrieve'
-              ? {
-                  chunks: chunks.map((c) => ({
-                    section: c.section,
-                    text: c.text,
-                    distance: c.distance,
-                    similarity: c.similarity,
-                  })),
-                  groundingContext,
-                  assembledPrompt: assembledPromptForTrace,
-                  retrievedCount,
-                  inBudgetCount,
-                }
-              : undefined,
+          mode,
+          groundingContext,
+          isUserAuthored,
+          assembledPromptForTrace,
+          chunks,
+          retrievedCount,
+          inBudgetCount,
           sectionHit: sectionHitResult,
+          faithfulness: faithfulnessResult,
           output,
-          scorerResults: faithfulnessResult
-            ? [faithfulnessResult, sectionHitResult]
-            : [sectionHitResult],
           generationModel: model,
           judgeModel,
           embeddingModel: mode === 'retrieve' ? EMBEDDING_MODEL : 'none',
-          inputType: 'query',
           tokens: {
             input: usage.promptTokens,
             output: usage.completionTokens,
             estCostUsd,
           },
-          claimCount: faithfulnessResult ? faithfulnessResult.claims.length : 0,
-          outputLength: output.length,
           judgeUsesByo: judgeKeyIsByo,
-        }
+        })
 
         dataStream.writeData({ type: 'trace', trace } as unknown as JSONValue)
 
