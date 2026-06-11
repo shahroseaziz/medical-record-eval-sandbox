@@ -42,6 +42,7 @@ import {
   type RunScorerAssignments,
 } from '@/lib/workbench/run-model'
 import { scoreRunCase } from '@/lib/workbench/run-scoring'
+import { computeRunDelta, deltaAnnotation, floorCaveat } from '@/lib/workbench/delta'
 import styles from './Workbench.module.css'
 
 // The active evaluator's field→scorer assignment, snapshotted into every run's
@@ -302,6 +303,18 @@ export function Workbench({
     () => computeUserAgreement(results, evaluatorThreshold),
     [results, evaluatorThreshold],
   )
+
+  // The O8 iteration delta (E27 / G3): previous-vs-current verdict flips + aggregate
+  // move, read from the live persisted set so it reflects the rotation that the next
+  // regeneration performs (S22). Recomputes whenever a score lands or a regeneration
+  // resets the run — both flow through runScores / restoredOutputs. The gen-prompt axis
+  // ANNOTATES (a changed genPromptHash still renders the number); a mixed-prompt current
+  // run or a moved rubric/threshold/scorer SUPPRESSES with its own banner (never conflated).
+  const delta = useMemo(() => {
+    const runs = getBenchSet(WORKBENCH_SET_ID)?.runs
+    return computeRunDelta(runs?.previous, runs?.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runScores, restoredOutputs])
 
   const promptEdited = generationPrompt !== DEFAULT_GENERATION_PROMPT
   // Prompt edited but not yet regenerated → the deterministic results no longer
@@ -695,6 +708,47 @@ export function Workbench({
               <div className={styles.staleNote} data-testid="regenerate-persist-error">
                 Couldn&apos;t save run to this browser: {persistError} Completed outputs are kept in
                 this session — export to free space.
+              </div>
+            )}
+
+            {/* ── O8 iteration delta (E27 / G3) ─────────────────────────────
+                Previous-vs-current verdict flips + aggregate move, the payoff of
+                the round-trip. The NUMBER renders only when rubric/threshold/scorer
+                match across the two runs (E27); a moved one of those, or a
+                mixed-prompt current run (S23), shows its OWN banner IN PLACE of the
+                number — never conflated. A changed generation prompt annotates but
+                never suppresses (that edit IS the measured change, G3). Every number
+                carries n, and the ≥100-case-floor tension is named, never hidden. */}
+            {delta.status === 'incomparable' && (
+              <div className={styles.staleNote} data-testid="delta-incomparable-banner">
+                {delta.banner}
+              </div>
+            )}
+            {delta.status === 'mixed-prompt' && (
+              <div className={styles.staleNote} data-testid="delta-mixed-prompt-banner">
+                {delta.banner}
+              </div>
+            )}
+            {delta.status === 'ok' && (
+              <div className={styles.deltaPanel} data-testid="delta-panel">
+                <strong className={styles.deltaHeadline} data-testid="delta-copy">
+                  {delta.copy}
+                </strong>
+                {/* Aggregate move — raw pass counts over the SAME n, never a
+                    "75% → 100%" celebration (the exact mistake G3 forbids). */}
+                <span className={styles.deltaNote} data-testid="delta-aggregate">
+                  pass: {delta.previousPass}/{delta.n} → {delta.currentPass}/{delta.n}
+                </span>
+                {deltaAnnotation(delta) && (
+                  <span className={styles.deltaNote} data-testid="delta-across-prompts-note">
+                    {deltaAnnotation(delta)}
+                  </span>
+                )}
+                {floorCaveat(delta) && (
+                  <span className={styles.deltaCaveat} data-testid="delta-floor-caveat">
+                    {floorCaveat(delta)}
+                  </span>
+                )}
               </div>
             )}
           </div>
