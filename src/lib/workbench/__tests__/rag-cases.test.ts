@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   loadRagBenchCases,
   validateRagCase,
@@ -11,6 +14,18 @@ import {
   RAG_TERMS,
   type RagBenchCase,
 } from '../rag-cases'
+import { parseCcda } from '@/lib/ccda/index'
+import { chunkCountHistogram } from '@/lib/rag/histogram'
+import { fitChunksToBudget } from '@/lib/rag/budget'
+import { buildGroundingContext } from '@/lib/run/prompt'
+
+const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../ccda/__fixtures__')
+const FIXTURE_FILES = [
+  'Agustin437_Hills818_e0de7b0a-c40b-6467-c099-0f9467be6c0a.xml',
+  'Brenna468_Jung484_Feeney44_7a351fec-de09-1605-7053-5bfb6766dffa.xml',
+  'Marisela850_Shanel903_Mayer370_a08c7d55-8400-6d5d-908f-13a33e8214c0.xml',
+]
+const render = (cs: RagBenchCase['retrievedChunks']): string => buildGroundingContext('retrieve', cs)
 
 const cases = loadRagBenchCases()
 const miss = cases.find((c) => c.caseId === 'rag-agustin-specialist-retrieve-miss')!
@@ -108,16 +123,46 @@ describe('non-selective honesty (small patient)', () => {
   })
 })
 
-describe('ingest chunk-count histogram', () => {
-  it('emits a distribution (not a "6–9" point claim) covering the corpus', () => {
-    expect(INGEST_CHUNK_HISTOGRAM.length).toBeGreaterThan(1)
-    expect(INGEST_HISTOGRAM_TOTAL).toBe(25)
+describe('ingest chunk-count histogram — measured, not invented', () => {
+  // Reparse the committed fixtures with the SAME parser ingest runs and recompute
+  // the histogram. The committed constant must equal this — so no bucket is a
+  // hand-authored number.
+  const counts = FIXTURE_FILES.map(
+    (f) => parseCcda(readFileSync(join(FIXTURES_DIR, f), 'utf-8')).chunks.length,
+  )
+
+  it('the committed constant equals the histogram recomputed from the fixtures', () => {
+    expect(INGEST_CHUNK_HISTOGRAM).toEqual(chunkCountHistogram(counts))
+    expect(INGEST_HISTOGRAM_TOTAL).toBe(FIXTURE_FILES.length)
   })
 
-  it('carries the 33+ outlier bucket (the 6 MB patient, snapshot-verified)', () => {
+  it('is a distribution (not a "6–9" point claim), every bucket reproduced from real counts', () => {
+    expect(INGEST_CHUNK_HISTOGRAM.length).toBeGreaterThan(1)
+    expect(INGEST_CHUNK_HISTOGRAM.reduce((n, b) => n + b.patients, 0)).toBe(FIXTURE_FILES.length)
+  })
+
+  it('carries the 33+ outlier bucket (Agustin437 = 33 chunks, snapshot-verified)', () => {
+    expect(counts).toContain(33)
     const outlier = INGEST_CHUNK_HISTOGRAM.find((b) => b.range === '33+')
-    expect(outlier).toBeTruthy()
     expect(outlier!.patients).toBe(1)
+  })
+})
+
+describe('inBudgetCount is computed by the production seam, not authored (S25)', () => {
+  it('fitChunksToBudget over the miss fixture reproduces the trim and drops specialist', () => {
+    const assembly = fitChunksToBudget(miss.retrievedChunks, miss.budgetTokens, miss.overheadTokens, render)
+    // The loaded case carries exactly the seam's output — not a fixture literal.
+    expect(miss.inBudgetCount).toBe(assembly.inBudgetCount)
+    expect(assembly.inBudgetCount).toBe(4)
+    // The required rank-6 `specialist` chunk is the one the budget math drops.
+    expect(miss.retrievedChunks.map((c) => c.section)).toContain('specialist')
+    expect(assembly.chunks.map((c) => c.section)).not.toContain('specialist')
+  })
+
+  it('the non-selective small patient fits the real budget whole (nothing trimmed)', () => {
+    const assembly = fitChunksToBudget(hit.retrievedChunks, hit.budgetTokens, hit.overheadTokens, render)
+    expect(assembly.inBudgetCount).toBe(hit.retrievedChunks.length)
+    expect(hit.inBudgetCount).toBe(assembly.inBudgetCount)
   })
 })
 

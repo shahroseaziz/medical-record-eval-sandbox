@@ -228,9 +228,10 @@ export function RagInspector() {
       <div className={styles.histogram} data-testid="rag-histogram">
         <div className={styles.histTitle}>Chunks per patient at ingest</div>
         <div className={styles.histCaption}>
-          Measured at ingest over the seeded corpus (n={INGEST_HISTOGRAM_TOTAL} patients) — not an
-          asserted &ldquo;6–9.&rdquo; Most patients are small; the 6 MB patient is the lone outlier
-          that makes ranking matter.
+          Measured over the {INGEST_HISTOGRAM_TOTAL} committed C-CDA fixtures by the same parser
+          ingest runs — not an asserted &ldquo;6–9.&rdquo; Most patients are small (7–9 chunks); the
+          6 MB patient (Agustin437, 33 chunks) is the lone snapshot-verified outlier that makes
+          ranking matter. A full ingest emits the same histogram over the whole corpus.
         </div>
         {INGEST_CHUNK_HISTOGRAM.map((b) => {
           const outlier = b.range === '33+'
