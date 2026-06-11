@@ -431,4 +431,44 @@ describe('BenchSet store CRUD', () => {
     localStorage.setItem(BENCH_KEY, '{garbage')
     expect(loadBenchStore().sets).toEqual([])
   })
+
+  it('keeps the VALID sets when one set in the store is corrupt (no full reset)', () => {
+    const good = makeSet()
+    // A structurally-invalid set sitting next to the good one (cases must be array).
+    const bad = { ...makeSet({ id: 'bad', name: 'Bad' }), cases: 'nope' }
+    localStorage.setItem(BENCH_KEY, JSON.stringify({ version: 4, sets: [good, bad] }))
+    const sets = loadBenchStore().sets
+    // One corrupt set must not discard the user's other sets.
+    expect(sets.map((s) => s.id)).toEqual(['set-1'])
+    expect(sets[0]).toEqual(good)
+  })
+})
+
+// ── migration robustness: unmigratable legacy rows are skipped, not cast in raw ─
+
+describe('migration validates legacy rows (no unvalidated cast into the store)', () => {
+  it('skips a legacy v1 row that cannot form a valid v4 case; others still import', () => {
+    const v1: UserCase[] = [
+      { id: 'ok', patientId: 'p', query: 'q', mode: 'retrieve', createdAt: 1 },
+      // missing query + createdAt → cannot form a v4 case that passes validation
+      { id: 'bad', patientId: 'p', mode: 'retrieve' } as unknown as UserCase,
+    ]
+    const cases = buildMigratedCases(v1, [])
+    expect(cases.map((c) => c.id)).toEqual(['ok'])
+  })
+
+  it('a migrated set survives a re-load (migration never poisons validateBenchSet)', () => {
+    // A v1 row with a junk ragMode would, if cast in raw, fail the next load and
+    // take the whole set down. It must be dropped at migration time instead.
+    const v1: UserCase[] = [
+      { id: 'good', patientId: 'p', query: 'q', mode: 'retrieve', createdAt: 1 },
+      { id: 'junk', patientId: 'p', query: 'q', mode: 'hybrid' as never, createdAt: 1 },
+    ]
+    localStorage.setItem('user_cases_v1', JSON.stringify(v1))
+    migrateLegacyToV4()
+    // Re-load goes through full validation — the set must still be there with the
+    // good case only (the junk row was never written).
+    const set = getBenchSet('migrated-v4')!
+    expect(set.cases.map((c) => c.id)).toEqual(['good'])
+  })
 })

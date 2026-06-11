@@ -76,11 +76,14 @@ export function BenchSetIO({ set, onImport, onMigrated }: Props) {
     reader.onload = () => {
       try {
         const imported = importBenchSet(String(reader.result ?? ''))
+        // onImport persists via the store, which enforces the pre-flight quota
+        // gate — a full store throws BenchQuotaExceededError, surfaced (named) here
+        // rather than escaping the reader callback unhandled.
         onImport(imported)
       } catch (err) {
-        // Named, human-readable error — the malformed field is in the message.
+        // Named, human-readable error — the malformed field (or quota) is in the message.
         setError(
-          err instanceof BenchSetValidationError
+          err instanceof BenchSetValidationError || err instanceof BenchQuotaExceededError
             ? err.message
             : `Import failed: ${(err as Error).message}`,
         )

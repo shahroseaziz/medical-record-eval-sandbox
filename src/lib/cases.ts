@@ -921,34 +921,68 @@ function emptyStore(): BenchStoreV4 {
   return { version: 4, sets: [] }
 }
 
-// Loads the v4 store. Corrupt blob → empty store (the legacy keys are untouched
-// backups, so nothing is lost). Never throws.
+// Loads the v4 store. Resilient at TWO levels so one bad blob never discards good
+// data: an unparseable / non-store top-level blob → empty store (the legacy keys
+// are untouched backups, so nothing is lost), and — crucially — a SINGLE corrupt
+// set is dropped on its own while every other valid set is retained. Validating
+// the whole array at once and bailing to empty on the first bad set would silently
+// reset user-created sets too, contradicting the "never silent partial state"
+// design. Never throws.
 export function loadBenchStore(): BenchStoreV4 {
   if (typeof window === 'undefined') return emptyStore()
   const raw = localStorage.getItem(STORAGE_KEY_BENCH_V4)
   if (!raw) return emptyStore()
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(raw)
-    if (!isPlainObject(parsed) || !Array.isArray(parsed.sets))
-      throw new Error('bench_sets_v4 is malformed')
-    return { version: 4, sets: parsed.sets.map((s, i) => validateBenchSet(s, `sets[${i}]`)) }
+    parsed = JSON.parse(raw)
   } catch (err) {
     console.warn(
-      '[cases] bench_sets_v4 is corrupt — starting from an empty store (legacy keys retained).',
+      '[cases] bench_sets_v4 is not valid JSON — starting from an empty store (legacy keys retained).',
       err,
     )
     return emptyStore()
   }
+  if (!isPlainObject(parsed) || !Array.isArray(parsed.sets)) {
+    console.warn(
+      '[cases] bench_sets_v4 is malformed (not a store) — starting from an empty store (legacy keys retained).',
+    )
+    return emptyStore()
+  }
+  // Validate each set INDEPENDENTLY: a single invalid set is skipped (with a named
+  // warning) while the rest survive — one corrupt set must not reset the others.
+  const sets: BenchSet[] = []
+  parsed.sets.forEach((s, i) => {
+    try {
+      sets.push(validateBenchSet(s, `sets[${i}]`))
+    } catch (err) {
+      console.warn(
+        `[cases] bench_sets_v4 set[${i}] is invalid — skipping it; the other sets are retained.`,
+        err,
+      )
+    }
+  })
+  return { version: 4, sets }
 }
 
-// Persists the store. Pre-flight quota check + atomic quota-guarded write: a full
-// store throws BenchQuotaExceededError (caller retains completed work + prompts
-// export), never a silent partial write.
+// Pre-flight the WHOLE store without writing. Call this before starting a fan-out
+// (or accepting an import) so the work can be refused up front instead of failing
+// mid-write. Pure read; never writes.
+export function preflightBenchStore(store: BenchStoreV4): QuotaPreflight {
+  return preflightQuota(STORAGE_KEY_BENCH_V4, stableStringify(store))
+}
+
+// Persists the store. The pre-flight quota check GATES the write: a store over the
+// soft budget is refused before the write is attempted (ok=false is respected, not
+// ignored), throwing BenchQuotaExceededError so the caller retains completed work
+// and can prompt an export. The atomic quota-guarded write below is the hard
+// backstop for a real browser QuotaExceededError under the soft budget. Either
+// way: never a silent partial write.
 export function saveBenchStore(store: BenchStoreV4): QuotaPreflight {
   if (typeof window === 'undefined')
     return { ok: true, projectedBytes: 0, budgetBytes: LOCALSTORAGE_BUDGET_BYTES }
   const serialized = stableStringify(store)
   const preflight = preflightQuota(STORAGE_KEY_BENCH_V4, serialized)
+  if (!preflight.ok) throw new BenchQuotaExceededError(STORAGE_KEY_BENCH_V4)
   writeWithQuotaGuard(STORAGE_KEY_BENCH_V4, serialized)
   return preflight
 }
@@ -1090,13 +1124,38 @@ export function exportLegacyCases(): string {
   })
 }
 
+// Build a v4 case from a legacy row, then VALIDATE it against the v4 schema before
+// it can enter the store. Legacy rows were cast from raw JSON with no per-row
+// guarantees, so a row missing e.g. `createdAt` or `query` would otherwise migrate
+// into a case that fails validateBenchSet on the next loadBenchStore — taking the
+// whole set down with it. Such a row is skipped (named warning) rather than
+// poisoning the migration. Returns the validated (normalized) case, or null.
+function safeMigrateCase(build: () => BenchCaseV4, label: string): BenchCaseV4 | null {
+  try {
+    return validateBenchCase(build(), label)
+  } catch (err) {
+    console.warn(
+      `[cases] skipping unmigratable legacy case ${label} — it would not pass v4 validation.`,
+      err,
+    )
+    return null
+  }
+}
+
 // Pure builder: legacy cases → the v4 cases for a "Migrated" set, deduped by id
-// (v3 golden-set wins over a v1 "My Cases" row on an id collision). Exported for
-// the migration-fixture tests.
+// (v3 golden-set wins over a v1 "My Cases" row on an id collision). Each row is
+// validated before inclusion; unmigratable rows are dropped, never cast in raw.
+// Exported for the migration-fixture tests.
 export function buildMigratedCases(v1: UserCase[], v3: UserCaseV3[]): BenchCaseV4[] {
   const byId = new Map<string, BenchCaseV4>()
-  for (const uc of v1) byId.set(uc.id, migrateV1CaseToV4(uc))
-  for (const uc of v3) byId.set(uc.id, migrateV3CaseToV4(uc)) // v3 overrides v1 on id collision
+  v1.forEach((uc, i) => {
+    const c = safeMigrateCase(() => migrateV1CaseToV4(uc), `user_cases_v1[${i}]`)
+    if (c) byId.set(c.id, c)
+  })
+  v3.forEach((uc, i) => {
+    const c = safeMigrateCase(() => migrateV3CaseToV4(uc), `user_cases_v3[${i}]`)
+    if (c) byId.set(c.id, c) // v3 overrides v1 on id collision
+  })
   return [...byId.values()]
 }
 

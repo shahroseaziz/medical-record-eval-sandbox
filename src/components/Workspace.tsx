@@ -8,13 +8,21 @@ import { TransformInspector } from './TransformInspector'
 import { Inspector } from './Inspector'
 import { UserCaseManager } from './UserCaseManager'
 import { GoldenSetBuilder } from './GoldenSetBuilder'
+import { BenchSetIO } from './BenchSetIO'
 import { ApiKeyInput, getByoHeaders } from './ApiKeyInput'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from './JudgeRubricEditor'
 import { EvalLoopDiagram, type EvalStage } from './EvalLoopDiagram'
 import { Term } from './Term'
 import { useRun } from '@/hooks/useRun'
-import { loadUserCasesV3, type UserCase, type UserCaseV3 } from '@/lib/cases'
+import {
+  loadUserCasesV3,
+  loadBenchSets,
+  saveBenchSet,
+  type UserCase,
+  type UserCaseV3,
+  type BenchSet,
+} from '@/lib/cases'
 import type { RunMode } from '@/app/api/run/types'
 import type { Thresholds } from '@/lib/eval/thresholds'
 
@@ -64,10 +72,17 @@ export function Workspace({
   const [goldenCaseCount, setGoldenCaseCount] = useState(0)
   const [hasEvalRun, setHasEvalRun] = useState(false)
   const [isLabeling, setIsLabeling] = useState(false)
+  // v4 BenchSet store (S21) — the single store behind JSON export/import + the D5
+  // legacy migration banner. `currentBenchSetId` is the export target in view.
+  const [benchSets, setBenchSets] = useState<BenchSet[]>([])
+  const [currentBenchSetId, setCurrentBenchSetId] = useState<string | null>(null)
 
   // Seed count from localStorage so the diagram reflects prior work on reload
   useEffect(() => {
     setGoldenCaseCount(loadUserCasesV3().length)
+    const sets = loadBenchSets()
+    setBenchSets(sets)
+    setCurrentBenchSetId(sets[0]?.id ?? null)
   }, [])
 
   const { text, retrieval, evalResult, trace, loading, error, run } = useRun()
@@ -170,6 +185,33 @@ export function Workspace({
       generationPrompt: customGenerationPrompt,
     })
   }
+
+  // Reload the v4 store, optionally selecting a set (e.g. the one just imported or
+  // the freshly-migrated "Migrated" set). Falls back to the first set if the
+  // current selection no longer exists.
+  function refreshBenchSets(selectId?: string) {
+    const sets = loadBenchSets()
+    setBenchSets(sets)
+    setCurrentBenchSetId((prev) => {
+      if (selectId && sets.some((s) => s.id === selectId)) return selectId
+      if (prev && sets.some((s) => s.id === prev)) return prev
+      return sets[0]?.id ?? null
+    })
+  }
+
+  // Persist an imported set via the store. saveBenchSet enforces the pre-flight
+  // quota gate and throws BenchQuotaExceededError on a full store; that throw
+  // propagates back into BenchSetIO's import handler, which surfaces it (named).
+  function handleBenchImport(set: BenchSet) {
+    saveBenchSet(set)
+    refreshBenchSets(set.id)
+  }
+
+  function handleBenchMigrated() {
+    refreshBenchSets('migrated-v4')
+  }
+
+  const currentBenchSet = benchSets.find((s) => s.id === currentBenchSetId) ?? null
 
   const canRun = Boolean(selectedPatient && query.trim() && !loading)
 
@@ -487,6 +529,37 @@ export function Workspace({
         onCapturePanelChange={setIsLabeling}
         thresholds={thresholds}
       />
+
+      <hr style={{ margin: '1.5rem 0', borderColor: '#eee' }} />
+
+      {/* Bench sets (v4) — JSON export/import, D5 legacy migration, completion prompt (S21) */}
+      <section
+        data-testid="bench-sets-section"
+        style={{ padding: '0.75rem', border: '1px solid #ddd', borderRadius: 6 }}
+      >
+        <h3 style={{ fontSize: '0.95rem', marginTop: 0, marginBottom: '0.5rem' }}>Bench sets</h3>
+        {benchSets.length > 1 && (
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', marginRight: '0.5rem' }}>Set:</label>
+            <select
+              data-testid="bench-set-select"
+              value={currentBenchSetId ?? ''}
+              onChange={(e) => setCurrentBenchSetId(e.target.value || null)}
+            >
+              {benchSets.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.cases.length})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <BenchSetIO
+          set={currentBenchSet}
+          onImport={handleBenchImport}
+          onMigrated={handleBenchMigrated}
+        />
+      </section>
     </div>
   )
 }
