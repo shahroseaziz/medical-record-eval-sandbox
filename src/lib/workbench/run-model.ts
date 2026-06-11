@@ -7,20 +7,25 @@
 // never loses a paid generation (the walk's central defect + the lost-to-refresh
 // failure mode).
 //
-// This module owns ONLY the write path. Scoring (`runs.current.scores`) and the
-// completed-score rotation current→previous are SHA-O7b — deliberately absent
-// here. The one invariant this layer must never violate is S22's
-// baseline-preservation rule:
+// This module owns the write path AND the O7b scoring round-trip: scoring writes
+// `runs.current.scores`, and a COMPLETED scoring pass rotates current→previous
+// (the new baseline) before the next regeneration begins (S22). The one invariant
+// this layer must never violate is S22's baseline-preservation / run-slot rule:
 //
-//   An aborted / unscored regeneration NEVER touches `runs.previous`.
+//   An aborted / unscored regeneration NEVER touches `runs.previous`, and
+//   `previous` holds ONLY the last *fully scored* run — a partially-scored
+//   `current` is never promoted.
 //
 // `runs.previous` is the last *fully scored* baseline the O8 delta view rests on;
 // beginning a run and persisting outputs only ever read/replace `runs.current`,
 // so an abort (or a reload mid-run) leaves the baseline byte-identical and
-// delta-able. The pure functions (`beginRun`, `writeOutput`) carry the invariant
-// structurally — they thread `runs.previous` through untouched — and the
-// store wrappers (`startRun`, `persistOutput`) are the impure, persist-immediately
-// edge.
+// delta-able. Rotation is the ONLY operation that moves a run into `previous`, and
+// it is gated on `isScoringComplete` — so a partial scoring pass can never lose the
+// baseline. The pure functions (`beginRun`, `writeOutput`, `writeScore`,
+// `rotateCompletedRun`) carry the invariant structurally — they thread
+// `runs.previous` through untouched (or replace it only with a fully-scored run) —
+// and the store wrappers (`startRun`, `persistOutput`, `persistScore`) are the
+// impure, persist-immediately edge.
 
 import {
   genPromptHash,
@@ -32,6 +37,7 @@ import {
   type BenchRunOutput,
   type BenchSet,
 } from '@/lib/cases'
+import type { RowResult } from '@/lib/eval/row-aggregate'
 
 // The bench's own store-backed set. The open workbench (R11) regenerates the
 // lesson-derived golden set; those runs need a home in the v4 store so the
@@ -154,6 +160,60 @@ export function writeOutput(set: BenchSet, caseId: string, output: BenchRunOutpu
   }
 }
 
+// ── Scoring + rotation (O7b — the read-back half of the round-trip) ──────────
+
+/**
+ * Write one case's row score into `runs.current.scores`, recomputing nothing else.
+ * Pure: returns a new set. Throws NoActiveRunError when there is no current run (a
+ * score with no run has nowhere to land). `runs.previous` is threaded through
+ * untouched — scoring writes ONLY into `current`; rotation (below) is the sole path
+ * a run takes into `previous`.
+ */
+export function writeScore(set: BenchSet, caseId: string, score: RowResult): BenchSet {
+  const current = set.runs.current
+  if (!current) throw new NoActiveRunError(set.id)
+  return {
+    ...set,
+    runs: {
+      current: { ...current, scores: { ...current.scores, [caseId]: score } },
+      previous: set.runs.previous,
+    },
+  }
+}
+
+/**
+ * A run is a COMPLETED scoring pass when every persisted output carries a row score
+ * — i.e. scoring consumed the whole current run. An empty run (nothing generated) is
+ * NOT complete (there is no baseline to rotate). This is the single predicate the
+ * rotation gate and the "next regeneration" guard both read, so "completed scoring"
+ * means exactly one thing across the round-trip.
+ */
+export function isScoringComplete(run: BenchRun): boolean {
+  const outputIds = Object.keys(run.outputs)
+  if (outputIds.length === 0) return false
+  return outputIds.every((id) => run.scores[id] !== undefined)
+}
+
+/**
+ * The rotation gate (S22 run-slot lifecycle). If the set's `current` run is a
+ * COMPLETED scoring pass, rotate it into `previous` (it becomes the new baseline)
+ * and clear `current`; otherwise return the set UNCHANGED. Pure.
+ *
+ * This is the only operation that promotes a run to `previous`, and it promotes ONLY
+ * a fully-scored run — a partial / unscored `current` is left exactly where it is, so
+ * the prior baseline is never lost to an aborted or half-scored run. The next
+ * regeneration passes through this gate (see `startRun`), so "a completed scoring
+ * pass rotates current→previous before the next regeneration begins" is structural.
+ */
+export function rotateCompletedRun(set: BenchSet): BenchSet {
+  const current = set.runs.current
+  if (!current || !isScoringComplete(current)) return set
+  return {
+    ...set,
+    runs: { current: null, previous: current },
+  }
+}
+
 // ── Store wrappers (impure: load → transform → persist-immediately) ──────────
 
 /** Find a set in the live store by id (undefined when absent). */
@@ -187,8 +247,28 @@ export function startRun(setId: string, opts: StartRunOptions): BenchSet {
     labels: {},
     runs: { current: null, previous: null },
   }
-  const withCases: BenchSet = { ...base, cases: opts.cases }
+  // Rotation gate (S22): a prior run that was FULLY scored becomes the new baseline
+  // before this regeneration drops `current`. A partial / unscored prior run does
+  // NOT rotate — it is simply replaced and the existing baseline (`previous`) is
+  // preserved. This is what makes "a completed scoring pass rotates current→previous
+  // before the next regeneration begins" hold at the store edge.
+  const rotated = rotateCompletedRun(base)
+  const withCases: BenchSet = { ...rotated, cases: opts.cases }
   const next = beginRun(withCases, opts)
+  saveBenchSet(next)
+  return next
+}
+
+/**
+ * Persist one case's row score into the set's current run, writing to localStorage
+ * immediately. Throws NoActiveRunError when the set is missing or has no current run
+ * (scoring runs against an open run — `startRun` first, or score the run rehydrated
+ * after a reload). Returns the persisted set.
+ */
+export function persistScore(setId: string, caseId: string, score: RowResult): BenchSet {
+  const set = findSet(setId)
+  if (!set || !set.runs.current) throw new NoActiveRunError(setId)
+  const next = writeScore(set, caseId, score)
   saveBenchSet(next)
   return next
 }
@@ -214,6 +294,27 @@ export function persistOutput(setId: string, caseId: string, output: BenchRunOut
  */
 export function currentOutputs(setId: string): Record<string, BenchRunOutput> {
   return findSet(setId)?.runs.current?.outputs ?? {}
+}
+
+/**
+ * Read the current run's persisted row scores for a set (empty when no set / no run).
+ * The rehydration source for the scored surface after a reload — paired with
+ * `currentOutputs`, it restores both the outputs the user generated and the scores
+ * they ran, so resume-scoring picks up exactly the cases still missing a score.
+ */
+export function currentScores(setId: string): Record<string, RowResult> {
+  return findSet(setId)?.runs.current?.scores ?? {}
+}
+
+/**
+ * Whether the set's current run is a completed scoring pass (every output scored).
+ * Drives the "ready to rotate / regenerate" state on the surface: a completed pass
+ * is the one that becomes the baseline at the next regeneration. False when there is
+ * no current run.
+ */
+export function isCurrentScoringComplete(setId: string): boolean {
+  const run = findSet(setId)?.runs.current
+  return run ? isScoringComplete(run) : false
 }
 
 /** The current run's stamped fingerprint, or null when there is no active run. */
