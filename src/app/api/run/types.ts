@@ -30,6 +30,17 @@ export interface RunTrace {
     input: number
     output: number
     estCostUsd: number
+    /**
+     * Prompt-caching token accounting (D8). Present when the generation call ran
+     * with a cached static prefix:
+     *   • cacheReadTokens — prefix tokens served FROM cache at ~0.1× input price
+     *     (a warm hit inside the ~5-min TTL).
+     *   • cacheWriteTokens — prefix tokens WRITTEN to cache at ~1.25× input price
+     *     (a cold miss / first request of an iteration burst).
+     * Both default to 0 when the provider reports no cache activity.
+     */
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
   }
   claimCount: number
   outputLength: number

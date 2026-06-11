@@ -8,7 +8,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import Anthropic from '@anthropic-ai/sdk'
 import { retrieve, fitChunksToBudget } from '@/lib/rag/index'
 import type { RetrievedChunk } from '@/lib/rag/index'
-import { buildPrompt, buildGroundingContext } from '@/lib/run/prompt'
+import { buildPrompt, buildPromptParts, buildGroundingContext } from '@/lib/run/prompt'
 import { scoreFaithfulness, scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
@@ -72,16 +72,30 @@ function overBudgetAdvice(mode: 'retrieve' | 'stuff'): string {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  // The BYO key (caller's own Anthropic key, via header) decides whether this run
+  // draws the shared $5 spend cap. Read it FIRST: it governs how an Upstash outage
+  // is handled at the rate-limit gate below. Used in-flight only, never persisted.
+  const byoKey = req.headers.get('x-byo-api-key') ?? undefined
+  const isByo = Boolean(byoKey)
+
   // ── 0. Rate limit (shared bucket across all routes, per client IP) ──────
-  // Fail closed: if Upstash is unreachable, reject rather than allow traffic.
+  // Fail-closed posture (arch S9a): an Upstash outage must never fail OPEN into
+  // uncapped SHARED spend. For a free-tier run (which would book the $5 cap) we
+  // reject (503). A BYO run books no shared spend — it bills the caller's own key
+  // — so per S9a "BYO survive": an Upstash outage does not take the BYO path down.
+  // A live limiter returning !ok is a genuine 429 and applies to everyone.
   let rlResult: { ok: boolean; headers: Record<string, string> }
   try {
     rlResult = await checkRateLimit(req)
   } catch {
-    return Response.json(
-      { error: 'Service temporarily unavailable.' },
-      { status: 503 },
-    )
+    if (!isByo) {
+      return Response.json(
+        { error: 'Service temporarily unavailable.' },
+        { status: 503 },
+      )
+    }
+    // BYO survives a limiter outage — no shared spend at risk.
+    rlResult = { ok: true, headers: {} }
   }
   if (!rlResult.ok) {
     return Response.json(
@@ -127,9 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     )
   }
 
-  // BYO key comes from a request header, never from the request body.
-  // It is used in-flight only and is never logged or persisted.
-  const byoKey = req.headers.get('x-byo-api-key') ?? undefined
+  // BYO key was read at the top of the handler (it governs the fail-closed gate).
   const envKey = process.env.ANTHROPIC_API_KEY
 
   // Generation always uses the BYO key when provided; falls back to env.
@@ -157,8 +169,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const caseId = `run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
 
   // BYO callers bypass the 12k free-tier ceiling (only the model-context guard
-  // applies); used both by the budget below and the spend-cap gating later.
-  const isByo = Boolean(byoKey)
+  // applies). isByo was computed at the top of the handler.
   // Input budget for assembly: the 12k metered ceiling for free-tier callers,
   // the model context window for BYO (their key, their budget).
   const inputBudget = isByo ? MODEL_CONTEXT_LIMIT : MAX_INPUT_TOKENS
@@ -188,8 +199,17 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   // ── 3. Assemble prompt ───────────────────────────────────────────────────
+  // Split form: the static contextPrefix (system + record/chunk context) is the
+  // cacheable prefix (D8), the questionSuffix is the only varying part. The
+  // combined userTurnPrompt is byte-identical to the legacy single-string form,
+  // so token counting and the persisted trace are unchanged.
   const groundingContext = buildGroundingContext(mode, chunks, record)
-  const { systemPrompt, userTurnPrompt, isUserAuthored } = buildPrompt(query, groundingContext, generationPrompt)
+  const { systemPrompt, contextPrefix, questionSuffix, isUserAuthored } = buildPromptParts(
+    query,
+    groundingContext,
+    generationPrompt,
+  )
+  const userTurnPrompt = `${contextPrefix}${questionSuffix}`
   // Combined string used for token counting and (when default prompt) trace storage.
   const fullAssembledPrompt = `${systemPrompt}\n\n${userTurnPrompt}`
 
@@ -283,21 +303,51 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         // ── 7. Stream generation tokens ───────────────────────────────────
+        // Prompt caching (D8): mark the static context block with Anthropic
+        // `cache_control: ephemeral`. cache_control caches everything up to and
+        // including its block — system prompt + the record/chunk context — so a
+        // regeneration of the same case inside the ~5-min TTL re-reads the ~12k
+        // shared prefix from cache (~0.1× input price) instead of re-billing it.
+        // Only the QUESTION suffix (a separate, uncached text part) varies. Judge
+        // calls stay uncached this cycle (arch S23).
         const result = streamText({
           model: aiProvider(model),
           system: systemPrompt,
-          prompt: userTurnPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: contextPrefix,
+                  providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+                },
+                { type: 'text', text: questionSuffix },
+              ],
+            },
+          ],
           maxTokens: MAX_OUTPUT_TOKENS,
         })
 
         result.mergeIntoDataStream(dataStream)
 
         // ── 8. Collect full output + usage ────────────────────────────────
-        const [output, usage, finishReason] = await Promise.all([
+        const [output, usage, finishReason, providerMetadata] = await Promise.all([
           result.text,
           result.usage,
           result.finishReason,
+          result.providerMetadata,
         ])
+        // Prompt-cache accounting (D8): the Anthropic provider surfaces cache token
+        // counts in providerMetadata.anthropic. cacheReadInputTokens > 0 is a warm
+        // hit (prefix served from cache); cacheCreationInputTokens > 0 is a cold
+        // write. Default to 0 when the provider reports no cache activity.
+        const anthropicMeta = (providerMetadata?.anthropic ?? {}) as {
+          cacheReadInputTokens?: number | null
+          cacheCreationInputTokens?: number | null
+        }
+        const cacheReadTokens = Number(anthropicMeta.cacheReadInputTokens ?? 0)
+        const cacheWriteTokens = Number(anthropicMeta.cacheCreationInputTokens ?? 0)
         // Wait for the raw-SSE scan to finish so the provider stop_reason is final.
         await stopCapture.done
 
@@ -310,14 +360,23 @@ export async function POST(req: NextRequest): Promise<Response> {
         //     complete), other unknown stop_reasons (refusal/pause) are not
         //     misclassified as context overflow, and a dep bump cannot silently
         //     break detection. An abnormal finish with no raw stop_reason and no
-        //     usable output falls back to generic copy. Reachable only on the
-        //     BYO/raised-budget path, so spend is the user's key — no cap refund.
+        //     usable output falls back to generic copy.
+        //
+        //     App-fault refund (E29d/S23): this terminated abnormally and is never
+        //     scored/persisted, so any booked spend is refunded — the same fault
+        //     class as the pre-call token-limit guards (5a/5b/5c). On the metered
+        //     path the 12k ceiling (5b) precludes the context-overflow surface, so
+        //     refundSpend is null here (BYO) and the refund is a no-op; wiring it
+        //     keeps the invariant "every app-fault refunds" true regardless of
+        //     which path reaches it. A genuine 429 never reaches this point (it is
+        //     rejected at booking, before generation), so it never refunds.
         const outcome = classifyGenerationOutcome({
           rawStopReason: stopCapture.stopReason(),
           finishReason: String(finishReason),
           output,
         })
         if (!outcome.ok) {
+          if (refundSpend) { await refundSpend(); refundSpend = null }
           dataStream.writeData({
             type: 'error',
             message:
@@ -363,9 +422,15 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         // ── 11. Persist trace to DB ───────────────────────────────────────
         const embeddingTokens = mode === 'retrieve' ? estimateTokens(query) : 0
+        // Prompt-cache pricing (D8): cache READS bill at ~0.1× input, cache WRITES
+        // at ~1.25× input. usage.promptTokens already excludes cached reads (only
+        // the freshly-processed input is counted there), so add the cache legs at
+        // their own multipliers for a faithful cost estimate.
         const estCostUsd =
           usage.promptTokens * INPUT_COST_PER_TOKEN +
           usage.completionTokens * OUTPUT_COST_PER_TOKEN +
+          cacheReadTokens * INPUT_COST_PER_TOKEN * 0.1 +
+          cacheWriteTokens * INPUT_COST_PER_TOKEN * 1.25 +
           embeddingTokens * EMBED_COST_PER_TOKEN
 
         const assembledPromptForTrace = isUserAuthored
@@ -391,6 +456,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             input: usage.promptTokens,
             output: usage.completionTokens,
             estCostUsd,
+            cacheReadTokens,
+            cacheWriteTokens,
           },
           judgeUsesByo: judgeKeyIsByo,
         })
