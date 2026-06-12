@@ -119,7 +119,7 @@ test.describe('seeded surface: designed-label agreement (E26)', () => {
   test('the seeded scorecard reads "designed-label agreement", not clinician copy', async ({
     page,
   }) => {
-    await page.goto('/workspace')
+    await page.goto('/workbench')
 
     await expect(page.getByTestId('eval-scorecard')).toBeVisible()
     // The seeded set's agreement is agreement-with-the-author's designed labels.

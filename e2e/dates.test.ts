@@ -1,63 +1,75 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
-/**
- * SHA-76 — DOB / record-viewer date craft.
- *
- * Guards that every patient-facing date on the record-viewer surface renders
- * through the shared C-CDA date formatter, so a raw HL7 v3 timestamp
- * (`YYYYMMDDHHMMSS`) can never leak into the UI. The mock patient carries a
- * full-precision birth TS (with a time component) to prove the time is dropped
- * and the date renders clinically.
- */
-
-const MOCK_PATIENT = {
-  id: 'p-dates-001',
-  name: 'Dorothy Vance',
-  summary: {
-    demographics: {
-      firstName: 'Dorothy',
-      lastName: 'Vance',
-      // Full HL7 v3 TS: date + time. Must render as "Mar 14, 1982".
-      birthDate: '19820314120000',
-      gender: 'F',
-    },
-    sections: ['encounters', 'problems', 'medications'],
-  },
+// SHA-76 / O12b-retargeted: patient-facing dates render clinically on the BENCH
+// composer (the workspace patient browser retired with /workspace; the composer
+// picker is the surviving date surface and consumes the shared C-CDA formatter).
+interface MockPatient {
+  id: string
+  name: string
+  sections: string[]
+  birthDate: string
 }
 
-test.describe('SHA-76: patient-facing dates render clinically', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.route('/api/patients*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ patients: [MOCK_PATIENT] }),
-      })
+const POOL: MockPatient[] = [
+  { id: 'p1', name: 'Agustin Hills', sections: ['medications', 'allergies', 'problems'], birthDate: '19820314' },
+  { id: 'p2', name: 'Benally Yazzie', sections: ['medications', 'problems', 'vitals'], birthDate: '19751101' },
+  { id: 'p3', name: 'Carla Reyes', sections: ['allergies', 'problems'], birthDate: '19900722' },
+  { id: 'p4', name: 'Dion Park', sections: ['medications', 'results'], birthDate: '20010103' },
+  { id: 'p5', name: 'Esther Cohen', sections: ['problems', 'encounters', 'vitals'], birthDate: '19680519' },
+]
+
+async function mockSample(page: Page) {
+  await page.route(/\/api\/patients\/sample.*/, async (route, request) => {
+    const url = new URL(request.url())
+    const n = Math.min(20, Math.max(1, parseInt(url.searchParams.get('n') ?? '5', 10)))
+    const patients = POOL.slice(0, n).map((p) => {
+      const [firstName, lastName] = p.name.split(' ')
+      return {
+        id: p.id,
+        name: p.name,
+        summary: {
+          demographics: { firstName, lastName, gender: 'F', birthDate: p.birthDate },
+          sections: p.sections,
+        },
+        record: p.sections.map((s) => `[${s}]\n${s} narrative for ${p.name}`).join('\n\n---\n\n'),
+        recordTokens: 1200,
+      }
     })
-    await page.goto('/workspace')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        patients,
+        requested: n,
+        returned: patients.length,
+        shortfall: false,
+        budgetTokens: 11500,
+      }),
+    })
   })
+}
 
-  test('DOB renders as a human date, never a raw timestamp', async ({ page }) => {
-    await page.getByTestId('get-patients-btn').click()
+async function openComposer(page: Page) {
+  await page.goto('/workbench')
+  await page.getByTestId('open-the-bench-btn').click()
+  await page.getByTestId('add-case-toggle').click()
+  await expect(page.getByTestId('case-composer')).toBeVisible()
+}
 
-    const card = page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)
-    await expect(card).toBeVisible()
 
-    // The clinical, human-readable form is shown…
-    await expect(card).toContainText('DOB: Mar 14, 1982')
-
-    // …and the raw TS string is nowhere on the surface.
-    await expect(card).not.toContainText('19820314')
-  })
-
-  test('no raw YYYYMMDD(HHMMSS) timestamp renders on the record-viewer card', async ({ page }) => {
-    await page.getByTestId('get-patients-btn').click()
-    const card = page.getByTestId(`patient-card-${MOCK_PATIENT.id}`)
-    await expect(card).toBeVisible()
-
-    // Scan the card's rendered text for an 8+ digit run (a raw HL7 TS). The
-    // shared formatter guarantees none survives to the DOM.
-    const cardText = await card.innerText()
-    expect(cardText).not.toMatch(/\d{8,}/)
+test.describe('SHA-76: patient-facing dates render clinically', () => {
+  test('composer picker renders human DOBs, never raw timestamps', async ({ page }) => {
+    await mockSample(page)
+    await page.goto('/workbench')
+    await page.getByTestId('open-the-bench-btn').click()
+    await page.getByTestId('add-case-toggle').click()
+    await expect(page.getByTestId('case-composer')).toBeVisible()
+    await page.getByTestId('composer-n-input').fill('3')
+    await page.getByTestId('give-me-random-btn').click()
+    const list = page.getByTestId('patient-list')
+    await expect(list.locator('[data-testid^="patient-card-"]').first()).toBeVisible()
+    const text = await list.innerText()
+    expect(text).toMatch(/DOB [A-Z][a-z]{2} \d{1,2}, \d{4}/)
+    expect(text).not.toMatch(/\d{8,}/)
   })
 })

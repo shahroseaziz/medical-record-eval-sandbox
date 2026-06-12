@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { DisagreementTable } from './DisagreementTable'
 import { EvaluatorResultsTable } from './EvaluatorResultsTable'
 import { ClinicianAgreement } from './ClinicianAgreement'
+import { BenchSetIO } from './BenchSetIO'
+import { JudgeRubricEditor, DEFAULT_VERDICT_RUBRIC, type RescoreResult } from './JudgeRubricEditor'
+import { saveBenchSet } from '@/lib/cases'
 import { GenerationPromptEditor, DEFAULT_GENERATION_PROMPT } from './GenerationPromptEditor'
 import { CaseComposer } from './CaseComposer'
 import { RagInspector } from './RagInspector'
@@ -237,6 +240,48 @@ export function Workbench({
   const [checkedCaseIds, setCheckedCaseIds] = useState<ReadonlySet<string>>(
     () => new Set(cases.map((c) => c.caseId)),
   )
+  // O12b parity port — the judge-calibration loop (the one loop that worked on
+  // production pre-cycle, S26: ported, never regressed). Free-text verdict rubric +
+  // single-case re-score PROBE: it re-judges the selected case's CURRENT output live
+  // with the custom rubric and shows the result in the editor. It never mutates
+  // persisted run scores — those stay on the default-rubric path so the E27
+  // comparability fingerprint stays honest.
+  const [judgeRubric, setJudgeRubric] = useState<string>(DEFAULT_VERDICT_RUBRIC)
+  const [rescoring, setRescoring] = useState(false)
+  const [rescoreResult, setRescoreResult] = useState<RescoreResult | null>(null)
+  const [rescoreError, setRescoreError] = useState<string | null>(null)
+
+  async function rescoreProbe() {
+    if (rescoring) return
+    const run = getBenchSet(WORKBENCH_SET_ID)?.runs.current
+    const output = run?.outputs[selectedCaseId]
+    const grounding = caseRecords.get(selectedCaseId) ?? ''
+    if (!output || !grounding) {
+      setRescoreError('Generate an output for the selected case first.')
+      return
+    }
+    setRescoring(true)
+    setRescoreError(null)
+    try {
+      const res = await fetch('/api/score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'captured',
+          capturedOutput: output.text,
+          capturedGrounding: grounding,
+          userVerdictRubric: judgeRubric,
+        }),
+      })
+      if (!res.ok) throw new Error(res.status === 429 ? 'Rate-limited — try again when the window resets.' : `score failed (${res.status})`)
+      setRescoreResult((await res.json()) as RescoreResult)
+    } catch (err) {
+      setRescoreError(err instanceof Error ? err.message : 'Re-score failed')
+    } finally {
+      setRescoring(false)
+    }
+  }
+
   function toggleChecked(caseId: string) {
     setCheckedCaseIds((prev) => {
       const next = new Set(prev)
@@ -1115,6 +1160,21 @@ export function Workbench({
               threshold={evaluatorThreshold}
               onLabel={handleUserLabel}
               onClearLabel={handleClearUserLabel}
+            />
+
+            <JudgeRubricEditor
+              value={judgeRubric}
+              onChange={setJudgeRubric}
+              canRescore
+              onRescore={rescoreProbe}
+              rescoring={rescoring}
+              rescoreResult={rescoreResult}
+              rescoreError={rescoreError}
+            />
+
+            <BenchSetIO
+              set={getBenchSet(WORKBENCH_SET_ID) ?? null}
+              onImport={(s) => saveBenchSet(s)}
             />
           </section>
         </>
