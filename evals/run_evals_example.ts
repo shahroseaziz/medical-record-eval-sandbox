@@ -36,6 +36,7 @@ import { scoreFaithfulness } from '../src/lib/eval/scorers/faithfulness.js'
 import { scoreStructuredDiff } from '../src/lib/eval/scorers/structured-diff.js'
 import { scoreReferenceJudge } from '../src/lib/eval/scorers/reference-judge.js'
 import { isUpstreamOutage, EXPECTED_JUDGE_MODEL, EXPECTED_EMBEDDING_MODEL } from './run_evals.js'
+import { checkJudgePromptParity } from './harness/prompt-hash.js'
 import type {
   EvalCase,
   FaithfulnessResult,
@@ -323,6 +324,13 @@ export async function runExampleGate(opts: ExampleGateOptions = {}): Promise<Gat
 
   const examplePath = opts.examplePath ?? EXAMPLE_PATH
 
+  // [0] Judge-prompt template parity (O11/E28f) — a silent template edit re-rolls
+  // every score while judgeModel still matches; cheap + deterministic, so it runs
+  // before any live call.
+  const promptDrift = checkJudgePromptParity()
+  for (const msg of promptDrift) add({ check: 'prompt-parity', message: msg })
+  if (promptDrift.length === 0) ok('judge prompt templates match committed hashes (E28f)')
+
   // [1] Load example artifact
   if (!existsSync(examplePath)) {
     return {
@@ -514,6 +522,35 @@ export async function runExampleGate(opts: ExampleGateOptions = {}): Promise<Gat
     })
   } else {
     ok(`reference-judge fixture: verdict=${rj.verdict} score=${(rj.score ?? 0).toFixed(2)}`)
+  }
+
+  // Reference-EFFECT pair (O11/E28a — the cycle's motivating defect as a live gate
+  // check): the SAME output scored against a deliberately divergent reference must
+  // score strictly lower than against the matching reference. If an authored
+  // reference ever stops reaching the scorer again (pitfall #15786), this fails.
+  if (opts.referenceJudgeFn) {
+    ok('reference-effect: skipped under injected judge (live-path check only — the wiring half is pinned by the O4 unit test)')
+  } else {
+  const rjDivergent = await runReferenceJudge(
+    REFERENCE_JUDGE_FIXTURE.actual,
+    'The patient takes warfarin 5mg twice daily and has no other medications.',
+    client,
+  )
+  if (rjDivergent.errored || rjDivergent.score == null || rj.score == null) {
+    add({
+      check: 'reference-effect',
+      message: `reference-effect pair could not be scored (divergent errored=${String(rjDivergent.errored)})`,
+    })
+  } else if (rjDivergent.score >= rj.score) {
+    add({
+      check: 'reference-effect',
+      message:
+        `reference-effect violated: divergent reference scored ${rjDivergent.score.toFixed(2)} >= ` +
+        `matching ${rj.score.toFixed(2)} — the authored reference is not driving the score (E28a)`,
+    })
+  } else {
+    ok(`reference-effect: matching=${rj.score.toFixed(2)} > divergent=${rjDivergent.score.toFixed(2)} — the reference drives the score`)
+  }
   }
 
   // Negative fixture — runs the REAL scoreReferenceJudge against an in-process

@@ -12,10 +12,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      eval_sensitive: ${{ steps.sensitive.outputs.changed }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # D13 (SHA-47 resolution, per the SHA-66 cross-reference): the live eval gate
+      # auto-runs when a PR touches score-moving paths — scorers, golden sets,
+      # thresholds, judge templates/harness — and stays manual everywhere else.
+      # Bounded by construction: only PRs, only these paths (never every push —
+      # the Haiku-flood guard SHA-47 added is preserved).
+      - name: Detect eval-sensitive changes (D13)
+        id: sensitive
+        if: github.event_name == 'pull_request'
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base"...HEAD | grep -E \
+            '^(src/lib/eval/|evals/golden/|evals/thresholds\.yaml|evals/harness/|evals/run_evals)' || true)
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Eval-sensitive paths changed:"; echo "$changed"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -127,11 +150,13 @@ jobs:
     # R14: also exercises the structured-diff + reference-judge runtime paths, incl. a
     # malformed reference-judge negative fixture that must surface "errored" (not a crash
     # or fabricated verdict). The deterministic halves of those checks also run in `npm test`.
-    # MANUAL ONLY (cost control): this is a live-judge run (k-variance × cases × 2
-    # Haiku calls). Running it on every push/PR flooded the account's Haiku rate
-    # limit (586 hits/24h), so it now runs ONLY on workflow_dispatch (Actions → CI →
-    # Run workflow). Non-required check, so skipping it on push/PR never blocks a merge.
-    if: needs.ci.result == 'success' && github.event_name == 'workflow_dispatch'
+    # TRIGGER POLICY (D13, resolves SHA-47): manual dispatch as before, PLUS
+    # auto-run on pull_requests that touch score-moving paths (see the ci job's
+    # "Detect eval-sensitive changes" step). The every-push flood that SHA-47
+    # guarded against stays impossible: pushes never trigger it, and PRs only
+    # when scorers/golden/thresholds/judge-harness change. On those PRs the gate
+    # IS load-bearing: a band violation fails the run.
+    if: needs.ci.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && needs.ci.outputs.eval_sensitive == 'true'))
 
     steps:
       - name: Checkout
