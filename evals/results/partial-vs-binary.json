@@ -1,0 +1,22 @@
+{
+  "generated": "2026-06-12",
+  "method": "seed cases scored by the shipped 3-option judge AND a binary-elicitation judge, same fixtures (D1)",
+  "tolerance": 0.05,
+  "meanAbsDelta": 0,
+  "withinTolerance": true,
+  "followUp": null,
+  "cases": [
+    {
+      "id": "faith-agustin-problems-retrieve-pass",
+      "threeOption": 1,
+      "binary": 1,
+      "absDelta": 0
+    },
+    {
+      "id": "faith-agustin-vitals-retrieve-pass",
+      "threeOption": 0.9230769230769231,
+      "binary": 0.9230769230769231,
+      "absDelta": 0
+    }
+  ]
+}

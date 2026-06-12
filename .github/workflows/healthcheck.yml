@@ -33,6 +33,45 @@ on:
         default: false
 
 jobs:
+  quality-drift:
+    name: Quality Drift (weekly live re-grade)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # O11 / eval-engineer synthesis: scheduled live re-grade of the example gate so
+    # judge-quality drift is MONITORED BY DEFAULT, not only when someone runs the
+    # manual gate. Band reasoning lives inside the gate (mean ± max(0.05, z·σ));
+    # a violation fails this job (the alarm). History accumulates as artifacts.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Live example gate (judge re-grade)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+        run: |
+          mkdir -p drift
+          ts=$(date -u +%FT%TZ)
+          set +e
+          npx tsx evals/run_evals_example.ts | tee drift/gate-output.txt
+          code=$?
+          set -e
+          echo "{\"ts\":\"$ts\",\"exit\":$code}" >> drift/drift-history.jsonl
+          cat drift/drift-history.jsonl
+          # exit 2 = upstream outage (inconclusive, do not alarm); 1 = drift/red (alarm)
+          if [ "$code" -eq 1 ]; then exit 1; fi
+      - name: Upload drift history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-history-${{ github.run_id }}
+          path: drift/
+          retention-days: 90
+
   # ── Job 1: Health check ──────────────────────────────────────────────────────
   healthcheck:
     name: Health Check

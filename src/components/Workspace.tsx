@@ -26,9 +26,21 @@ import {
 import type { RunMode } from '@/app/api/run/types'
 import type { Thresholds } from '@/lib/eval/thresholds'
 
-function EvalBadge({ label, score }: { label: string; score: number | null }) {
-  const color = score === null ? '#888' : score >= 0.85 ? '#2a7' : score >= 0.5 ? '#a80' : '#c00'
-  const text = score === null ? 'N/A' : (score * 100).toFixed(0) + '%'
+function EvalBadge({
+  label,
+  score,
+  zeroClaim,
+}: {
+  label: string
+  score: number | null
+  zeroClaim?: boolean
+}) {
+  // E28(g): a zero-claim output is vacuously "1.0 faithful" in the math but is
+  // excluded from aggregates (E11) — the score must never reach the screen as a
+  // confident 100%. Render the exclusion instead.
+  const effective = zeroClaim ? null : score
+  const color = effective === null ? '#888' : effective >= 0.85 ? '#2a7' : effective >= 0.5 ? '#a80' : '#c00'
+  const text = zeroClaim ? 'N/A (no claims)' : score === null ? 'N/A' : (score * 100).toFixed(0) + '%'
   return (
     <span
       style={{
@@ -427,7 +439,7 @@ export function Workspace({
                 Eval scores:
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <EvalBadge label="faithfulness" score={evalResult.faithfulness.score} />
+                <EvalBadge label="faithfulness" score={evalResult.faithfulness.score} zeroClaim={evalResult.faithfulness.zeroClaimFlag} />
                 <EvalBadge label="section-hit" score={evalResult.sectionHit.score} />
               </div>
               {evalResult.faithfulness.claims.length > 0 && (

@@ -190,9 +190,11 @@ export function JudgeRubricEditor({
                         : '#c00',
               }}
             >
-              {rescoreResult.score === null
-                ? 'N/A'
-                : (rescoreResult.score * 100).toFixed(0) + '%'}
+              {rescoreResult.zeroClaimFlag
+                ? 'N/A (no claims)'
+                : rescoreResult.score === null
+                  ? 'N/A'
+                  : (rescoreResult.score * 100).toFixed(0) + '%'}
             </span>
           </div>
           {rescoreResult.errored && (
