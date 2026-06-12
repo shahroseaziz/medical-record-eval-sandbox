@@ -1,6 +1,10 @@
 import Link from 'next/link'
 import { Card, Container, Heading, Stack, Text } from '@/components/ui'
 import { Workbench } from '@/components/Workbench'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { EvalScorecard } from '@/components/EvalScorecard'
+import type { ScorecardAggregate, ScorecardCase } from '@/components/EvalScorecard'
 import { loadThresholds, type Thresholds } from '@/lib/eval/thresholds'
 import { decodeCarryParams } from '@/lib/workbench/carryover'
 import styles from './page.module.css'
@@ -69,6 +73,11 @@ export default async function WorkbenchPage({
           initialLabelOverrides={carry.labels}
         />
 
+        {(() => {
+          const sc = loadScorecard()
+          return sc ? <EvalScorecard aggregate={sc.aggregate} cases={sc.cases} /> : null
+        })()}
+
         <hr className={styles.rule} />
 
         <div>
@@ -80,3 +89,48 @@ export default async function WorkbenchPage({
     </Container>
   )
 }
+interface BaselineCaseRow {
+  caseId: string
+  meanScore: number | null
+}
+
+// O12b parity port: the seeded scorecard (honesty note, designed-label agreement,
+// open-source link) moved here verbatim from the retired /workspace page.
+function loadScorecard(): { aggregate: ScorecardAggregate; cases: ScorecardCase[] } | null {
+  try {
+    const raw = readFileSync(join(process.cwd(), 'evals/results/seed-baseline.json'), 'utf8')
+    const data: {
+      aggregate: {
+        passRate: number | null
+        judgeReferenceAgreement: number | null
+        judgeHumanKappa?: number | null
+        interHumanKappa?: number | null
+        n: number
+      }
+      cases: BaselineCaseRow[]
+    } = JSON.parse(raw)
+    const agg = data.aggregate
+    if (agg.passRate === null || agg.judgeReferenceAgreement === null) return null
+    const { faithfulness: passThreshold } = loadThresholds()
+    const aggregate: ScorecardAggregate = {
+      passRate: agg.passRate,
+      judgeReferenceAgreement: agg.judgeReferenceAgreement,
+      judgeHumanKappa: agg.judgeHumanKappa ?? null,
+      interHumanKappa: agg.interHumanKappa ?? null,
+      n: agg.n,
+    }
+    const cases: ScorecardCase[] = (data.cases ?? [])
+      .filter((c) => c.meanScore !== null && c.meanScore !== undefined)
+      .map((c) => ({
+        id: c.caseId,
+        label: c.caseId,
+        faithfulnessScore: c.meanScore as number,
+        pass: (c.meanScore as number) >= passThreshold,
+      }))
+    return { aggregate, cases }
+  } catch {
+    return null
+  }
+}
+
+

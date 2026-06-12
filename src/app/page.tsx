@@ -84,12 +84,9 @@ export default function Home() {
       <footer className={styles.footer}>
         <hr className={styles.footerRule} />
         <p className={styles.footerText}>
-          Want the full single-page surface — Inspector, RAG toggle, and the golden-set builder
-          together? Open the{' '}
-          <Link href="/workspace" className={styles.footerLink} data-testid="workspace-link">
-            classic workspace
-          </Link>
-          , or read a{' '}
+          {/* O12b: the classic workspace is retired — the bench reached parity and
+              /workspace now 301s there. The worked example stays. */}
+          Read a{' '}
           <Link href="/example" className={styles.footerLink} data-testid="example-link">
             worked example run
           </Link>

@@ -37,12 +37,12 @@ test.describe('landing: persona router at /', () => {
     await expect(workbench).toContainText(/workbench/i)
   })
 
-  test('links quietly to the classic workspace and the worked example', async ({ page }) => {
+  test('links quietly to the worked example; the classic workspace is retired (O12b)', async ({ page }) => {
     await page.route('/api/**', async (route) => route.abort())
     await page.goto('/')
 
-    await expect(page.getByTestId('workspace-link')).toHaveAttribute('href', '/workspace')
     await expect(page.getByTestId('example-link')).toHaveAttribute('href', '/example')
+    await expect(page.getByTestId('workspace-link')).toHaveCount(0)
   })
 
   test('says what this is — synthetic data, no sign-up', async ({ page }) => {
@@ -55,21 +55,9 @@ test.describe('landing: persona router at /', () => {
     await expect(page.getByText(/no sign-up/i)).toBeVisible()
   })
 
-  test('the re-homed workspace still carries the v1 authoring surface', async ({ page }) => {
-    await page.route('/api/patients*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ patients: [] }),
-      })
-    })
-    await page.route('/api/run', async (route) => route.abort())
-
+  test('the retired /workspace lands on the bench (O12b)', async ({ page }) => {
     await page.goto('/workspace')
+    expect(page.url()).toContain('/workbench')
 
-    await expect(page.getByTestId('example-hero')).toBeVisible()
-    await expect(page.getByTestId('golden-set-builder')).toBeVisible()
-    // and a quiet way back to the front door
-    await expect(page.getByTestId('workspace-home-link')).toHaveAttribute('href', '/')
   })
 })
