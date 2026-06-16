@@ -470,4 +470,94 @@ describe('/api/score integration (mocked Claude)', () => {
       }
     })
   })
+
+  // ── Criteria-verdict contract (single call → {pass, reason}) ─────────────────
+
+  describe('criteria-verdict contract', () => {
+    /** One criteria verdict per call (replaces the extract→verdict pair). */
+    function setupCriteriaMock(pass: boolean, reason: string) {
+      mockCreate.mockReset()
+      mockCreate.mockResolvedValue({
+        content: [{ type: 'tool_use', name: 'criteria_verdict', input: { pass, reason } }],
+      })
+    }
+
+    it('returns {pass, reason} from exactly ONE metered judge call', async () => {
+      setupCriteriaMock(true, 'The output lists a medication, satisfying the criteria.')
+
+      const res = await handler(makeReq({
+        source: 'criteria',
+        criteria: 'The answer names at least one medication.',
+        patientId: 'patient-001',
+        output: 'The patient takes Lisinopril 10mg daily.',
+      }) as never)
+
+      expect(res.status).toBe(200)
+      const body = await res.json() as Record<string, unknown>
+      expect(body).toEqual({
+        pass: true,
+        reason: 'The output lists a medication, satisfying the criteria.',
+      })
+      // Exactly one judge call per patient (not the 2-call faithfulness path).
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns pass:false when the output violates the criteria', async () => {
+      setupCriteriaMock(false, 'The output claims no medications, violating the criteria.')
+
+      const res = await handler(makeReq({
+        source: 'criteria',
+        criteria: 'The answer names at least one medication.',
+        patientId: 'patient-001',
+        output: 'The patient is not taking any medications.',
+      }) as never)
+
+      expect(res.status).toBe(200)
+      const body = await res.json() as { pass: boolean; reason: string }
+      expect(body.pass).toBe(false)
+      expect(typeof body.reason).toBe('string')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not leak raw criteria/output text into the response', async () => {
+      setupCriteriaMock(true, 'Satisfied.')
+      const res = await handler(makeReq({
+        source: 'criteria',
+        criteria: 'SECRET-CRITERIA-MARKER must hold.',
+        patientId: 'patient-001',
+        output: 'SECRET-OUTPUT-MARKER content.',
+      }) as never)
+      const text = await res.text()
+      expect(text).not.toContain('SECRET-CRITERIA-MARKER')
+      expect(text).not.toContain('SECRET-OUTPUT-MARKER')
+    })
+
+    it('validates required fields (criteria, patientId, output)', async () => {
+      for (const bad of [
+        { source: 'criteria', patientId: 'p', output: 'o' }, // no criteria
+        { source: 'criteria', criteria: 'c', output: 'o' }, // no patientId
+        { source: 'criteria', criteria: 'c', patientId: 'p' }, // no output
+      ]) {
+        const res = await handler(makeReq(bad) as never)
+        expect(res.status).toBe(400)
+      }
+    })
+
+    it('surfaces a terminal judge error as 503 (no fabricated verdict)', async () => {
+      mockCreate.mockReset()
+      // Unparseable tool input on every attempt → terminal judge error.
+      mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'no tool call' }] })
+
+      const res = await handler(makeReq({
+        source: 'criteria',
+        criteria: 'The answer names at least one medication.',
+        patientId: 'patient-001',
+        output: 'Some output.',
+      }) as never)
+
+      expect(res.status).toBe(503)
+      const body = await res.json() as Record<string, unknown>
+      expect(body.pass).toBeUndefined()
+    })
+  })
 })

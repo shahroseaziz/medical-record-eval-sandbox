@@ -11,6 +11,7 @@ export type {
   FaithfulnessResult,
   ReferenceVerdict,
   ReferenceJudgeResult,
+  CriteriaJudgeResult,
   ExtractionCompletenessResult,
   SectionHitResult,
   StructuredFieldDiff,
@@ -29,6 +30,12 @@ export {
   buildReferencePrompt,
   buildRedactedReferencePrompt,
 } from './scorers/reference-judge'
+export {
+  scoreCriteriaJudge,
+  buildCriteriaPrompt,
+  buildRedactedCriteriaPrompt,
+  buildReplayedCriteriaResult,
+} from './scorers/criteria-judge'
 export { scoreExtractionCompleteness } from './scorers/extraction-completeness'
 export { scoreSectionHit } from './scorers/section-hit'
 export { scoreStructuredDiff, extractEntries } from './scorers/structured-diff'

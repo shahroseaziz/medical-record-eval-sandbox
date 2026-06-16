@@ -98,14 +98,20 @@ export function useRun() {
         } else if (parsed.kind === 'data') {
           for (const item of parsed.items) {
             const d = item as Record<string, unknown>
-            if (d.type === 'retrieval') {
-              setState((s) => ({
-                ...s,
-                retrieval: {
-                  chunks: (d.chunks ?? []) as RetrievalData['chunks'],
-                  groundingContext: (d.groundingContext ?? '') as string,
-                },
-              }))
+            // The unified context manifest (both modes) replaces the old
+            // retrieve-only `retrieval` frame. Retrieve mode still carries chunk
+            // detail + grounding, which the workbench surface renders; stuff mode
+            // carries only the manifest (no chunks), so retrieval stays null there.
+            if (d.type === 'context') {
+              if (Array.isArray(d.chunks)) {
+                setState((s) => ({
+                  ...s,
+                  retrieval: {
+                    chunks: (d.chunks ?? []) as RetrievalData['chunks'],
+                    groundingContext: (d.groundingContext ?? '') as string,
+                  },
+                }))
+              }
             } else if (d.type === 'eval') {
               setState((s) => ({
                 ...s,

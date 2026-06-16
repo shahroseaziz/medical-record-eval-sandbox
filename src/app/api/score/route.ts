@@ -5,8 +5,9 @@ import { NextRequest } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
-import { scoreFaithfulness } from '@/lib/eval/index'
-import type { EvalCase, FaithfulnessResult } from '@/lib/eval/index'
+import { scoreFaithfulness, scoreCriteriaJudge } from '@/lib/eval/index'
+import type { EvalCase, FaithfulnessResult, CriteriaJudgeResult } from '@/lib/eval/index'
+import { JUDGE_MODEL } from '@/lib/models'
 import { retrieve } from '@/lib/rag/index'
 import { withClient } from '@/lib/db/index'
 import { estimateTokens, assertWithinTokenLimit, MAX_INPUT_TOKENS, TokenLimitError } from '@/lib/tokens'
@@ -14,13 +15,17 @@ import { estimateTokens, assertWithinTokenLimit, MAX_INPUT_TOKENS, TokenLimitErr
 // 2 judge calls (extract + verdict): ~3.5k input + 1k output each @ Haiku pricing
 const JUDGE_SCORE_ESTIMATE_MICRO_USD = Math.ceil(7_000 * 0.8 + 2_000 * 4.0) // 13_600 µ$
 
+// Criteria verdict: exactly ONE judge call per patient (~4k input + 1k output).
+const CRITERIA_SCORE_ESTIMATE_MICRO_USD = Math.ceil(4_000 * 0.8 + 1_000 * 4.0) // 7_200 µ$
+const CRITERIA_VERDICT_MAX_TOKENS = 1_024
+
 // Per-call output token caps for the two judge calls (scoring only, no generation).
 // Extract produces a flat claim list; verdict produces one verdict block per claim.
 const SCORE_EXTRACT_MAX_TOKENS = 1_024
 const SCORE_VERDICT_MAX_TOKENS = 2_048
 
 // Haiku 4-5 pricing (USD per token) — used for trace cost estimation.
-const JUDGE_MODEL = 'claude-haiku-4-5-20251001'
+// JUDGE_MODEL is imported from lib/models (single model-ID source).
 const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000   // $0.80/1M input tokens
 const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000   // $4.00/1M output tokens
 
@@ -54,7 +59,31 @@ interface ScoreRefetchRequest {
   userVerdictRubric?: string
 }
 
-type ScoreRequest = ScoreCapturedRequest | ScoreRefetchRequest
+/**
+ * Single-call criteria-verdict contract (SHA-153 N2). Distinct from the
+ * faithfulness sources above: the caller supplies a free-text `criteria` and an
+ * `output`, and the route returns one {pass, reason} verdict from exactly ONE
+ * metered judge call per patient. The faithfulness code paths are not touched.
+ */
+interface ScoreCriteriaRequest {
+  source: 'criteria'
+  /** The acceptance criteria the output is judged against. */
+  criteria: string
+  /** Patient the output pertains to (one metered call per patient). */
+  patientId: string
+  /** The model output to judge. */
+  output: string
+}
+
+type ScoreRequest = ScoreCapturedRequest | ScoreRefetchRequest | ScoreCriteriaRequest
+
+// ── Response shapes ──────────────────────────────────────────────────────────
+
+/** Criteria-verdict response: the documented {pass, reason} contract. */
+interface CriteriaScoreResponse {
+  pass: boolean
+  reason: string
+}
 
 // ── Response shape ───────────────────────────────────────────────────────────
 
@@ -102,6 +131,24 @@ interface ScoreTrace {
   errored: boolean
 }
 
+// Criteria-verdict trace. Only the REDACTED prompt is persisted — criteria/output
+// appear as sha256+len markers, never raw (privacy rule 17).
+interface CriteriaScoreTrace {
+  caseId: string
+  scorer: 'criteria-judge'
+  patientId: string
+  judgePrompt: string
+  judgeModel: string
+  isByo: boolean
+  pass: boolean | null
+  errored: boolean
+  tokens: {
+    promptInputEst: number
+    outputEst: number
+    estCostUsd: number
+  }
+}
+
 // ── Abort helper ─────────────────────────────────────────────────────────────
 
 // Races the given promise against the request AbortSignal. When the signal
@@ -131,8 +178,26 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 function validateBody(body: Record<string, unknown>): { parsed: ScoreRequest } | { error: string; status: number } {
   const { source } = body
 
-  if (source !== 'captured' && source !== 'refetch') {
-    return { error: 'source must be "captured" or "refetch"', status: 400 }
+  if (source !== 'captured' && source !== 'refetch' && source !== 'criteria') {
+    return { error: 'source must be "captured", "refetch", or "criteria"', status: 400 }
+  }
+
+  // ── Criteria-verdict contract (single-call {pass, reason}) ───────────────────
+  // Validated independently of the faithfulness sources so those paths are untouched.
+  if (source === 'criteria') {
+    const criteria = body.criteria
+    if (typeof criteria !== 'string' || !criteria) {
+      return { error: 'criteria is required (non-empty string)', status: 400 }
+    }
+    const patientId = body.patientId
+    if (typeof patientId !== 'string' || !patientId) {
+      return { error: 'patientId is required (non-empty string)', status: 400 }
+    }
+    const output = body.output
+    if (typeof output !== 'string' || !output) {
+      return { error: 'output is required (non-empty string)', status: 400 }
+    }
+    return { parsed: { source: 'criteria', criteria, patientId, output } }
   }
 
   const capturedOutput = body.capturedOutput
@@ -188,6 +253,103 @@ function validateBody(body: Record<string, unknown>): { parsed: ScoreRequest } |
   }
 }
 
+// ── Criteria-verdict handler (single call → {pass, reason}) ───────────────────
+
+async function handleCriteriaScore(
+  parsedReq: ScoreCriteriaRequest,
+  judgeKey: string,
+  isByo: boolean,
+  signal: AbortSignal,
+  rlHeaders: Record<string, string>,
+): Promise<Response> {
+  // Book exactly one judge call's worth of spend (BYO callers are exempt).
+  let refundSpend: (() => Promise<void>) | null = null
+  if (!isByo) {
+    try {
+      refundSpend = await bookSpend(CRITERIA_SCORE_ESTIMATE_MICRO_USD)
+    } catch (err) {
+      if (err instanceof SpendCapError) {
+        return Response.json(
+          {
+            error:
+              'Free-tier usage limit reached. Provide your own Anthropic API key to continue.',
+          },
+          { status: 429 },
+        )
+      }
+      return Response.json({ error: 'Service temporarily unavailable.' }, { status: 503 })
+    }
+  }
+
+  const caseId = `score-criteria-${crypto.randomUUID().slice(0, 8)}`
+  let result: CriteriaJudgeResult
+  try {
+    const judgeClient = new Anthropic({ apiKey: judgeKey })
+
+    // Input size guard (SHA-78): reject oversized inputs before the judge call so
+    // actual spend stays within the booked estimate. Applies to BYO + free-tier.
+    const combinedInput = [parsedReq.criteria, parsedReq.output].join('\n')
+    assertWithinTokenLimit(combinedInput)
+
+    result = await abortable(
+      scoreCriteriaJudge(parsedReq.criteria, parsedReq.output, judgeClient, {
+        maxTokens: CRITERIA_VERDICT_MAX_TOKENS,
+      }),
+      signal,
+    )
+  } catch (e) {
+    if (refundSpend) {
+      await refundSpend()
+      refundSpend = null
+    }
+    if (e instanceof TokenLimitError) {
+      return Response.json(
+        {
+          error: `Input exceeds ${MAX_INPUT_TOKENS}-token limit (${e.tokenCount} tokens). Reduce criteria or output size.`,
+        },
+        { status: 413 },
+      )
+    }
+    const msg = e instanceof Error ? e.message : 'An unexpected error occurred.'
+    return Response.json({ error: msg }, { status: 503 })
+  }
+
+  // Spend is consumed. A terminal judge error surfaces as 503 — never a fabricated
+  // verdict (the {pass, reason} contract only carries a real verdict).
+  if (result.errored || result.pass === null || result.reason === null) {
+    return Response.json(
+      { error: result.errorMessage ?? 'Criteria judging failed.' },
+      { status: 503 },
+    )
+  }
+
+  // Persist trace (best-effort, non-fatal). Only the redacted prompt is stored.
+  try {
+    const promptInputEst = estimateTokens(result.judgePrompt)
+    const outputEst = estimateTokens(result.reason)
+    const estCostUsd = promptInputEst * INPUT_COST_PER_TOKEN + outputEst * OUTPUT_COST_PER_TOKEN
+    const trace: CriteriaScoreTrace = {
+      caseId,
+      scorer: 'criteria-judge',
+      patientId: parsedReq.patientId,
+      judgePrompt: result.judgePrompt,
+      judgeModel: JUDGE_MODEL,
+      isByo,
+      pass: result.pass,
+      errored: false,
+      tokens: { promptInputEst, outputEst, estCostUsd },
+    }
+    await withClient(async (client) => {
+      await client.query('INSERT INTO traces (trace) VALUES ($1)', [JSON.stringify(trace)])
+    })
+  } catch {
+    // Non-fatal: scoring completed, response is correct. Log nothing (no PHI).
+  }
+
+  const response: CriteriaScoreResponse = { pass: result.pass, reason: result.reason }
+  return Response.json(response, { status: 200, headers: rlHeaders })
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -239,6 +401,13 @@ export async function POST(req: NextRequest): Promise<Response> {
   const judgeKey = byoKey ?? envKey
   if (!judgeKey) {
     return Response.json({ error: 'ANTHROPIC_API_KEY is required' }, { status: 503 })
+  }
+
+  // ── Criteria-verdict contract — single judge call, returns {pass, reason} ──
+  // Branches before the faithfulness flow so those code paths are untouched. One
+  // metered call per patient; the spend estimate reflects exactly one judge call.
+  if (parsedReq.source === 'criteria') {
+    return handleCriteriaScore(parsedReq, judgeKey, isByo, req.signal, rlResult.headers)
   }
 
   // ── 3. Book free-tier spend — BYO callers are spend-cap-exempt ────────────

@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createHash } from 'node:crypto'
 import type { EvalCase, FaithfulnessResult, FaithfulnessClaim } from '../types'
+import { JUDGE_MODEL as HAIKU_MODEL } from '../../models'
 
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 const MAX_TOKENS = 4096
 
 // Hard wall-clock timeout per judge API call. A hung call is bounded and surfaced rather

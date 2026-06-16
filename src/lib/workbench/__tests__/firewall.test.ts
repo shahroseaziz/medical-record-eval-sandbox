@@ -6,6 +6,7 @@ import { scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import type { BenchCaseV4 } from '@/lib/cases'
 import type { RetrievedChunk } from '@/lib/rag/index'
+import { GENERATION_MODEL, JUDGE_MODEL } from '@/lib/models'
 
 // ── E25 firewall extension ───────────────────────────────────────────────────
 //
@@ -90,8 +91,8 @@ function assembleTraceFrom(
     sectionHit: scoreSectionHit(evalCase),
     faithfulness: null,
     output,
-    generationModel: 'claude-haiku-4-5-20251001',
-    judgeModel: 'claude-haiku-4-5-20251001',
+    generationModel: GENERATION_MODEL,
+    judgeModel: JUDGE_MODEL,
     embeddingModel: mode === 'retrieve' ? 'voyage' : 'none',
     tokens: { input: 100, output: 20, estCostUsd: 0.0001 },
     judgeUsesByo: false,

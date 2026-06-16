@@ -1,4 +1,4 @@
-2:[{"type":"retrieval","chunks":[],"groundingContext":""}]
+2:[{"type":"context","contextMode":"retrieved","sections":[],"chunks":[],"groundingContext":""}]
 0:"The patient takes aspirin."
 d:{"finishReason":"stop","usage":{"promptTokens":100,"completionTokens":5}}
 2:[{"type":"eval","faithfulness":{"scorer":"faithfulness","score":0.5,"claims":[{"claim":"The patient takes aspirin","verdict":"partial","rationale":"partially supported by context"}],"zeroClaimFlag":false,"extractPrompt":"Extract factual claims.","verdictPrompt":"Verdict each claim."},"sectionHit":{"scorer":"section-hit","score":null,"requiredSections":[],"retrievedSections":[],"missingSections":[]}}]

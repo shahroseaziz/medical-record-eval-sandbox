@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { withClient, applySchema } from '../lib/db/index'
 import type { RunTrace } from '../app/api/run/types'
+import { GENERATION_MODEL, JUDGE_MODEL } from '../lib/models'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -375,6 +376,37 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       expect(evalIdx).toBeGreaterThan(textIdx)
     })
 
+    it('emits a context manifest part (full) BEFORE text in stuff mode', async () => {
+      const record = 'Patient takes Lisinopril 10mg daily for hypertension.'
+      const res = await handler(
+        makeReq({
+          patientId: 'p1',
+          query: 'What medications is the patient on?',
+          mode: 'stuff',
+          record,
+        }) as never
+      )
+
+      const body = await res.text()
+      const parts = parseDataStreamParts(body)
+
+      const contextIdx = parts.findIndex(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'context'
+      )
+      const textIdx = parts.findIndex((p) => p.type === 'text')
+
+      expect(contextIdx).toBeGreaterThanOrEqual(0)
+      expect(textIdx).toBeGreaterThan(contextIdx)
+
+      const val = parts[contextIdx].value as Record<string, unknown>
+      // Documented manifest shape — stuff mode is the whole record as one section.
+      expect(val.contextMode).toBe('full')
+      const sections = val.sections as Array<Record<string, unknown>>
+      expect(sections).toEqual([{ section: 'record', chars: record.length }])
+      // No rich chunk detail in stuff mode (the surface stays retrieval-null there).
+      expect(val.chunks).toBeUndefined()
+    })
+
     it('eval data part contains faithfulness and sectionHit', async () => {
       const res = await handler(
         makeReq({
@@ -409,7 +441,7 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       process.env.VOYAGE_API_KEY = 'test-voyage-key'
     })
 
-    it('emits retrieval part FIRST, then text tokens, then eval', async () => {
+    it('emits context part FIRST, then text tokens, then eval', async () => {
       const res = await handler(
         makeReq({
           patientId: 'p1',
@@ -422,20 +454,20 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
       const body = await res.text()
       const parts = parseDataStreamParts(body)
 
-      const retrievalIdx = parts.findIndex(
-        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'retrieval'
+      const contextIdx = parts.findIndex(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'context'
       )
       const textIdx = parts.findIndex((p) => p.type === 'text')
       const evalIdx = parts.findIndex(
         (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'eval'
       )
 
-      expect(retrievalIdx).toBeGreaterThanOrEqual(0)
-      expect(textIdx).toBeGreaterThan(retrievalIdx)
+      expect(contextIdx).toBeGreaterThanOrEqual(0)
+      expect(textIdx).toBeGreaterThan(contextIdx)
       expect(evalIdx).toBeGreaterThan(textIdx)
     })
 
-    it('retrieval data part contains chunks with distance and similarity', async () => {
+    it('context part is the manifest shape (retrieved) and carries rich chunks', async () => {
       const res = await handler(
         makeReq({
           patientId: 'p1',
@@ -446,12 +478,22 @@ describe('/api/run orchestration (mocked Claude/Voyage)', () => {
 
       const body = await res.text()
       const parts = parseDataStreamParts(body)
-      const retrievalPart = parts.find(
-        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'retrieval'
+      const contextPart = parts.find(
+        (p) => p.type === 'data' && (p.value as Record<string, unknown>)?.type === 'context'
       )
 
-      expect(retrievalPart).toBeDefined()
-      const val = retrievalPart!.value as Record<string, unknown>
+      expect(contextPart).toBeDefined()
+      const val = contextPart!.value as Record<string, unknown>
+
+      // Documented manifest shape
+      expect(val.contextMode).toBe('retrieved')
+      const sections = val.sections as Array<Record<string, unknown>>
+      expect(Array.isArray(sections)).toBe(true)
+      expect(sections.length).toBeGreaterThan(0)
+      expect(typeof sections[0].section).toBe('string')
+      expect(typeof sections[0].chars).toBe('number')
+
+      // Rich chunk detail retained for the existing workbench surface
       const chunks = val.chunks as Array<Record<string, unknown>>
       expect(Array.isArray(chunks)).toBe(true)
       expect(chunks.length).toBeGreaterThan(0)
@@ -1079,8 +1121,8 @@ describe.skipIf(!hasDb)('RunTrace DB persistence (live DB)', () => {
     expect(trace.tokens).toHaveProperty('estCostUsd')
     expect(trace.sectionHit).toHaveProperty('scorer', 'section-hit')
     expect(Array.isArray(trace.scorerResults)).toBe(true)
-    expect(trace.generationModel).toBe('claude-haiku-4-5-20251001')
-    expect(trace.judgeModel).toBe('claude-haiku-4-5-20251001')
+    expect(trace.generationModel).toBe(GENERATION_MODEL)
+    expect(trace.judgeModel).toBe(JUDGE_MODEL)
     expect(trace.embeddingModel).toBe('none')
     // P2: grounding and prompt-authorship fields
     expect(typeof trace.grounding).toBe('string')

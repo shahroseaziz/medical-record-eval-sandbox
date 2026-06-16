@@ -9,11 +9,13 @@ import Anthropic from '@anthropic-ai/sdk'
 import { retrieve, fitChunksToBudget } from '@/lib/rag/index'
 import type { RetrievedChunk } from '@/lib/rag/index'
 import { buildPrompt, buildPromptParts, buildGroundingContext } from '@/lib/run/prompt'
+import { buildContextManifest } from '@/lib/run/context-manifest'
 import { scoreFaithfulness, scoreSectionHit } from '@/lib/eval/index'
 import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
 import { estimateTokens, estimateInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '@/lib/tokens'
 import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
+import { GENERATION_MODEL, JUDGE_MODEL } from '@/lib/models'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { resolveJudgeKey } from './judge-key'
@@ -21,9 +23,7 @@ import { makeStopReasonCapture, classifyGenerationOutcome } from './stop-reason'
 import { assembleRunTrace } from './trace'
 import type { RunRequest } from './types'
 
-const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
-const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
-
+// Generation/judge model defaults live in lib/models (single model-ID source).
 // Haiku 4-5 has a 200k context window; reserve 10k for safety
 const MODEL_CONTEXT_LIMIT = 190_000
 
@@ -118,8 +118,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     mode,
     record,
     k = 6,
-    model = DEFAULT_GENERATION_MODEL,
-    judgeModel = DEFAULT_JUDGE_MODEL,
+    model = GENERATION_MODEL,
+    judgeModel = JUDGE_MODEL,
     judgeUsesByo = false,
     generationPrompt,
     generateOnly = false,
@@ -182,6 +182,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   let chunks: RetrievedChunk[] = []
   let retrievedCount = 0
   let inBudgetCount = 0
+  // Sections retrieval returned but the token budget dropped before assembly (SHA-75).
+  // Surfaced in the context manifest so the receipt is honest about what didn't fit.
+  let droppedSections: string[] = []
   if (mode === 'retrieve') {
     const retrieveResult = await retrieve(patientId, query, k)
     // Overhead = the prompt with NO grounding (system + query + scaffolding).
@@ -196,6 +199,9 @@ export async function POST(req: NextRequest): Promise<Response> {
     chunks = assembly.chunks
     retrievedCount = assembly.retrievedCount
     inBudgetCount = assembly.inBudgetCount
+    // Chunks beyond the in-budget prefix were dropped (assembly stops at the first
+    // chunk that overflows, so the dropped set is the suffix).
+    droppedSections = retrieveResult.chunks.slice(inBudgetCount).map((c) => c.section)
   }
 
   // ── 3. Assemble prompt ───────────────────────────────────────────────────
@@ -286,21 +292,35 @@ export async function POST(req: NextRequest): Promise<Response> {
           return
         }
 
-        // ── 6. Stream retrieval metadata ──────────────────────────────────
-        if (mode === 'retrieve') {
-          dataStream.writeData({
-            type: 'retrieval',
-            chunks: chunks.map((c) => ({
-              section: c.section,
-              text: c.text,
-              distance: c.distance,
-              similarity: c.similarity,
-            })),
-            groundingContext,
-            retrievedCount,
-            inBudgetCount,
-          })
-        }
+        // ── 6. Stream the context manifest ────────────────────────────────
+        // A unified "what the model saw" receipt emitted in BOTH modes (replaces
+        // the retrieve-only `retrieval` frame). The manifest fields (contextMode /
+        // sections / droppedSections) are the notebook receipt; in retrieve mode we
+        // also carry the rich chunk detail + grounding so the existing workbench
+        // surface keeps rendering unchanged.
+        const manifest = buildContextManifest({
+          mode,
+          chunks: chunks.map((c) => ({ section: c.section, text: c.text })),
+          droppedSections,
+          record: mode === 'stuff' ? record : undefined,
+        })
+        dataStream.writeData({
+          type: 'context',
+          ...manifest,
+          ...(mode === 'retrieve'
+            ? {
+                chunks: chunks.map((c) => ({
+                  section: c.section,
+                  text: c.text,
+                  distance: c.distance,
+                  similarity: c.similarity,
+                })),
+                groundingContext,
+                retrievedCount,
+                inBudgetCount,
+              }
+            : {}),
+        } as unknown as JSONValue)
 
         // ── 7. Stream generation tokens ───────────────────────────────────
         // Prompt caching (D8): mark the static context block with Anthropic

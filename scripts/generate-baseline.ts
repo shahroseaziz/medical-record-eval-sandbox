@@ -4,8 +4,8 @@
  * For each case in evals/golden/seed-cases.json:
  *   1. Build grounding context (retrieve k=5 chunks via pgvector, or stuff the full
  *      parsed record from the fixture file).
- *   2. Generate a model output ONCE with claude-haiku-4-5 (or use preauthoredOutput
- *      when present — used for designed-fail cases).
+ *   2. Generate a model output ONCE with the pinned generation model (lib/models;
+ *      or use preauthoredOutput when present — used for designed-fail cases).
  *   3. Run the two-call faithfulness judge k=5 times; record the median run's trace.
  *   4. Run contains / section-hit / structured-diff / reference-judge scorers.
  *
@@ -51,11 +51,10 @@ import {
   computeAggregate,
 } from '../src/lib/eval/aggregate.js'
 import type { EvalCase, FaithfulnessResult } from '../src/lib/eval/index.js'
+import { JUDGE_MODEL as HAIKU_MODEL, EMBEDDING_MODEL } from '../src/lib/models.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
-const EMBEDDING_MODEL = 'voyage-3.5'
 const K = 6
 
 const GOLDEN_PATH = join(process.cwd(), 'evals/golden/seed-cases.json')

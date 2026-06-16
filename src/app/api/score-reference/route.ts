@@ -7,6 +7,7 @@ import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { scoreReferenceJudge, loadThresholds } from '@/lib/eval/index'
 import type { ReferenceJudgeResult } from '@/lib/eval/index'
+import { JUDGE_MODEL } from '@/lib/models'
 import { withClient } from '@/lib/db/index'
 import { estimateTokens, assertWithinTokenLimit, MAX_INPUT_TOKENS, TokenLimitError } from '@/lib/tokens'
 
@@ -17,7 +18,7 @@ const REFERENCE_JUDGE_ESTIMATE_MICRO_USD = Math.ceil(4_000 * 0.8 + 1_000 * 4.0) 
 const REFERENCE_JUDGE_MAX_TOKENS = 1_024
 
 // Haiku 4-5 pricing (USD per token) — used for trace cost estimation.
-const JUDGE_MODEL = 'claude-haiku-4-5-20251001'
+// JUDGE_MODEL is imported from lib/models (single model-ID source).
 const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000 // $0.80/1M input tokens
 const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000 // $4.00/1M output tokens
 

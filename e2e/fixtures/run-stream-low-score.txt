@@ -1,4 +1,4 @@
-2:[{"type":"retrieval","chunks":[],"groundingContext":""}]
+2:[{"type":"context","contextMode":"retrieved","sections":[],"chunks":[],"groundingContext":""}]
 0:"The patient has no known allergies."
 d:{"finishReason":"stop","usage":{"promptTokens":100,"completionTokens":8}}
 2:[{"type":"eval","faithfulness":{"scorer":"faithfulness","score":0.0,"claims":[{"claim":"The patient has no known allergies","verdict":"unsupported","rationale":"not stated in grounding context"}],"zeroClaimFlag":false,"extractPrompt":"Extract factual claims.","verdictPrompt":"Verdict each claim."},"sectionHit":{"scorer":"section-hit","score":null,"requiredSections":[],"retrievedSections":[],"missingSections":[]}}]

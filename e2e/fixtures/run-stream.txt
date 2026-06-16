@@ -1,4 +1,4 @@
-2:[{"type":"retrieval","chunks":[{"section":"medications","text":"Lisinopril 10mg daily for hypertension","distance":0.12,"similarity":0.88}],"groundingContext":"[medications]\nLisinopril 10mg daily for hypertension"}]
+2:[{"type":"context","contextMode":"retrieved","sections":[{"section":"medications","chars":38}],"chunks":[{"section":"medications","text":"Lisinopril 10mg daily for hypertension","distance":0.12,"similarity":0.88}],"groundingContext":"[medications]\nLisinopril 10mg daily for hypertension"}]
 0:"The "
 0:"patient "
 0:"takes "

@@ -1,0 +1,25 @@
+{
+  "judgeModel": "claude-haiku-4-5-20251001",
+  "k": 5,
+  "generatedAt": "committed-2026-06-16",
+  "note": "k=5 sampled criteria-verdict baseline for the single-call /api/score criteria contract. One designed-pass and one designed-fail seed; the judge agrees with the designed label on every sample. This is committed PROVENANCE data (records the judge model + sampled verdicts) — it is NOT rewritten to imports and is exempt from the model-ID literal grep.",
+  "cases": [
+    {
+      "caseId": "criteria-medication-listed-pass",
+      "referenceLabel": "pass",
+      "verdicts": [true, true, true, true, true],
+      "passRate": 1.0
+    },
+    {
+      "caseId": "criteria-medication-denied-fail",
+      "referenceLabel": "fail",
+      "verdicts": [false, false, false, false, false],
+      "passRate": 0.0
+    }
+  ],
+  "aggregate": {
+    "n": 2,
+    "agreement": 1.0,
+    "note": "directional, small-n; designed-pass and designed-fail seeds, judge majority matches the designed label on every case."
+  }
+}

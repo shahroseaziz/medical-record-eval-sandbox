@@ -61,6 +61,9 @@ export function scorerThreshold(scorer: ScorerName, thresholds: Thresholds): num
       return thresholds.structuredDiff
     case 'section-hit':
       return 1.0
+    case 'criteria-judge':
+      // Binary pass/fail (score 1.0 = pass, 0.0 = fail): a pass is required to match.
+      return 1.0
     default: {
       // Exhaustiveness guard: a new ScorerName must declare its threshold here.
       const _never: never = scorer

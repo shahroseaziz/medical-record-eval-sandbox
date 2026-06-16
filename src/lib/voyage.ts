@@ -1,5 +1,8 @@
+import { EMBEDDING_MODEL } from './models'
+
 const VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
-export const MODEL = 'voyage-3.5'
+/** Re-exported from lib/models (single model-ID source). */
+export const MODEL = EMBEDDING_MODEL
 export const DIM = 1024
 
 // Hard wall-clock timeout per embedding call; a hung Voyage request is bounded and surfaced.
