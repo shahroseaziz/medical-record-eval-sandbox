@@ -11,6 +11,13 @@ export interface PatientSummary {
     birthDate: string
   }
   sections: string[]
+  // summary-v3 (additive): present on freshly-ingested patients. Optional so a
+  // pre-v3 row still type-checks; the explorer table reads these when present.
+  age?: number | null
+  sex?: string
+  conditionCount?: number
+  medCount?: number
+  chartBytes?: number
 }
 
 export interface PatientRow {

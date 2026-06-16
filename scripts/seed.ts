@@ -14,7 +14,9 @@ function unescapeCopyText(s: string): string {
 interface CopyBlock {
   table: string
   columns: string[]
-  rows: string[][]
+  // A field is `null` when the COPY line carried the unquoted \N NULL sentinel
+  // (e.g. a chunk whose section source_xml could not be located).
+  rows: (string | null)[][]
 }
 
 interface ParsedSeed {
@@ -40,7 +42,11 @@ export function parseSeedSql(sql: string): ParsedSeed {
         copyBlocks.push(current!)
         current = null
       } else if (line.length > 0) {
-        current!.rows.push(line.split('\t').map(unescapeCopyText))
+        // Detect the \N NULL sentinel on the RAW field, before unescaping — a
+        // literal backslash-N in text is dumped as \\N and is thus distinguishable.
+        current!.rows.push(
+          line.split('\t').map((f) => (f === '\\N' ? null : unescapeCopyText(f)))
+        )
       }
     } else {
       const m = line.match(/^COPY\s+(\w+)\s*\(([^)]+)\)\s+FROM\s+STDIN\s*;/i)
