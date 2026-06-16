@@ -221,3 +221,40 @@ export function loadState(): NotebookState | null {
   const result = safeImportState(raw)
   return result.ok ? result.state : null
 }
+
+// ── Projection: the simple score trail ───────────────────────────────────────
+
+/**
+ * The simple score trail — the shape behind the simple score line. It is exactly
+ * one row of `scores`, so the trail and the later grid are the SAME object viewed
+ * at different cardinalities; the trail is never stored separately.
+ */
+export type SimpleTrail = ScoreRow
+
+/**
+ * Project a single (eval, run) cell-column out of the cube — the simple trail.
+ * Returns undefined when that cell does not exist. For a 1×1 state (one eval, one
+ * run) this is the whole `scores` content, which is why the simple line and the
+ * grid never diverge: one is a projection of the other.
+ */
+export function projectSimpleTrail(
+  state: NotebookState,
+  evalKey: string,
+  runId: string,
+): SimpleTrail | undefined {
+  return state.scores[evalKey]?.[runId]
+}
+
+/**
+ * Convenience for the common 1×1 case: project the trail for the state's only
+ * eval and only run. Returns undefined unless the state holds exactly one eval
+ * with exactly one scored run.
+ */
+export function projectOnlyTrail(state: NotebookState): SimpleTrail | undefined {
+  const evalKeys = Object.keys(state.scores)
+  if (evalKeys.length !== 1) return undefined
+  const runs = state.scores[evalKeys[0]]
+  const runIds = Object.keys(runs)
+  if (runIds.length !== 1) return undefined
+  return runs[runIds[0]]
+}
