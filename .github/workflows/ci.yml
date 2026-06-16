@@ -72,6 +72,15 @@ jobs:
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_AI }}
         run: npx tsx scripts/ingest.ts --local src/lib/ccda/__fixtures__
 
+      # Asserts the freshly-seeded DB: EXACT patient/chunk counts (vs the frozen
+      # seed_meta baselines — catches a duplicate/partial seed, not just >0),
+      # embedder identity (seed_meta.embedder/dimension vs runtime MODEL/DIM), and
+      # source_xml non-null coverage >= 95%.
+      - name: Verify seed (exact counts, embedder identity, source_xml coverage)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: npm run verify:seed
+
       - name: Generate eval baseline (first run only)
         if: github.event_name == 'push' && hashFiles('evals/results/seed-baseline.json') == ''
         env:

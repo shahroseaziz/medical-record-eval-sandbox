@@ -26,6 +26,12 @@ interface Demographics {
 interface PatientSummary {
   demographics?: Demographics
   sections: string[]
+  // summary-v3 (additive); optional for back-compat with pre-v3 rows.
+  age?: number | null
+  sex?: string
+  conditionCount?: number
+  medCount?: number
+  chartBytes?: number
 }
 interface SampledPatient {
   id: string
