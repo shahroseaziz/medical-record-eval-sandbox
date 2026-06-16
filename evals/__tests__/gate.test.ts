@@ -35,10 +35,16 @@ import {
   checkBYOKeyGrep,
   isUpstreamOutage,
   runGate,
+  runCriteriaSeedGate,
+  criteriaMajority,
+  checkCriteriaVerdict,
+  checkCriteriaBaselineMatch,
+  checkCriteriaBaselineShape,
   type GateViolation,
   type GateOptions,
+  type CriteriaScoreFn,
 } from '../run_evals.js'
-import type { EvalCase, FaithfulnessResult } from '../../src/lib/eval/types.js'
+import type { EvalCase, FaithfulnessResult, CriteriaJudgeResult } from '../../src/lib/eval/types.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -651,5 +657,105 @@ describe('eval-gate flake hardening — scoreFn injection', () => {
     expect(result.status).toBe('red')
     // The in-band invariant must fire: a 'pass' case scored below the faithfulness threshold
     expect(result.violations.some((v) => v.check === 'in-band')).toBe(true)
+  })
+})
+
+// ── [12] Criteria-judge seed gate (SHA-153 N2) ────────────────────────────────
+
+describe('criteria-judge seed-gate helpers', () => {
+  it('criteriaMajority is true when passes win (or tie)', () => {
+    expect(criteriaMajority([true, true, true])).toBe(true)
+    expect(criteriaMajority([true, false, true])).toBe(true)
+    expect(criteriaMajority([false, false, true])).toBe(false)
+    expect(criteriaMajority([true, false])).toBe(true) // tie → pass
+  })
+
+  it('checkCriteriaVerdict flags a flipped designed label', () => {
+    expect(checkCriteriaVerdict('c1', true, 'pass')).toBeNull()
+    expect(checkCriteriaVerdict('c1', false, 'fail')).toBeNull()
+    const v = checkCriteriaVerdict('c1', false, 'pass')
+    expect(v?.check).toBe('criteria-verdict')
+  })
+
+  it('checkCriteriaBaselineMatch flags drift from baseline majority', () => {
+    expect(checkCriteriaBaselineMatch('c1', true, true)).toBeNull()
+    expect(checkCriteriaBaselineMatch('c1', false, true)?.check).toBe('criteria-baseline')
+  })
+
+  it('checkCriteriaBaselineShape flags wrong model and incomplete verdicts', () => {
+    const good = {
+      judgeModel: EXPECTED_JUDGE_MODEL,
+      k: 2,
+      cases: [{ caseId: 'c1', referenceLabel: 'pass' as const, verdicts: [true, true], passRate: 1 }],
+      aggregate: { n: 1, agreement: 1 },
+    }
+    expect(checkCriteriaBaselineShape(good, EXPECTED_JUDGE_MODEL)).toBeNull()
+
+    const wrongModel = { ...good, judgeModel: 'some-other-model' }
+    expect(checkCriteriaBaselineShape(wrongModel, EXPECTED_JUDGE_MODEL)?.check).toBe('criteria-model-guard')
+
+    const short = { ...good, k: 5 } // verdicts length 2 ≠ k 5
+    expect(checkCriteriaBaselineShape(short, EXPECTED_JUDGE_MODEL)?.check).toBe('criteria-baseline')
+  })
+})
+
+describe('runCriteriaSeedGate — committed seeds against an injected judge', () => {
+  function makeVerdict(pass: boolean): CriteriaJudgeResult {
+    return { scorer: 'criteria-judge', score: pass ? 1 : 0, pass, reason: 'injected', judgePrompt: '[redacted]' }
+  }
+
+  // A correct judge: passes when the output names a medication, fails when it denies one.
+  const correctJudge: CriteriaScoreFn = async (_criteria, output) =>
+    makeVerdict(/Lisinopril|Metformin/i.test(output))
+
+  const baseOpts: GateOptions = {
+    anthropicClient: {} as never, // injected judge → real client never constructed/used
+    anthropicProber: async () => 'ok',
+  }
+
+  it('the 2 committed seed cases pass the gate at the committed baseline (green)', async () => {
+    const result = await runCriteriaSeedGate({ ...baseOpts, criteriaScoreFn: correctJudge })
+    expect(result.status).toBe('green')
+    expect(result.violations).toHaveLength(0)
+  })
+
+  it('a judge that flips the designed-pass case → gate-red', async () => {
+    const brokenJudge: CriteriaScoreFn = async () => makeVerdict(false) // always fail
+    const result = await runCriteriaSeedGate({ ...baseOpts, criteriaScoreFn: brokenJudge })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'criteria-verdict')).toBe(true)
+  })
+
+  it('a terminal judge error (API up) → gate-red, not silently green', async () => {
+    const erroredJudge: CriteriaScoreFn = async () => ({
+      scorer: 'criteria-judge',
+      score: null,
+      errored: true,
+      errorMessage: 'unparseable',
+      pass: null,
+      reason: null,
+      judgePrompt: '[redacted]',
+    })
+    const result = await runCriteriaSeedGate({ ...baseOpts, criteriaScoreFn: erroredJudge })
+    expect(result.status).toBe('red')
+    expect(result.violations.some((v) => v.check === 'criteria-judge-error')).toBe(true)
+  })
+
+  it('a judge error while the API is DOWN → gate-inconclusive (not red)', async () => {
+    const erroredJudge: CriteriaScoreFn = async () => ({
+      scorer: 'criteria-judge',
+      score: null,
+      errored: true,
+      errorMessage: 'connection error',
+      pass: null,
+      reason: null,
+      judgePrompt: '[redacted]',
+    })
+    const result = await runCriteriaSeedGate({
+      ...baseOpts,
+      anthropicProber: async () => 'down',
+      criteriaScoreFn: erroredJudge,
+    })
+    expect(result.status).toBe('inconclusive')
   })
 })

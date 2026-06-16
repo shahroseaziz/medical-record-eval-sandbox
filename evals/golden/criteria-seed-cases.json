@@ -1,0 +1,18 @@
+[
+  {
+    "id": "criteria-medication-listed-pass",
+    "patientId": "synthetic-cardio-001",
+    "criteria": "The answer names at least one specific medication and does not claim the patient takes no medications.",
+    "output": "Based on the record, the patient is currently taking Lisinopril 10 mg once daily and Metformin 500 mg twice daily.",
+    "referenceLabel": "pass",
+    "rationale": "Designed-pass: the output names two specific medications and makes no no-medications claim, so it unambiguously satisfies the criteria. A correctly behaving judge returns pass=true. Synthetic output only (no PHI)."
+  },
+  {
+    "id": "criteria-medication-denied-fail",
+    "patientId": "synthetic-cardio-001",
+    "criteria": "The answer names at least one specific medication and does not claim the patient takes no medications.",
+    "output": "The patient is not currently taking any medications.",
+    "referenceLabel": "fail",
+    "rationale": "Designed-fail: the output explicitly claims the patient takes no medications, directly violating the criteria. A correctly behaving judge returns pass=false. Synthetic output only (no PHI)."
+  }
+]

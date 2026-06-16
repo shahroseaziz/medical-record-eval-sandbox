@@ -40,7 +40,7 @@ const MOCK_PATIENT = {
 
 // Fixture stream — AI SDK data stream protocol
 const FIXTURE_STREAM = [
-  `2:[{"type":"retrieval","chunks":[{"section":"medications","text":"Lisinopril 10mg daily","distance":0.12,"similarity":0.88}],"groundingContext":"[medications]\\nLisinopril 10mg daily"}]`,
+  `2:[{"type":"context","contextMode":"retrieved","sections":[{"section":"medications","chars":21}],"chunks":[{"section":"medications","text":"Lisinopril 10mg daily","distance":0.12,"similarity":0.88}],"groundingContext":"[medications]\\nLisinopril 10mg daily"}]`,
   `0:"The patient takes Lisinopril 10mg daily."`,
   `d:{"finishReason":"stop","usage":{"promptTokens":100,"completionTokens":10}}`,
   `2:[{"type":"eval","faithfulness":{"scorer":"faithfulness","score":0.95,"claims":[{"claim":"Patient takes Lisinopril 10mg daily","verdict":"supported","rationale":"explicitly stated"}],"extractPrompt":"extract","verdictPrompt":"verdict"},"sectionHit":{"scorer":"section-hit","score":null,"requiredSections":[],"retrievedSections":["medications"],"missingSections":[]}}]`,

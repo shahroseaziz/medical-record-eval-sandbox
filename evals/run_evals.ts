@@ -32,9 +32,10 @@ import { parseCcda } from '../src/lib/ccda/index.js'
 import { scoreFaithfulness } from '../src/lib/eval/scorers/faithfulness.js'
 import { scoreContains } from '../src/lib/eval/scorers/contains.js'
 import { scoreSectionHit } from '../src/lib/eval/scorers/section-hit.js'
+import { scoreCriteriaJudge } from '../src/lib/eval/scorers/criteria-judge.js'
 import { computeMeanScore } from '../src/lib/eval/aggregate.js'
 import { loadThresholds } from '../src/lib/eval/thresholds.js'
-import type { EvalCase, FaithfulnessResult } from '../src/lib/eval/types.js'
+import type { EvalCase, FaithfulnessResult, CriteriaJudgeResult } from '../src/lib/eval/types.js'
 import { JUDGE_MODEL, EMBEDDING_MODEL } from '../src/lib/models.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -48,9 +49,16 @@ const FAITHFULNESS_GATE_RUNS = 3   // fewer than baseline's k for speed; toleran
 export const JUDGE_ERROR_REATTEMPTS = 2   // re-score a transient judge-errored case (API up) before failing the gate
 const ANTHROPIC_PROBE_TIMEOUT_MS = 15_000
 
+// Number of fresh criteria-judge samples per seed case in the gate. Fewer than the
+// committed k=5 baseline (the designed-pass / designed-fail seeds are unambiguous,
+// so a small sample is decisive) — matches the faithfulness gate's speed tradeoff.
+export const CRITERIA_GATE_RUNS = 3
+
 const REPO_ROOT = join(import.meta.dirname, '..')
 const BASELINE_PATH = join(REPO_ROOT, 'evals/results/seed-baseline.json')
 const CASES_PATH = join(REPO_ROOT, 'evals/golden/seed-cases.json')
+const CRITERIA_BASELINE_PATH = join(REPO_ROOT, 'evals/results/criteria-judge-baseline.json')
+const CRITERIA_CASES_PATH = join(REPO_ROOT, 'evals/golden/criteria-seed-cases.json')
 const THRESHOLDS_PATH = join(REPO_ROOT, 'evals/thresholds.yaml')
 const FIXTURE_DIR = join(REPO_ROOT, 'src/lib/ccda/__fixtures__')
 const SRC_DIR = join(REPO_ROOT, 'src')
@@ -124,6 +132,35 @@ export interface GateResult {
   inconclusiveReason?: string
 }
 
+// ── Criteria-judge seed gate types (SHA-153 N2) ───────────────────────────────
+
+interface CriteriaSeedCase {
+  id: string
+  patientId: string
+  criteria: string
+  output: string
+  referenceLabel: 'pass' | 'fail'
+  rationale: string
+}
+
+interface CriteriaBaselineCase {
+  caseId: string
+  referenceLabel: 'pass' | 'fail'
+  /** k sampled judge verdicts (true = pass) recorded at baseline-generation time. */
+  verdicts: boolean[]
+  passRate: number
+}
+
+interface CriteriaBaseline {
+  judgeModel: string
+  k: number
+  cases: CriteriaBaselineCase[]
+  aggregate: { n: number; agreement: number; note?: string }
+}
+
+/** Injected criteria judge — defaults to the live scorer in the running gate. */
+export type CriteriaScoreFn = (criteria: string, output: string) => Promise<CriteriaJudgeResult>
+
 export interface GateOptions {
   /** Override for dependency injection in tests */
   anthropicClient?: Anthropic
@@ -139,6 +176,12 @@ export interface GateOptions {
   thresholdsPath?: string
   /** Override scoreFaithfulness for tests — lets tests inject controlled judge responses. */
   scoreFn?: (evalCase: EvalCase, client?: Anthropic) => Promise<FaithfulnessResult>
+  /** Override the criteria judge for tests — lets tests inject controlled verdicts. */
+  criteriaScoreFn?: CriteriaScoreFn
+  /** Override criteria-judge baseline path for tests */
+  criteriaBaselinePath?: string
+  /** Override criteria seed-cases path for tests */
+  criteriaCasesPath?: string
 }
 
 // ── Exported check helpers (unit-testable) ────────────────────────────────────
@@ -292,6 +335,79 @@ export function checkPassRateExact(
       message:
         `Aggregate passRate mismatch: fresh=${freshPassCount}/${freshN}=${freshRate} ` +
         `baseline=${baselinePassCount}/${baselineN}=${baselinePassRate.toFixed(4)}.`,
+    }
+  }
+  return null
+}
+
+// ── Criteria-judge seed-gate helpers (SHA-153 N2) ─────────────────────────────
+
+/** Majority pass over a verdict sample (true wins strict-majority ties broken toward pass). */
+export function criteriaMajority(verdicts: boolean[]): boolean {
+  const passes = verdicts.filter(Boolean).length
+  return passes * 2 >= verdicts.length
+}
+
+/**
+ * Designed-label invariant: the judge's fresh majority verdict must equal the seed
+ * case's designed label (pass-seed → pass, fail-seed → fail). A flip means the
+ * criteria judge path regressed.
+ */
+export function checkCriteriaVerdict(
+  caseId: string,
+  freshPass: boolean,
+  referenceLabel: 'pass' | 'fail',
+): GateViolation | null {
+  const expected = referenceLabel === 'pass'
+  if (freshPass !== expected) {
+    return {
+      check: 'criteria-verdict',
+      message:
+        `Criteria case ${caseId} (referenceLabel=${referenceLabel}): judge returned ` +
+        `pass=${freshPass}, expected pass=${expected} — designed-label invariant violated.`,
+    }
+  }
+  return null
+}
+
+/** The fresh majority must also match the committed baseline's majority verdict. */
+export function checkCriteriaBaselineMatch(
+  caseId: string,
+  freshPass: boolean,
+  baselinePass: boolean,
+): GateViolation | null {
+  if (freshPass !== baselinePass) {
+    return {
+      check: 'criteria-baseline',
+      message:
+        `Criteria case ${caseId}: fresh majority pass=${freshPass} ≠ baseline majority ` +
+        `pass=${baselinePass} — criteria judge drifted from the committed k baseline.`,
+    }
+  }
+  return null
+}
+
+/** Validates the committed criteria baseline's shape before any live scoring. */
+export function checkCriteriaBaselineShape(
+  baseline: CriteriaBaseline,
+  expectedJudge: string,
+): GateViolation | null {
+  if (baseline.judgeModel !== expectedJudge) {
+    return {
+      check: 'criteria-model-guard',
+      message:
+        `Criteria baseline judge model mismatch: baseline="${baseline.judgeModel}" ` +
+        `expected="${expectedJudge}" — regenerate the criteria baseline with the correct model.`,
+    }
+  }
+  for (const bc of baseline.cases) {
+    if (bc.verdicts.length !== baseline.k) {
+      return {
+        check: 'criteria-baseline',
+        message:
+          `Criteria baseline case ${bc.caseId}: recorded ${bc.verdicts.length} verdicts ` +
+          `but k=${baseline.k} — baseline is unbaselined/incomplete.`,
+      }
     }
   }
   return null
@@ -709,6 +825,108 @@ export async function runGate(opts: GateOptions = {}): Promise<GateResult> {
   return { status: 'red', violations }
 }
 
+// ── Criteria-judge seed gate (SHA-153 N2) ─────────────────────────────────────
+//
+// Keeps the single-call /api/score criteria-verdict path baselined: the committed
+// k=5 baseline + the designed-pass/designed-fail seeds must reproduce on every gate
+// run. Wired into the eval-gate entry point (main) so the criteria judge is never
+// shipped unbaselined. Exported so it can be unit-tested with an injected judge.
+export async function runCriteriaSeedGate(opts: GateOptions = {}): Promise<GateResult> {
+  const violations: GateViolation[] = []
+  function add(v: GateViolation | null): void {
+    if (v) {
+      violations.push(v)
+      fail(v.message)
+    }
+  }
+
+  const casesPath = opts.criteriaCasesPath ?? CRITERIA_CASES_PATH
+  const baselinePath = opts.criteriaBaselinePath ?? CRITERIA_BASELINE_PATH
+
+  log('\n[7] Criteria-judge seed cases (single-call /api/score contract)')
+
+  if (!existsSync(baselinePath) || !existsSync(casesPath)) {
+    return {
+      status: 'red',
+      violations: [
+        {
+          check: 'criteria-baseline-exists',
+          message: `criteria seed cases or baseline missing (${casesPath} / ${baselinePath}).`,
+        },
+      ],
+    }
+  }
+
+  const baseline: CriteriaBaseline = JSON.parse(readFileSync(baselinePath, 'utf-8'))
+  const seedCases: CriteriaSeedCase[] = JSON.parse(readFileSync(casesPath, 'utf-8'))
+  const seedMap = new Map<string, CriteriaSeedCase>(seedCases.map((s) => [s.id, s]))
+
+  // Static shape check before any API call.
+  add(checkCriteriaBaselineShape(baseline, EXPECTED_JUDGE_MODEL))
+  if (violations.length > 0) {
+    return { status: 'red', violations }
+  }
+
+  const client = opts.anthropicClient ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const scoreFn: CriteriaScoreFn =
+    opts.criteriaScoreFn ?? ((criteria, output) => scoreCriteriaJudge(criteria, output, client))
+  const reprobe = opts.anthropicProber ?? (() => probeAnthropic(client))
+
+  for (const bc of baseline.cases) {
+    const sc = seedMap.get(bc.caseId)
+    if (!sc) {
+      add({
+        check: 'criteria-case-missing',
+        message: `Criteria baseline case "${bc.caseId}" not found in criteria seed cases.`,
+      })
+      continue
+    }
+
+    log(`\n  case: ${bc.caseId} (referenceLabel=${bc.referenceLabel})`)
+
+    const freshVerdicts: boolean[] = []
+    for (let i = 0; i < CRITERIA_GATE_RUNS; i++) {
+      const r = await scoreFn(sc.criteria, sc.output)
+      if (r.errored || r.pass === null) {
+        // Distinguish a real outage (→ inconclusive) from a non-outage error.
+        if ((await reprobe()) === 'down') {
+          log('  INCONCLUSIVE  Claude API went down during criteria scoring')
+          return {
+            status: 'inconclusive',
+            violations: [],
+            inconclusiveReason: `Claude API failed mid-run on criteria case ${bc.caseId}.`,
+          }
+        }
+        continue
+      }
+      freshVerdicts.push(r.pass)
+    }
+
+    if (freshVerdicts.length === 0) {
+      add({
+        check: 'criteria-judge-error',
+        message: `Criteria case ${bc.caseId}: judge produced no parseable verdict across ${CRITERIA_GATE_RUNS} runs.`,
+      })
+      continue
+    }
+
+    const freshPass = criteriaMajority(freshVerdicts)
+    const baselinePass = criteriaMajority(bc.verdicts)
+
+    const before = violations.length
+    add(checkCriteriaVerdict(bc.caseId, freshPass, bc.referenceLabel))
+    add(checkCriteriaBaselineMatch(bc.caseId, freshPass, baselinePass))
+    if (violations.length === before) {
+      ok(`fresh majority pass=${freshPass} matches baseline + designed label`)
+    }
+  }
+
+  if (violations.length === 0) {
+    return { status: 'green', violations: [] }
+  }
+  return { status: 'red', violations }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -717,6 +935,17 @@ async function main(): Promise<void> {
   log('└─────────────────────────────────────────────────────────────┘')
 
   const result = await runGate()
+
+  // The faithfulness gate must be green before we spend on the criteria seed gate.
+  // A red/inconclusive faithfulness gate short-circuits with its own exit code.
+  if (result.status === 'green') {
+    const criteria = await runCriteriaSeedGate()
+    if (criteria.status !== 'green') {
+      result.status = criteria.status
+      result.violations = criteria.violations
+      result.inconclusiveReason = criteria.inconclusiveReason
+    }
+  }
 
   log('\n══════════════════════════════════════════════════════════════')
   if (result.status === 'green') {

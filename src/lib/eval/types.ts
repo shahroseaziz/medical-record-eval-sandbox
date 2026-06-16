@@ -13,6 +13,7 @@ export type ScorerName =
   | 'section-hit'
   | 'structured-diff'
   | 'reference-judge'
+  | 'criteria-judge'
 
 /**
  * Canonical hand-authored expected-output fields a scorer can target.
@@ -131,6 +132,24 @@ export interface ReferenceJudgeResult extends BaseScoreResult {
   judgePrompt: string
   /** Present when caller-supplied criteria was used; sha256=<hex8> len=<n> (criteria text is never persisted) */
   criteriaMeta?: string
+}
+
+/**
+ * Criteria judge — a single-call pass/fail verdict of an output against a free-text
+ * acceptance criterion. Distinct from the reference judge (which compares against an
+ * expected reference) and faithfulness (which checks grounding): here the rubric IS
+ * the caller-supplied criteria, and the output is judged solely against it.
+ */
+export interface CriteriaJudgeResult extends BaseScoreResult {
+  scorer: 'criteria-judge'
+  /** 1.0 when pass, 0.0 when fail; null when the judge errored. */
+  score: number | null
+  /** Pass/fail verdict; null only when the judge errored (never fabricated). */
+  pass: boolean | null
+  /** One-paragraph justification; null when the judge errored. */
+  reason: string | null
+  /** Redacted prompt safe to persist: criteria/output replaced with sha256+len markers. */
+  judgePrompt: string
 }
 
 export interface ExtractionCompletenessResult extends BaseScoreResult {
