@@ -36,6 +36,7 @@ interface ChunkRow {
   section: string
   ord: number
   text: string
+  sourceXml: string
   embedding: number[]
 }
 
@@ -60,6 +61,7 @@ async function processXml(
     section: c.section,
     ord: c.ord,
     text: c.text,
+    sourceXml: c.sourceXml,
     embedding: embeddings[i],
   }))
 
@@ -182,9 +184,9 @@ async function main(): Promise<void> {
     for (const c of chunkRows) {
       const vec = `[${c.embedding.join(',')}]`
       await client.query(
-        `INSERT INTO chunks (patient_id, section, ord, text, embedding)
-         VALUES ($1, $2, $3, $4, $5::vector)`,
-        [c.patientId, c.section, c.ord, c.text, vec]
+        `INSERT INTO chunks (patient_id, section, ord, text, source_xml, embedding)
+         VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+        [c.patientId, c.section, c.ord, c.text, c.sourceXml || null, vec]
       )
     }
 
@@ -195,6 +197,16 @@ async function main(): Promise<void> {
         ('input_type',  'document')
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     `)
+
+    // Record the single-seed counts so verify-seed can assert EXACT counts. DO
+    // NOTHING (not DO UPDATE) so the recorded values stay frozen at the first
+    // seed — a duplicate re-seed doubles the actual chunk rows but leaves these
+    // baselines untouched, which is exactly what trips verify-seed's mismatch.
+    await client.query(
+      `INSERT INTO seed_meta (key, value) VALUES ('patient_count', $1), ('chunk_count', $2)
+       ON CONFLICT (key) DO NOTHING`,
+      [String(patientRows.length), String(chunkRows.length)]
+    )
   })
 
   if (LOCAL_DIR) {
@@ -228,11 +240,14 @@ async function main(): Promise<void> {
   lines.push('\\.')
   lines.push('')
 
-  lines.push('COPY chunks (patient_id, section, ord, text, embedding) FROM STDIN;')
+  lines.push('COPY chunks (patient_id, section, ord, text, source_xml, embedding) FROM STDIN;')
   for (const c of chunkRows) {
     const vec = `[${c.embedding.join(',')}]`
+    // COPY text format: an unquoted \N is the NULL sentinel. A located section
+    // substring is escaped verbatim; an empty one is stored NULL.
+    const srcXml = c.sourceXml ? escapeCopyText(c.sourceXml) : '\\N'
     lines.push(
-      `${escapeCopyText(c.patientId)}\t${escapeCopyText(c.section)}\t${c.ord}\t${escapeCopyText(c.text)}\t${vec}`
+      `${escapeCopyText(c.patientId)}\t${escapeCopyText(c.section)}\t${c.ord}\t${escapeCopyText(c.text)}\t${srcXml}\t${vec}`
     )
   }
   lines.push('\\.')
@@ -242,6 +257,9 @@ async function main(): Promise<void> {
   lines.push('embedder\tvoyage-3.5')
   lines.push('dimension\t1024')
   lines.push('input_type\tdocument')
+  // EXACT-count baselines for verify-seed (see the direct-insert path above).
+  lines.push(`patient_count\t${patientRows.length}`)
+  lines.push(`chunk_count\t${chunkRows.length}`)
   lines.push('\\.')
 
   const sql = lines.join('\n')

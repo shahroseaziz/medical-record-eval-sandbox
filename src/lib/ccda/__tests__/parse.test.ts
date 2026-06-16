@@ -214,3 +214,113 @@ describe('error paths', () => {
     );
   });
 });
+
+// ── source_xml (section-level raw XML, shared across a section's chunks) ───────
+describe('chunk.sourceXml', () => {
+  it('attaches the raw <section> substring to every chunk of a section', () => {
+    const xml = makeCcda({
+      sections: [{ loinc: '10160-0', text: 'Aspirin 81 mg daily.' }],
+    });
+    const { chunks } = parseCcda(xml);
+    expect(chunks).toHaveLength(1);
+    const sx = chunks[0].sourceXml;
+    expect(sx.startsWith('<section')).toBe(true);
+    expect(sx.trimEnd().endsWith('</section>')).toBe(true);
+    expect(sx).toContain('code="10160-0"');
+    expect(sx).toContain('Aspirin 81 mg daily.');
+  });
+
+  it('shares ONE identical source_xml across all chunks split from a section', () => {
+    const rows = Array.from(
+      { length: 400 },
+      (_, i) => `<tr><td>row ${i}</td><td>some longer medication description text ${i}</td></tr>`,
+    ).join('\n');
+    const xml = makeCcda({
+      sections: [
+        { loinc: '10160-0', text: `<table><tbody>${rows}</tbody></table>` },
+      ],
+    });
+    const { chunks } = parseCcda(xml);
+    expect(chunks.length).toBeGreaterThan(1);
+    const distinct = new Set(chunks.map((c) => c.sourceXml));
+    expect(distinct.size).toBe(1); // shared, not per-chunk-sliced
+  });
+
+  it('every fixture chunk carries a non-empty source_xml (≥95% coverage target)', () => {
+    const xml = loadFixture('Brenna468_Jung484_Feeney44_7a351fec-de09-1605-7053-5bfb6766dffa.xml');
+    const { chunks } = parseCcda(xml);
+    const covered = chunks.filter((c) => c.sourceXml.length > 0).length;
+    expect(covered).toBe(chunks.length);
+  });
+});
+
+// ── summary-v3 (additive explorer fields) ─────────────────────────────────────
+describe('summary v3 fields', () => {
+  it('keeps demographics + sections (pre-v3 shape) AND adds v3 fields', () => {
+    const xml = makeCcda({
+      sections: [{ loinc: '10160-0', text: 'Aspirin 81 mg daily.' }],
+    });
+    const { summary } = parseCcda(xml, new Date('2026-01-01T00:00:00Z'));
+    // additive: pre-v3 keys retained
+    expect(summary.demographics).toBeDefined();
+    expect(summary.sections).toEqual(['medications']);
+    // v3 keys present
+    expect(summary.sex).toBe('M');
+    expect(summary.age).toBe(46); // born 1980-01-01, asOf 2026-01-01
+    expect(typeof summary.chartBytes).toBe('number');
+    expect(summary.chartBytes).toBeGreaterThan(0);
+  });
+
+  it('computes age as whole years, accounting for birthday-not-yet-reached', () => {
+    const xml = makeCcda({ sections: [{ loinc: '10160-0', text: 'x' }] });
+    // birthTime is 1980-01-01; asOf before that day-of-year in 2026 → still 45
+    const before = parseCcda(xml, new Date('2025-12-31T00:00:00Z')).summary.age;
+    const after = parseCcda(xml, new Date('2026-01-01T00:00:00Z')).summary.age;
+    expect(before).toBe(45);
+    expect(after).toBe(46);
+  });
+
+  it('counts conditions (problems) and meds (medications) from coded entries', () => {
+    const problemEntries = '<entry><act/></entry><entry><act/></entry><entry><act/></entry>';
+    const medEntries = '<entry><substanceAdministration/></entry><entry><substanceAdministration/></entry>';
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <recordTarget><patientRole>
+    <id root="r" extension="pt-x"/>
+    <patient><name><given>A</given><family>B</family></name>
+      <administrativeGenderCode code="F"/><birthTime value="19900615"/></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <text>Problem list narrative.</text>
+      ${problemEntries}
+    </section></component>
+    <component><section>
+      <code code="10160-0" codeSystem="2.16.840.1.113883.6.1"/>
+      <text>Medication narrative.</text>
+      ${medEntries}
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>`;
+    const { summary } = parseCcda(xml, new Date('2026-06-16T00:00:00Z'));
+    expect(summary.conditionCount).toBe(3);
+    expect(summary.medCount).toBe(2);
+    expect(summary.sex).toBe('F');
+    expect(summary.age).toBe(36); // 1990-06-15 → 36 on 2026-06-16
+  });
+
+  it('age is null when birthDate is absent', () => {
+    const xml = `<?xml version="1.0"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <recordTarget><patientRole><id root="r" extension="p"/>
+    <patient><name><given>A</given><family>B</family></name>
+      <administrativeGenderCode code="M"/></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section><code code="10160-0"/><text>x</text></section></component>
+  </structuredBody></component>
+</ClinicalDocument>`;
+    expect(parseCcda(xml).summary.age).toBeNull();
+  });
+});

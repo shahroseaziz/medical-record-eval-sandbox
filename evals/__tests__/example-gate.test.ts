@@ -417,12 +417,53 @@ describe('example-through-runtime gate — injected scoreFn', () => {
       const result = await runExampleGate({
         voyageProber: async () => 'ok',
         anthropicProber: async () => 'ok',
-        // example-pass-001 must score >=0.85; fail/disagree cases have no threshold requirement
+        // example-pass-001 must clear the pass floor (threshold − variance band); fail/disagree
+        // cases have no threshold requirement.
         scoreFn: async (ec) => makeOkResult(ec.id === 'example-pass-001' ? 1.0 : 0.0),
         referenceJudgeFn: async () => makeRefOkResult(),
       })
       expect(result.status).toBe('green')
       expect(result.violations).toHaveLength(0)
+    } finally {
+      process.env.VOYAGE_API_KEY = prevVoyage
+      process.env.ANTHROPIC_API_KEY = prevAnthropic
+    }
+  })
+
+  it('variance band: a pass case one debatable claim below threshold (0.75) stays green', async () => {
+    const prevVoyage = process.env.VOYAGE_API_KEY
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY
+    process.env.VOYAGE_API_KEY = 'test-stub'
+    process.env.ANTHROPIC_API_KEY = 'test-stub'
+    try {
+      const result = await runExampleGate({
+        voyageProber: async () => 'ok',
+        anthropicProber: async () => 'ok',
+        // 0.75 = one judge-debatable claim on a 2-claim case; within the band below 0.85.
+        scoreFn: async (ec) => makeOkResult(ec.id === 'example-pass-001' ? 0.75 : 0.0),
+        referenceJudgeFn: async () => makeRefOkResult(),
+      })
+      expect(result.violations.some((v) => v.check === 'pass-case-below-threshold')).toBe(false)
+    } finally {
+      process.env.VOYAGE_API_KEY = prevVoyage
+      process.env.ANTHROPIC_API_KEY = prevAnthropic
+    }
+  })
+
+  it('variance band: a pass case that COLLAPSES below the band (0.5) still reds the gate', async () => {
+    const prevVoyage = process.env.VOYAGE_API_KEY
+    const prevAnthropic = process.env.ANTHROPIC_API_KEY
+    process.env.VOYAGE_API_KEY = 'test-stub'
+    process.env.ANTHROPIC_API_KEY = 'test-stub'
+    try {
+      const result = await runExampleGate({
+        voyageProber: async () => 'ok',
+        anthropicProber: async () => 'ok',
+        scoreFn: async (ec) => makeOkResult(ec.id === 'example-pass-001' ? 0.5 : 0.0),
+        referenceJudgeFn: async () => makeRefOkResult(),
+      })
+      expect(result.status).toBe('red')
+      expect(result.violations.some((v) => v.check === 'pass-case-below-threshold')).toBe(true)
     } finally {
       process.env.VOYAGE_API_KEY = prevVoyage
       process.env.ANTHROPIC_API_KEY = prevAnthropic
