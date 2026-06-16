@@ -68,6 +68,17 @@ describe('parseSeedSql()', () => {
     expect(copyBlocks[0].rows[0][0]).toBe('k\there\ttoo')
     expect(copyBlocks[0].rows[0][1]).toBe('v\nalue')
   })
+
+  it('maps the \\N COPY NULL sentinel to null (e.g. an absent source_xml)', () => {
+    const sql =
+      `COPY chunks (patient_id, section, ord, text, source_xml, embedding) FROM STDIN;\n` +
+      `pt-1\tproblems\t0\thello\t\\N\t[0.1,0.2]\n` +
+      `pt-1\tmedications\t0\tworld\t<section>raw</section>\t[0.3,0.4]\n` +
+      `\\.`
+    const { copyBlocks } = parseSeedSql(sql)
+    expect(copyBlocks[0].rows[0][4]).toBeNull() // \N → null
+    expect(copyBlocks[0].rows[1][4]).toBe('<section>raw</section>') // present → kept
+  })
 })
 
 // ── executeSeedSql ─────────────────────────────────────────────────────────
