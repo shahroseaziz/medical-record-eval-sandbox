@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Inspector } from '../Inspector'
 import type { RunTrace } from '@/app/api/run/types'
+import { GENERATION_MODEL, JUDGE_MODEL } from '@/lib/models'
 
 const FIXTURE_TRACE: RunTrace = {
   caseId: 'test-case-1',
@@ -46,8 +47,8 @@ const FIXTURE_TRACE: RunTrace = {
       missingSections: [],
     },
   ],
-  generationModel: 'claude-haiku-4-5-20251001',
-  judgeModel: 'claude-haiku-4-5-20251001',
+  generationModel: GENERATION_MODEL,
+  judgeModel: JUDGE_MODEL,
   embeddingModel: 'voyage-3-5',
   inputType: 'query',
   tokens: { input: 120, output: 15, estCostUsd: 0.00012 },

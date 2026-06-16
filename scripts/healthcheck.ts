@@ -38,6 +38,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseCcda } from '../src/lib/ccda/index.js'
+import { JUDGE_MODEL, EMBEDDING_MODEL } from '../src/lib/models.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -47,9 +48,10 @@ const CASES_PATH = join(REPO_ROOT, 'evals/golden/seed-cases.json')
 const FIXTURE_DIR = join(REPO_ROOT, 'src/lib/ccda/__fixtures__')
 
 // MODEL-DEPRECATION: if the deployed trace reports a different judge/embedding model,
-// scoring behaviour may have silently changed → alert immediately.
-export const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
-export const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
+// scoring behaviour may have silently changed → alert immediately. Pinned ids come
+// from lib/models (single model-ID source).
+export const EXPECTED_JUDGE_MODEL = JUDGE_MODEL
+export const EXPECTED_EMBEDDING_MODEL = EMBEDDING_MODEL
 
 const FAITHFULNESS_THRESHOLD = 0.85
 

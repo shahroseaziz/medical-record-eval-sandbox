@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { computeKappa } from '../src/lib/eval/aggregate.js'
 import type { BinaryLabel } from '../src/lib/eval/aggregate.js'
+import { isHaikuModel, isSonnetModel } from '../src/lib/models.js'
 
 const LABELS_PATH = join(process.cwd(), 'evals/golden/human-labels.json')
 const BASELINE_PATH = join(process.cwd(), 'evals/results/seed-baseline.json')
@@ -195,10 +196,10 @@ function main(): void {
   const sonnetTokens: number[] = []
 
   for (const hc of labels.heldOutCases) {
-    if (hc.generatorModel.includes('haiku')) {
+    if (isHaikuModel(hc.generatorModel)) {
       haikuScores.push(hc.judgeScore)
       haikuTokens.push(hc.outputTokens)
-    } else if (hc.generatorModel.includes('sonnet') || hc.generatorModel.includes('claude-sonnet')) {
+    } else if (isSonnetModel(hc.generatorModel)) {
       sonnetScores.push(hc.judgeScore)
       sonnetTokens.push(hc.outputTokens)
     }

@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { withClient, applySchema } from '../lib/db/index'
 import type { RunTrace } from '../app/api/run/types'
+import { GENERATION_MODEL, JUDGE_MODEL } from '../lib/models'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1079,8 +1080,8 @@ describe.skipIf(!hasDb)('RunTrace DB persistence (live DB)', () => {
     expect(trace.tokens).toHaveProperty('estCostUsd')
     expect(trace.sectionHit).toHaveProperty('scorer', 'section-hit')
     expect(Array.isArray(trace.scorerResults)).toBe(true)
-    expect(trace.generationModel).toBe('claude-haiku-4-5-20251001')
-    expect(trace.judgeModel).toBe('claude-haiku-4-5-20251001')
+    expect(trace.generationModel).toBe(GENERATION_MODEL)
+    expect(trace.judgeModel).toBe(JUDGE_MODEL)
     expect(trace.embeddingModel).toBe('none')
     // P2: grounding and prompt-authorship fields
     expect(typeof trace.grounding).toBe('string')

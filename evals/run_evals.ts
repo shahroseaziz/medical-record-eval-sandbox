@@ -35,11 +35,13 @@ import { scoreSectionHit } from '../src/lib/eval/scorers/section-hit.js'
 import { computeMeanScore } from '../src/lib/eval/aggregate.js'
 import { loadThresholds } from '../src/lib/eval/thresholds.js'
 import type { EvalCase, FaithfulnessResult } from '../src/lib/eval/types.js'
+import { JUDGE_MODEL, EMBEDDING_MODEL } from '../src/lib/models.js'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
-export const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
+// Pinned model ids come from lib/models (single model-ID source).
+export const EXPECTED_JUDGE_MODEL = JUDGE_MODEL
+export const EXPECTED_EMBEDDING_MODEL = EMBEDDING_MODEL
 
 const FAITHFULNESS_GATE_RUNS = 3   // fewer than baseline's k for speed; tolerance band absorbs variance
 // Exported so tests can verify the retry budget without relying on a magic number.

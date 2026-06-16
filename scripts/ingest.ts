@@ -6,7 +6,7 @@ import { createGzip } from 'node:zlib'
 
 import { parseCcda } from '../src/lib/ccda/index.js'
 import { SCHEMA_SQL, withClient } from '../src/lib/db/index.js'
-import { embed } from '../src/lib/voyage.js'
+import { embed, MODEL as EMBEDDING_MODEL } from '../src/lib/voyage.js'
 import { chunkCountHistogram } from '../src/lib/rag/histogram.js'
 
 const DRY_RUN = process.argv.includes('--dry-run')
@@ -190,11 +190,11 @@ async function main(): Promise<void> {
 
     await client.query(`
       INSERT INTO seed_meta (key, value) VALUES
-        ('embedder',    'voyage-3.5'),
+        ('embedder',    $1),
         ('dimension',   '1024'),
         ('input_type',  'document')
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-    `)
+    `, [EMBEDDING_MODEL])
   })
 
   if (LOCAL_DIR) {
@@ -239,7 +239,7 @@ async function main(): Promise<void> {
   lines.push('')
 
   lines.push('COPY seed_meta (key, value) FROM STDIN;')
-  lines.push('embedder\tvoyage-3.5')
+  lines.push(`embedder\t${EMBEDDING_MODEL}`)
   lines.push('dimension\t1024')
   lines.push('input_type\tdocument')
   lines.push('\\.')

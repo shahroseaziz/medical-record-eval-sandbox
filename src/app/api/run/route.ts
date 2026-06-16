@@ -14,6 +14,7 @@ import type { EvalCase } from '@/lib/eval/index'
 import { withClient } from '@/lib/db/index'
 import { estimateTokens, estimateInputTokens, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS } from '@/lib/tokens'
 import { MODEL as EMBEDDING_MODEL } from '@/lib/voyage'
+import { GENERATION_MODEL, JUDGE_MODEL } from '@/lib/models'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { resolveJudgeKey } from './judge-key'
@@ -21,9 +22,7 @@ import { makeStopReasonCapture, classifyGenerationOutcome } from './stop-reason'
 import { assembleRunTrace } from './trace'
 import type { RunRequest } from './types'
 
-const DEFAULT_GENERATION_MODEL = 'claude-haiku-4-5-20251001'
-const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
-
+// Generation/judge model defaults live in lib/models (single model-ID source).
 // Haiku 4-5 has a 200k context window; reserve 10k for safety
 const MODEL_CONTEXT_LIMIT = 190_000
 
@@ -118,8 +117,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     mode,
     record,
     k = 6,
-    model = DEFAULT_GENERATION_MODEL,
-    judgeModel = DEFAULT_JUDGE_MODEL,
+    model = GENERATION_MODEL,
+    judgeModel = JUDGE_MODEL,
     judgeUsesByo = false,
     generationPrompt,
     generateOnly = false,

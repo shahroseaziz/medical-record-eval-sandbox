@@ -24,6 +24,7 @@
  */
 
 import { Client } from 'pg'
+import { JUDGE_MODEL, EMBEDDING_MODEL } from '../../src/lib/models.js'
 
 // ── Alert thresholds ──────────────────────────────────────────────────────────
 // Adjust these values as production volume grows; current values are conservative
@@ -47,9 +48,9 @@ const THRESHOLDS = {
 // MODEL-DEPRECATION: pinned model names. Any trace carrying a different model name
 // indicates a silent substitution (Anthropic/Voyage deprecated the model and the
 // caller's code is fetching the old name) — which changes scoring behaviour without
-// any code change.
-const EXPECTED_JUDGE_MODEL = 'claude-haiku-4-5-20251001'
-const EXPECTED_EMBEDDING_MODEL = 'voyage-3.5'
+// any code change. Pinned ids come from lib/models (single model-ID source).
+const EXPECTED_JUDGE_MODEL = JUDGE_MODEL
+const EXPECTED_EMBEDDING_MODEL = EMBEDDING_MODEL
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

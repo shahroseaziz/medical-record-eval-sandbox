@@ -7,6 +7,7 @@ import { checkRateLimit } from '@/lib/ratelimit'
 import { bookSpend, SpendCapError } from '@/lib/killswitch'
 import { scoreFaithfulness } from '@/lib/eval/index'
 import type { EvalCase, FaithfulnessResult } from '@/lib/eval/index'
+import { JUDGE_MODEL } from '@/lib/models'
 import { retrieve } from '@/lib/rag/index'
 import { withClient } from '@/lib/db/index'
 import { estimateTokens, assertWithinTokenLimit, MAX_INPUT_TOKENS, TokenLimitError } from '@/lib/tokens'
@@ -20,7 +21,7 @@ const SCORE_EXTRACT_MAX_TOKENS = 1_024
 const SCORE_VERDICT_MAX_TOKENS = 2_048
 
 // Haiku 4-5 pricing (USD per token) — used for trace cost estimation.
-const JUDGE_MODEL = 'claude-haiku-4-5-20251001'
+// JUDGE_MODEL is imported from lib/models (single model-ID source).
 const INPUT_COST_PER_TOKEN = 0.8 / 1_000_000   // $0.80/1M input tokens
 const OUTPUT_COST_PER_TOKEN = 4.0 / 1_000_000   // $4.00/1M output tokens
 

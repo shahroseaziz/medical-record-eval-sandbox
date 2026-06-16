@@ -56,9 +56,9 @@ export interface RunRequest {
   record?: string
   /** Number of chunks to retrieve — retrieve mode only, default 6 */
   k?: number
-  /** Generation model; defaults to claude-haiku-4-5-20251001 */
+  /** Generation model; defaults to GENERATION_MODEL (see lib/models). */
   model?: string
-  /** Judge model for faithfulness scoring; defaults to claude-haiku-4-5-20251001 */
+  /** Judge model for faithfulness scoring; defaults to JUDGE_MODEL (see lib/models). */
   judgeModel?: string
   /** If true, the judge uses the caller's BYO key instead of the seeded key. Default: false. */
   judgeUsesByo?: boolean
