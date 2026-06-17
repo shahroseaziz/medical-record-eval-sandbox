@@ -1003,6 +1003,115 @@
   font-size: var(--text-xs);
   color: var(--color-text-subtle);
 }
+
+/* ── LLM judge (N10) ────────────────────────────────────────────────────────── */
+.criteriaIn {
+  width: 100%;
+  min-height: 4.5rem;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.criteriaIn:focus {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+.judgeBinary {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  line-height: var(--leading-normal);
+}
+
+.judgeRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.judgeRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.judgeRowErr {
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+}
+
+.jrHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.jrName {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.jrPending {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.judgeVerdict {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-full);
+}
+
+.jvPass {
+  color: var(--color-success-text);
+  background: var(--color-success-subtle);
+}
+
+.jvFail {
+  color: var(--color-danger-text);
+  background: var(--color-danger-subtle);
+}
+
+.jvErr {
+  color: var(--color-warning-text);
+  background: var(--color-warning-subtle);
+}
+
+.jrModel {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.jrReason {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.jrReasonDim {
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
 .ctxWarn {
   color: var(--color-warning-text);
   background: var(--color-warning-subtle);
