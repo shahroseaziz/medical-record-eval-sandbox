@@ -14,7 +14,7 @@ function patient(id: string, name: string): NotebookPatient {
 }
 
 function doneResult(id: string, output: string): OutputCardResult {
-  return { patientId: id, status: 'done', output, model: 'claude-haiku-4-5-20251001' }
+  return { patientId: id, status: 'done', output, model: 'claude-haiku-4-5-20251001', context: null }
 }
 
 const MODEL_OUT = JSON.stringify({
