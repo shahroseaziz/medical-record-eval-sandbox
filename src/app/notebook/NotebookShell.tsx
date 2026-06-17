@@ -1,7 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BYO_MODEL, GENERATION_MODEL, modelDisplayName } from '@/lib/models'
+import { PromptCell } from './PromptCell'
+import { OutputCell } from './OutputCell'
+import { useNotebookRun } from './useNotebookRun'
+import type { NotebookPatient } from './types'
 import styles from './notebook.module.css'
 
 /**
@@ -39,12 +43,65 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   // real state here so the control is live, not dead.
   const [exploreOpen, setExploreOpen] = useState(false)
 
+  // ── Prompt cell + run loop state (N8a) ─────────────────────────────────────
+  const [prompt, setPrompt] = useState('')
+  const [patients, setPatients] = useState<NotebookPatient[]>([])
+  const [selected, setSelected] = useState<string[]>([])
+  const [patientsError, setPatientsError] = useState<string | null>(null)
+  // The "view chart" link's stub target — the real chart drawer lands in N7b.
+  // Wired to live state so the link is a DEFINED stub, not a dead control.
+  const [viewChartId, setViewChartId] = useState<string | null>(null)
+  // The patient order captured at Run time, so output cards render in the order
+  // they were submitted even as selection changes afterwards.
+  const [runOrder, setRunOrder] = useState<string[]>([])
+  const { results, running, run } = useNotebookRun()
+
   useEffect(() => {
     try {
       const stored = window.sessionStorage.getItem(BYO_KEY_STORAGE)
       if (stored) setApiKey(stored)
     } catch {
       // sessionStorage can throw in locked-down contexts — fall back to in-memory.
+    }
+  }, [])
+
+  // Load a roster of patients to run against. Each carries its assembled stuff-mode
+  // record (the run grounding) + light framing for the chips. The first is
+  // pre-selected. A DB-less / empty environment degrades to an explained empty
+  // state rather than a crash — the cell still renders, Run stays disabled.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/api/patients/sample?n=12')
+        if (!res.ok) throw new Error('Could not load patients.')
+        const data = (await res.json()) as {
+          patients?: Array<{ id: string; name: string; summary: unknown; record: string; recordTokens: number }>
+        }
+        const roster: NotebookPatient[] = (data.patients ?? []).map((p) => {
+          const s = (p.summary ?? {}) as Record<string, unknown>
+          return {
+            id: p.id,
+            name: p.name,
+            record: p.record,
+            recordTokens: p.recordTokens,
+            age: typeof s.age === 'number' ? s.age : null,
+            sex: typeof s.sex === 'string' ? s.sex : '',
+            conditionCount: typeof s.conditionCount === 'number' ? s.conditionCount : 0,
+          }
+        })
+        if (cancelled) return
+        setPatients(roster)
+        // Pre-select exactly one patient by default (the locked chip).
+        setSelected(roster.length ? [roster[0].id] : [])
+        if (roster.length === 0) setPatientsError('No patients available to run against.')
+      } catch (e) {
+        if (cancelled) return
+        setPatientsError(e instanceof Error ? e.message : 'Could not load patients.')
+      }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [])
 
@@ -63,6 +120,25 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   const activeModel = hasKey ? BYO_MODEL : GENERATION_MODEL
   const capsActive = !hasKey
   const tierLabel = hasKey ? 'your key' : 'free tier'
+
+  const patientsById = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients])
+  const lockedId = patients.length ? patients[0].id : null
+  // Show the load-example affordance only before the user has typed a prompt.
+  const showLoadExample = prompt.trim().length === 0
+
+  const onRun = useCallback(() => {
+    const cases = selected
+      .map((id) => patientsById.get(id))
+      .filter((p): p is NotebookPatient => Boolean(p))
+      .map((p) => ({ patientId: p.id, record: p.record }))
+    if (cases.length === 0 || prompt.trim().length === 0) return
+    setRunOrder(cases.map((c) => c.patientId))
+    setViewChartId(null)
+    // The ACTIVE model id (imported, never a literal) is sent so the server records
+    // and echoes back the model the user actually selected. The BYO key, if any, is
+    // forwarded in-flight only (header) — never persisted by this call.
+    void run(cases, prompt, { model: activeModel, byoKey: hasKey ? apiKey.trim() : undefined })
+  }, [selected, patientsById, prompt, run, activeModel, hasKey, apiKey])
 
   return (
     <div className={styles.app}>
@@ -188,27 +264,51 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
           )}
 
           {/* ── Section scaffolding (document order; later steps fill these) ── */}
-          <section
-            className={styles.cell}
-            data-testid="section-prompt"
-            aria-label="Prompt"
-          >
-            <span className={styles.cellLabel}>Prompt</span>
-            <p className={styles.cellPlaceholder}>
-              Write a prompt against one synthetic chart. Arrives in a later step.
-            </p>
-          </section>
+          <PromptCell
+            prompt={prompt}
+            setPrompt={setPrompt}
+            patients={patients}
+            selected={selected}
+            setSelected={setSelected}
+            lockedId={lockedId}
+            hasKey={hasKey}
+            running={running}
+            onRun={onRun}
+            showLoadExample={showLoadExample}
+            loadError={patientsError}
+          />
 
-          <section
-            className={styles.cell}
-            data-testid="section-output"
-            aria-label="Model output"
-          >
-            <span className={styles.cellLabel}>Model output</span>
-            <p className={styles.cellPlaceholder}>
-              The model&apos;s answer, with a receipt of what it saw. Arrives in a later step.
-            </p>
-          </section>
+          <OutputCell
+            order={runOrder}
+            results={results}
+            patientsById={patientsById}
+            onViewChart={setViewChartId}
+          />
+
+          {/* Stub target for a card's "view chart" link. The real chart drawer
+              lands in N7b (parallel work); until then this keeps the link live
+              (a DEFINED stub, not a dead control) and marks the mount point. */}
+          {viewChartId && (
+            <aside
+              className={styles.exploreStub}
+              data-testid="view-chart-stub"
+              role="region"
+              aria-label="Patient chart"
+            >
+              <span>
+                Chart for {patientsById.get(viewChartId)?.name ?? viewChartId} opens here —
+                arriving in a later step.
+              </span>
+              <button
+                type="button"
+                className={styles.exploreStubClose}
+                data-testid="view-chart-stub-close"
+                onClick={() => setViewChartId(null)}
+              >
+                Close
+              </button>
+            </aside>
+          )}
 
           <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
             <span className={styles.cellLabel}>Eval</span>
