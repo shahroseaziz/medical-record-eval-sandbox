@@ -258,3 +258,52 @@ export function projectOnlyTrail(state: NotebookState): SimpleTrail | undefined 
   if (runIds.length !== 1) return undefined
   return runs[runIds[0]]
 }
+
+// ── Projection: the eval-row score trail (the simple score line) ──────────────
+
+/**
+ * One step of an eval-row trail: a scored run plus the rolled-up frac that run
+ * earned for the eval. Carries the run identity (`runId` + monotonic `version`)
+ * so the line can label its columns, and the full `row` so the step is a genuine
+ * window onto the cube — never a flattened copy.
+ */
+export interface TrailStep {
+  runId: string
+  /** The producing run's monotonic version, for a "run N" label. */
+  version: number
+  /** The rolled-up "n/m" frac for this (eval, run) cell. */
+  frac: string
+  /** The whole score row this step projects — the cube cell itself. */
+  row: ScoreRow
+}
+
+/**
+ * Project the eval-ROW trail behind the simple score line: walk `state.runs` in
+ * order, keep only runs that have a score cell for `evalKey`, and return the last
+ * `limit` of them (chronological, so prev → current). This is the SAME object as
+ * the grid — one row of `scores` sampled across runs — never a parallel
+ * structure; the grid (N15b) reads the very same cells, just at full width.
+ *
+ * Runs without a cell for this eval are skipped (a run scored under a different
+ * eval is not part of this row). Returns an empty array when the eval has no
+ * scored runs.
+ */
+export function projectEvalTrail(
+  state: NotebookState,
+  evalKey: string,
+  limit = 3,
+): TrailStep[] {
+  const row = state.scores[evalKey]
+  if (!row) return []
+  const steps: TrailStep[] = []
+  for (const run of state.runs) {
+    const cell = row[run.id]
+    if (cell) steps.push({ runId: run.id, version: run.version, frac: cell.frac, row: cell })
+  }
+  return limit > 0 ? steps.slice(-limit) : steps
+}
+
+/** The eval keys that currently have at least one scored run, in `scores` order. */
+export function scoredEvalKeys(state: NotebookState): string[] {
+  return Object.keys(state.scores).filter((k) => Object.keys(state.scores[k]).length > 0)
+}

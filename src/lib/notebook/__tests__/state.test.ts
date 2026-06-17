@@ -7,7 +7,10 @@ import {
   safeImportState,
   projectSimpleTrail,
   projectOnlyTrail,
+  projectEvalTrail,
+  scoredEvalKeys,
   type NotebookState,
+  type NotebookRun,
   type ScoreRow,
 } from '../state'
 
@@ -222,6 +225,115 @@ describe('notebook bench-state v1', () => {
       const validated = importState(serializeState(fullState()))
       expect(projectSimpleTrail(validated, 'judge:nope', 'run-1')).toBeUndefined()
       expect(projectSimpleTrail(validated, 'golden', 'run-404')).toBeUndefined()
+    })
+  })
+
+  // (d) the score-line eval-ROW trail: the last N scored runs for one eval, in
+  // state.runs order (prev → current). A projection of the cube, not a copy.
+  describe('eval-row trail projection (the simple score line)', () => {
+    // A four-run state where `golden` is scored on three of the four runs (run-2
+    // skipped) so the trail must respect run order AND skip unscored runs.
+    function multiRunState(): NotebookState {
+      const mkRun = (id: string, version: number): NotebookRun => ({
+        id,
+        version,
+        promptText: 'p' + version,
+        promptHash: 'h' + version,
+        createdAt: `2026-06-1${version}T00:00:00.000Z`,
+        outputs: {
+          'patient-a': {
+            text: 'out',
+            model: 'claude-opus-4-8',
+            contextMode: 'full',
+            sections: ['medications'],
+            status: 'ok',
+          },
+        },
+      })
+      const mkRow = (n: number): ScoreRow => ({
+        frac: `${n}/1`,
+        per: [{ patientId: 'patient-a', pass: n === 1, fails: [] }],
+      })
+      return {
+        ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+        runs: [mkRun('run-1', 1), mkRun('run-2', 2), mkRun('run-3', 3), mkRun('run-4', 4)],
+        evals: [
+          {
+            key: 'golden',
+            label: 'Golden set',
+            version: 1,
+            criteriaOrGolden: 'criteria',
+            history: [{ version: 1, contentHash: 'h1' }],
+          },
+        ],
+        // run-2 deliberately has no golden cell.
+        scores: {
+          golden: {
+            'run-1': mkRow(1),
+            'run-3': mkRow(0),
+            'run-4': mkRow(1),
+          },
+        },
+      }
+    }
+
+    it('returns the last 3 scored runs in run order, prev → current', () => {
+      const state = importState(serializeState(multiRunState()))
+      const trail = projectEvalTrail(state, 'golden')
+      // run-2 is unscored → skipped; run-1/3/4 remain, capped at 3, in order.
+      expect(trail.map((s) => s.runId)).toEqual(['run-1', 'run-3', 'run-4'])
+      expect(trail.map((s) => s.version)).toEqual([1, 3, 4])
+      expect(trail.map((s) => s.frac)).toEqual(['1/1', '0/1', '1/1'])
+      // The last step is the current run; the first is the earliest of the window.
+      expect(trail[trail.length - 1].runId).toBe('run-4')
+    })
+
+    it('each step projects the actual cube cell (same object identity)', () => {
+      const state = importState(serializeState(multiRunState()))
+      const trail = projectEvalTrail(state, 'golden')
+      expect(trail[0].row).toBe(state.scores.golden['run-1'])
+      expect(trail[2].row).toBe(state.scores.golden['run-4'])
+    })
+
+    it('caps the window with an explicit limit, keeping the most recent', () => {
+      const state = importState(serializeState(multiRunState()))
+      const trail = projectEvalTrail(state, 'golden', 2)
+      expect(trail.map((s) => s.runId)).toEqual(['run-3', 'run-4'])
+    })
+
+    it('is empty for an eval with no scored runs', () => {
+      const state = importState(serializeState(multiRunState()))
+      expect(projectEvalTrail(state, 'judge:none')).toEqual([])
+    })
+
+    it('a 1×1 cube projects a single-step trail (prev === current)', () => {
+      const validated = importState(serializeState(fullState()))
+      const trail = projectEvalTrail(validated, 'golden')
+      expect(trail).toHaveLength(1)
+      expect(trail[0].frac).toBe('1/2')
+      expect(trail[0].row).toBe(validated.scores.golden['run-1'])
+    })
+
+    it('scoredEvalKeys lists only evals that have scored runs', () => {
+      const validated = importState(serializeState(fullState()))
+      expect(scoredEvalKeys(validated)).toEqual(['golden', 'judge:faithfulness'])
+      const empty = createEmptyState()
+      expect(scoredEvalKeys(empty)).toEqual([])
+    })
+  })
+
+  // (e) Export is the FULL cube + meta, round-tripped — never the trail subset.
+  describe('export round-trips the full cube even from a trail-only UI', () => {
+    it('serializeState → safeImportState preserves a 1×1 cube whole', () => {
+      const state = fullState()
+      const result = safeImportState(serializeState(state))
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        // The whole cube survives: every run, eval, score cell, and meta field.
+        expect(result.state).toEqual(state)
+        expect(result.state.meta).toEqual({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' })
+        expect(Object.keys(result.state.scores)).toEqual(['golden', 'judge:faithfulness'])
+      }
     })
   })
 })

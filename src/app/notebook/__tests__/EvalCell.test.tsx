@@ -142,6 +142,33 @@ describe('EvalCell — golden editors', () => {
     expect(screen.getByTestId('golden-verdict')).toHaveAttribute('data-verdict', 'pass')
     expect(screen.getByTestId('golden-overall')).toHaveTextContent('1/1')
   })
+
+  // N11 — the golden Score lifts a cube-shaped row up so the score line can
+  // project it. The cell does not render the trail itself.
+  it('lifts a golden score row up via onScoreReport (cube-shaped, for the score line)', async () => {
+    const user = userEvent.setup()
+    const onScoreReport = vi.fn()
+    const patientsById = new Map<string, NotebookPatient>([['p1', patient('p1', 'Ada')]])
+    render(
+      <EvalCell
+        order={['p1']}
+        results={{ p1: doneResult('p1', MODEL_OUT) }}
+        patientsById={patientsById}
+        onViewChart={vi.fn()}
+        onScoreReport={onScoreReport}
+      />,
+    )
+    await user.click(screen.getByTestId('golden-invite-add'))
+    await user.click(screen.getByTestId('golden-input'))
+    await user.paste(JSON.stringify({ a1c_current: 6.7 }))
+    await user.click(screen.getByTestId('golden-score'))
+
+    expect(onScoreReport).toHaveBeenCalledTimes(1)
+    const report = onScoreReport.mock.calls[0][0]
+    expect(report.evalKey).toBe('golden')
+    expect(report.row.frac).toBe('1/1')
+    expect(report.row.per).toEqual([{ patientId: 'p1', pass: true, fails: [] }])
+  })
 })
 
 describe('EvalCell — LLM judge (N10)', () => {
