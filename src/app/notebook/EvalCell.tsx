@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { modelDisplayName } from '@/lib/models'
+import type { PerCaseScore, ScoreRow } from '@/lib/notebook/state'
 import type { OutputCardResult } from './useNotebookRun'
 import { useNotebookJudge, type JudgeVerdict, type JudgeCase } from './useNotebookJudge'
 import type { NotebookPatient } from './types'
@@ -14,6 +15,21 @@ import {
 import type { PerCaseScore } from '@/lib/notebook/state'
 import { WORKED_CRITERIA } from './worked-example'
 import styles from './notebook.module.css'
+
+/** The notebook's single LLM-judge eval key (`judge:<id>` per the N4 schema). */
+const JUDGE_EVAL_KEY = 'judge:default'
+
+/**
+ * A scored eval row lifted up to the cube owner. The shell stamps the current run
+ * id onto it; this carries only the eval identity + the rolled-up row, so the cube
+ * stays the single source the score line projects from.
+ */
+export interface ScoreReport {
+  evalKey: string
+  label: string
+  criteriaOrGolden: string
+  row: ScoreRow
+}
 
 /**
  * Eval cell — golden answers (SHA-161 N9). The FIRST eval layer.
@@ -349,11 +365,24 @@ export interface EvalCellProps {
    * Present → judge calls run on the user's key with the free-tier caps lifted.
    */
   byoKey?: string
+  /**
+   * Lift a scored eval row up to the cube owner (the shell). Fired on golden
+   * Score and once a judge settles. The shell stamps the current run id; the
+   * score line then PROJECTS the cube — this cell never renders the trail itself.
+   */
+  onScoreReport?: (report: ScoreReport) => void
 }
 
 type Mode = null | 'golden' | 'judge'
 
-export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: EvalCellProps) {
+export function EvalCell({
+  order,
+  results,
+  patientsById,
+  onViewChart,
+  byoKey,
+  onScoreReport,
+}: EvalCellProps) {
   const [mode, setMode] = useState<Mode>(null)
   const [golden, setGolden] = useState<Record<string, string>>({})
   // The plain-language judge criteria the user writes (judge mode). A judge is a
@@ -384,7 +413,56 @@ export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: 
       next[id] = gradeGolden(golden[id] ?? '', r?.output, r?.status === 'done')
     }
     setScores(next)
-  }, [order, results, golden])
+
+    // Lift the golden row into the cube. Only pass/fail patients count toward the
+    // denominator — invalid/no-output golds are `errored` (excluded), matching the
+    // displayed overall. The score line projects this; it is not computed there.
+    if (onScoreReport) {
+      const per: PerCaseScore[] = order.map((id) => {
+        const g = next[id]
+        const graded = g.state === 'pass' || g.state === 'fail'
+        return {
+          patientId: id,
+          ...(graded ? { pass: g.state === 'pass' } : { errored: true }),
+          fails: g.fails.map((f) => f.field),
+          ...(g.error ? { reason: g.error } : {}),
+        }
+      })
+      const gradedTotal = per.filter((p) => p.pass !== undefined).length
+      const passN = per.filter((p) => p.pass === true).length
+      onScoreReport({
+        evalKey: 'golden',
+        label: 'Golden set',
+        criteriaOrGolden: JSON.stringify(golden),
+        row: { frac: `${passN}/${gradedTotal}`, per },
+      })
+    }
+  }, [order, results, golden, onScoreReport])
+
+  // Lift the judge row into the cube once a run of verdicts settles (no longer
+  // judging, at least one verdict in). Errored patients are `errored` (excluded
+  // from the denominator), mirroring the judge overall above.
+  useEffect(() => {
+    if (!onScoreReport || judging) return
+    const settled = order
+      .map((id) => verdicts[id])
+      .filter((v): v is JudgeVerdict => Boolean(v) && (v.status === 'done' || v.status === 'errored'))
+    if (settled.length === 0) return
+    const per: PerCaseScore[] = settled.map((v) => ({
+      patientId: v.patientId,
+      ...(v.status === 'done' ? { state: v.pass ? 'pass' : 'fail' } : { errored: true }),
+      fails: [],
+      ...(v.reason ? { reason: v.reason } : {}),
+    }))
+    const scored = settled.filter((v) => v.status === 'done')
+    const passN = scored.filter((v) => v.pass === true).length
+    onScoreReport({
+      evalKey: JUDGE_EVAL_KEY,
+      label: 'LLM judge',
+      criteriaOrGolden: criteria,
+      row: { frac: `${passN}/${scored.length}`, per },
+    })
+  }, [verdicts, judging, order, criteria, onScoreReport])
 
   const overall = useMemo(() => {
     if (!scores) return null
