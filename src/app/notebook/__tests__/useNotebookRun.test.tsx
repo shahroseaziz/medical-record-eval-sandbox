@@ -27,6 +27,34 @@ function streamResponse(text: string, model: string): Response {
   })
 }
 
+/**
+ * A 200 streaming Response that emits a `type:'context'` manifest frame (the
+ * "what the model saw" receipt, N2) before the text + trace. Mirrors what
+ * /api/run sends so the run loop's capture is tested against the real shape.
+ */
+function streamWithContext(
+  text: string,
+  model: string,
+  context: Record<string, unknown>,
+): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const enc = new TextEncoder()
+      controller.enqueue(enc.encode(`2:${JSON.stringify([{ type: 'context', ...context }])}\n`))
+      controller.enqueue(enc.encode(`0:${JSON.stringify(text)}\n`))
+      controller.enqueue(
+        enc.encode(`2:${JSON.stringify([{ type: 'trace', trace: { generationModel: model } }])}\n`),
+      )
+      controller.enqueue(enc.encode(`d:${JSON.stringify({ finishReason: 'stop' })}\n`))
+      controller.close()
+    },
+  })
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
+}
+
 function errorResponse(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
     status,
@@ -100,6 +128,64 @@ describe('useNotebookRun (notebook run loop)', () => {
     })
     const [, init] = fetchMock.mock.calls[0]
     expect(init.headers['x-byo-api-key']).toBeUndefined()
+  })
+
+  it('captures the FULL context manifest from the stream (small patient — chart fit)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      streamWithContext('out', 'claude-haiku-4-5-20251001', {
+        contextMode: 'full',
+        sections: [{ section: 'record', chars: 3200 }],
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+
+    const ctx = result.current.results['p1'].context
+    expect(ctx?.contextMode).toBe('full')
+    expect(ctx?.sections).toEqual([{ section: 'record', chars: 3200 }])
+    expect(ctx?.droppedSections).toBeUndefined()
+  })
+
+  it('captures the RETRIEVED context manifest + dropped sections (large patient — chart too large)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      streamWithContext('out', 'claude-haiku-4-5-20251001', {
+        contextMode: 'retrieved',
+        sections: [{ section: 'medications', chars: 21 }],
+        droppedSections: ['labs', 'imaging'],
+        // Retrieve-mode extras the workbench surface uses are ignored by the card.
+        chunks: [{ section: 'medications', text: 'Lisinopril 10mg', distance: 0.1, similarity: 0.9 }],
+        groundingContext: '[medications]\nLisinopril 10mg',
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+
+    const ctx = result.current.results['p1'].context
+    expect(ctx?.contextMode).toBe('retrieved')
+    expect(ctx?.sections).toEqual([{ section: 'medications', chars: 21 }])
+    expect(ctx?.droppedSections).toEqual(['labs', 'imaging'])
+    // Only the manifest fields are kept — no fabricated/leaked chunk text.
+    expect(ctx as unknown as Record<string, unknown>).not.toHaveProperty('chunks')
+    expect(ctx as unknown as Record<string, unknown>).not.toHaveProperty('groundingContext')
+  })
+
+  it('leaves context null when no manifest frame arrives', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamResponse('out', 'claude-haiku-4-5-20251001'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+    expect(result.current.results['p1'].context).toBeNull()
   })
 
   it('marks a card errored when the run fails', async () => {
