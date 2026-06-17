@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BYO_MODEL, GENERATION_MODEL, modelDisplayName } from '@/lib/models'
 import { PromptCell } from './PromptCell'
 import { OutputCell } from './OutputCell'
+import { EvalCell } from './EvalCell'
 import { useNotebookRun } from './useNotebookRun'
 import type { NotebookPatient } from './types'
 import styles from './notebook.module.css'
@@ -310,12 +311,12 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             </aside>
           )}
 
-          <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
-            <span className={styles.cellLabel}>Eval</span>
-            <p className={styles.cellPlaceholder}>
-              A golden answer, then a judge, to check the output. Arrives in a later step.
-            </p>
-          </section>
+          <EvalCell
+            order={runOrder}
+            results={results}
+            patientsById={patientsById}
+            onViewChart={setViewChartId}
+          />
 
           <section className={styles.cell} data-testid="section-score" aria-label="Score">
             <span className={styles.cellLabel}>Score</span>
