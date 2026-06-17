@@ -35,6 +35,10 @@ interface OutputCardProps {
   result: OutputCardResult
   patient: NotebookPatient | undefined
   onViewChart: (patientId: string) => void
+  /** This run's output predates the current prompt — quiet the card, disable scoring. */
+  stale: boolean
+  /** Re-run just this patient (per-patient Resume after a rate-limit). */
+  onResume: (patientId: string) => void
 }
 
 /**
@@ -91,26 +95,70 @@ function ContextReceipt({ context, model }: { context: ContextManifest; model: s
   )
 }
 
-function OutputCard({ result, patient, onViewChart }: OutputCardProps) {
+function OutputCard({ result, patient, onViewChart, stale, onResume }: OutputCardProps) {
   const [sawOpen, setSawOpen] = useState(false)
   const name = patient?.name ?? result.patientId
   const done = result.status === 'done'
   const streaming = result.status === 'streaming'
   const errored = result.status === 'error'
+  const rateLimited = result.status === 'rate-limited'
   const modelLabel = result.model ? modelDisplayName(result.model) : null
+
+  // ── Rate-limited card (REAL Upstash limiter 429) ──────────────────────────
+  // Driven by the limiter's response — never a simulated toggle. Plain language,
+  // honest that nothing was charged, with a per-patient Resume (re-run just this
+  // patient: the shared limit may have cleared, or a key was added).
+  if (rateLimited) {
+    return (
+      <div
+        className={`${styles.ocard} ${styles.ocardFail}`}
+        data-testid="output-card"
+        data-patient-id={result.patientId}
+        data-status="rate-limited"
+      >
+        <div className={styles.ocardHead}>
+          <span className={styles.ocName}>{name}</span>
+          <span className={styles.ocRight}>
+            <span className={styles.ocFlagWarn} data-testid="rate-limited-flag">
+              rate-limited
+            </span>
+          </span>
+        </div>
+        <div className={styles.cardState} data-testid="rate-limited-state">
+          <p className={styles.csText}>
+            The shared free-tier limit was reached before this patient ran — nothing was charged.
+          </p>
+          <button
+            type="button"
+            className={styles.csBtn}
+            data-testid="resume-patient"
+            onClick={() => onResume(result.patientId)}
+          >
+            Resume this patient
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
-      className={`${styles.ocard} ${streaming ? styles.ocardStreaming : ''} ${errored ? styles.ocardFail : ''}`}
+      className={`${styles.ocard} ${streaming ? styles.ocardStreaming : ''} ${errored ? styles.ocardFail : ''} ${stale ? styles.ocardStale : ''}`}
       data-testid="output-card"
       data-patient-id={result.patientId}
       data-status={result.status}
+      data-stale={stale ? 'true' : 'false'}
     >
       <div className={styles.ocardHead}>
         <span className={styles.ocName}>{name}</span>
         <span className={styles.ocRight}>
           {errored ? (
             <span className={styles.ocFlagWarn}>failed</span>
+          ) : stale && done ? (
+            // Edited since this run: the output no longer reflects the prompt above.
+            <span className={styles.ocStaleFlag} data-testid="stale-flag">
+              stale — re-run
+            </span>
           ) : done ? (
             modelLabel && (
               // The model stamp — sourced from the response, not a literal.
@@ -179,9 +227,64 @@ export interface OutputCellProps {
   results: Record<string, OutputCardResult>
   patientsById: Map<string, NotebookPatient>
   onViewChart: (patientId: string) => void
+  /**
+   * The current prompt differs from the one that produced this run — quiet the
+   * cards and flag them "stale — re-run". Pure client state; defaults to false.
+   */
+  stale?: boolean
+  /** Re-run just one patient (per-patient Resume after a rate-limit). */
+  onResume?: (patientId: string) => void
+  /**
+   * The REAL daily kill-switch tripped (spend cap). Replaces the cards with a
+   * preserved-state panel offering the BYO "Add your key" path; the prompt +
+   * selected patients live in the shell and are untouched. Defaults to false.
+   */
+  spendCapped?: boolean
+  /** Open the BYO key entry (the "Add your key" path). */
+  onAddKey?: () => void
 }
 
-export function OutputCell({ order, results, patientsById, onViewChart }: OutputCellProps) {
+export function OutputCell({
+  order,
+  results,
+  patientsById,
+  onViewChart,
+  stale = false,
+  onResume,
+  spendCapped = false,
+  onAddKey,
+}: OutputCellProps) {
+  const resume = onResume ?? (() => {})
+
+  // ── Spend-cap state (REAL daily kill-switch 429) ──────────────────────────
+  // Checked FIRST: the cap can trip on the very first patient (no cards yet). The
+  // prompt + selected patients are PRESERVED in the shell — this panel only offers
+  // the BYO path. Driven by the kill-switch signal, never a simulated toggle.
+  if (spendCapped) {
+    return (
+      <section className={styles.cell} data-testid="section-output" aria-label="Model output">
+        <span className={styles.cellLabel}>Model output</span>
+        <div className={styles.capState} data-testid="spend-cap-state">
+          <div className={styles.capBody}>
+            <div className={styles.capTitle}>Free-tier daily limit reached</div>
+            <p className={styles.capSub}>
+              Today&apos;s shared free-tier budget is used up. Your prompt and the patients you
+              picked are kept — add your own key to keep running.
+            </p>
+            <button
+              type="button"
+              className={styles.btnPrimarySm}
+              data-testid="spend-cap-add-key"
+              onClick={onAddKey}
+            >
+              Add your key
+            </button>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   const cards = order.map((id) => results[id]).filter(Boolean)
   if (cards.length === 0) {
     return (
@@ -202,6 +305,11 @@ export function OutputCell({ order, results, patientsById, onViewChart }: Output
         <span className={styles.outSub}>
           {cards.length} {noun} · JSON
         </span>
+        {stale && (
+          <span className={styles.outStale} data-testid="output-stale-note">
+            edited since this run
+          </span>
+        )}
       </div>
       <div className={styles.ocards}>
         {cards.map((r) => (
@@ -210,6 +318,8 @@ export function OutputCell({ order, results, patientsById, onViewChart }: Output
             result={r}
             patient={patientsById.get(r.patientId)}
             onViewChart={onViewChart}
+            stale={stale}
+            onResume={resume}
           />
         ))}
       </div>

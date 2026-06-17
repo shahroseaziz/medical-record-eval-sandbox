@@ -33,7 +33,11 @@ export interface NotebookRunCase {
   record: string
 }
 
-export type CardStatus = 'pending' | 'streaming' | 'done' | 'error'
+// 'rate-limited' is a REAL engine state, not a simulated toggle: it is set ONLY
+// when /api/run returns the Upstash limiter's 429 (X-RateLimit-* headers present).
+// It is per-patient and resumable. The daily kill-switch (spend cap) is a separate,
+// session-level signal surfaced via NotebookRunState.spendCapped — never a card status.
+export type CardStatus = 'pending' | 'streaming' | 'done' | 'error' | 'rate-limited'
 
 /** One output card's live state. */
 export interface OutputCardResult {
@@ -65,6 +69,14 @@ export interface NotebookRunState {
   runId: number
   /** Patient currently generating, or null. */
   activePatientId: string | null
+  /**
+   * Set when /api/run returns the REAL daily kill-switch 429 (the spend cap: a
+   * 429 with NO X-RateLimit-* headers, body "Free-tier usage limit reached…").
+   * Session-level, not per-patient — the prompt + selected patients are preserved
+   * untouched and the shell offers the BYO "Add your key" path. Cleared on the
+   * next fresh run.
+   */
+  spendCapped: boolean
 }
 
 const EMPTY_STATE: NotebookRunState = {
@@ -72,6 +84,7 @@ const EMPTY_STATE: NotebookRunState = {
   running: false,
   runId: 0,
   activePatientId: null,
+  spendCapped: false,
 }
 
 /** Options carrying the notebook's active model + BYO key into the run. */
@@ -86,11 +99,22 @@ export interface NotebookRunOptions {
   byoKey?: string
 }
 
+/**
+ * The two REAL 429s /api/run can return — kept DISTINCT, never conflated:
+ *   • 'rate-limit' — the Upstash limiter (always carries X-RateLimit-* headers).
+ *     Per-patient and resumable; nothing was charged.
+ *   • 'spend-cap'  — the daily kill-switch (no rate-limit headers). Session-level;
+ *     drives the BYO "Add your key" path with the prompt + patients preserved.
+ */
+export type RunFailureKind = 'rate-limit' | 'spend-cap'
+
 interface OneCaseOutcome {
   output: string
   model: string | null
   context: ContextManifest | null
   error?: string
+  /** Set only for the two classified 429s; undefined for ordinary errors. */
+  failureKind?: RunFailureKind
   aborted: boolean
 }
 
@@ -137,17 +161,49 @@ async function runOneCase(
     })
 
     if (!res.ok) {
-      let msg =
-        res.status === 429
-          ? 'Free-tier limit reached. Add your own key to keep running.'
-          : 'Request failed.'
+      // Two REAL 429s arrive from /api/run and must NOT be conflated. We key on the
+      // STRUCTURAL signal — the Upstash limiter always sets X-RateLimit-* headers,
+      // the daily kill-switch never does — corroborated by the verbatim body text:
+      //   • rate-limit: "Rate limit exceeded…" + X-RateLimit-* headers → per-patient,
+      //     resumable, nothing charged.
+      //   • spend-cap:  "Free-tier usage limit reached…" (no RL headers) → session-
+      //     level → the BYO "Add your key" path; the prompt + patients are preserved.
+      const hasRlHeaders =
+        res.headers.has('X-RateLimit-Limit') || res.headers.has('X-RateLimit-Reset')
+      let bodyError: string | undefined
       try {
         const payload = (await res.json()) as { error?: string }
-        if (payload.error) msg = payload.error
+        if (payload.error) bodyError = payload.error
       } catch {
         /* non-JSON error body */
       }
-      return { output: '', model: null, context: null, error: msg, aborted: false }
+      if (res.status === 429) {
+        if (hasRlHeaders) {
+          return {
+            output: '',
+            model: null,
+            context: null,
+            failureKind: 'rate-limit',
+            error: bodyError ?? 'Rate limit exceeded.',
+            aborted: false,
+          }
+        }
+        return {
+          output: '',
+          model: null,
+          context: null,
+          failureKind: 'spend-cap',
+          error: bodyError ?? 'Free-tier usage limit reached.',
+          aborted: false,
+        }
+      }
+      return {
+        output: '',
+        model: null,
+        context: null,
+        error: bodyError ?? 'Request failed.',
+        aborted: false,
+      }
     }
 
     const reader = res.body?.getReader()
@@ -221,6 +277,11 @@ async function runOneCase(
   }
 }
 
+/** A fresh pending card for a patient (the un-run, nothing-charged state). */
+function pendingCard(patientId: string): OutputCardResult {
+  return { patientId, status: 'pending', output: '', model: null, context: null }
+}
+
 export function useNotebookRun() {
   const [state, setState] = useState<NotebookRunState>(EMPTY_STATE)
 
@@ -230,80 +291,143 @@ export function useNotebookRun() {
   const runningRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const runIdRef = useRef(0)
+  // Captured at run time so a per-patient Resume can re-run a single case with the
+  // exact prompt that produced this run (a later prompt edit is a separate re-run,
+  // not a resume) while picking up the CURRENT key/model.
+  const casesRef = useRef<NotebookRunCase[]>([])
+  const promptRef = useRef('')
+  const optsRef = useRef<NotebookRunOptions>({ model: '' })
 
   const sync = useCallback((patch: Partial<NotebookRunState>) => {
     setState((s) => ({ ...s, results: { ...resultsRef.current }, ...patch }))
   }, [])
+
+  // Run ONE case through /api/run and apply its outcome to that card. Shared by the
+  // fan-out loop and per-patient Resume so both classify the REAL signals
+  // identically. Returns the terminal disposition the caller acts on.
+  const runCase = useCallback(
+    async (c: NotebookRunCase, signal: AbortSignal): Promise<'ok' | 'aborted' | 'spend-cap'> => {
+      resultsRef.current[c.patientId] = {
+        patientId: c.patientId,
+        status: 'streaming',
+        output: '',
+        model: null,
+        context: null,
+      }
+      sync({ activePatientId: c.patientId })
+
+      const outcome = await runOneCase(c, promptRef.current, optsRef.current, signal, (partialOut) => {
+        const cur = resultsRef.current[c.patientId]
+        if (cur) {
+          resultsRef.current[c.patientId] = { ...cur, output: partialOut }
+          sync({})
+        }
+      })
+
+      if (outcome.aborted) {
+        resultsRef.current[c.patientId] = pendingCard(c.patientId)
+        return 'aborted'
+      }
+
+      // Daily kill-switch: nothing ran for this patient and nothing was charged.
+      // Return the card to pending (its output is PRESERVED as un-run) and signal
+      // the session-level cap up to the loop/resume caller.
+      if (outcome.failureKind === 'spend-cap') {
+        resultsRef.current[c.patientId] = pendingCard(c.patientId)
+        return 'spend-cap'
+      }
+
+      // Limiter 429: a real, per-patient, resumable state. Nothing was charged.
+      if (outcome.failureKind === 'rate-limit') {
+        resultsRef.current[c.patientId] = {
+          patientId: c.patientId,
+          status: 'rate-limited',
+          output: '',
+          model: null,
+          context: null,
+          error: outcome.error,
+        }
+        sync({})
+        return 'ok'
+      }
+
+      resultsRef.current[c.patientId] = {
+        patientId: c.patientId,
+        status: outcome.error ? 'error' : 'done',
+        output: outcome.output,
+        model: outcome.model,
+        context: outcome.context,
+        error: outcome.error,
+      }
+      sync({})
+      return 'ok'
+    },
+    [sync],
+  )
 
   const run = useCallback(
     async (cases: NotebookRunCase[], prompt: string, opts: NotebookRunOptions) => {
       if (runningRef.current || cases.length === 0) return
 
       const next: Record<string, OutputCardResult> = {}
-      for (const c of cases) {
-        next[c.patientId] = {
-          patientId: c.patientId,
-          status: 'pending',
-          output: '',
-          model: null,
-          context: null,
-        }
-      }
+      for (const c of cases) next[c.patientId] = pendingCard(c.patientId)
       resultsRef.current = next
+      casesRef.current = cases
+      promptRef.current = prompt
+      optsRef.current = opts
 
       runningRef.current = true
       const controller = new AbortController()
       abortRef.current = controller
       runIdRef.current += 1
-      sync({ running: true, runId: runIdRef.current, activePatientId: null })
+      // A fresh run clears any prior spend-cap state.
+      sync({ running: true, runId: runIdRef.current, activePatientId: null, spendCapped: false })
 
       for (const c of cases) {
         if (controller.signal.aborted) break
-
-        resultsRef.current[c.patientId] = {
-          patientId: c.patientId,
-          status: 'streaming',
-          output: '',
-          model: null,
-          context: null,
-        }
-        sync({ activePatientId: c.patientId })
-
-        const outcome = await runOneCase(c, prompt, opts, controller.signal, (partialOut) => {
-          const cur = resultsRef.current[c.patientId]
-          if (cur) {
-            resultsRef.current[c.patientId] = { ...cur, output: partialOut }
-            sync({})
-          }
-        })
-
-        if (outcome.aborted) {
-          resultsRef.current[c.patientId] = {
-            patientId: c.patientId,
-            status: 'pending',
-            output: '',
-            model: null,
-            context: null,
-          }
+        const disposition = await runCase(c, controller.signal)
+        if (disposition === 'aborted') break
+        if (disposition === 'spend-cap') {
+          // Stop the fan-out: the cap is session-level. Remaining patients stay
+          // pending (preserved) and the shell paints the BYO path.
+          sync({ spendCapped: true })
           break
         }
-
-        resultsRef.current[c.patientId] = {
-          patientId: c.patientId,
-          status: outcome.error ? 'error' : 'done',
-          output: outcome.output,
-          model: outcome.model,
-          context: outcome.context,
-          error: outcome.error,
-        }
-        sync({})
       }
 
       runningRef.current = false
       abortRef.current = null
       sync({ running: false, activePatientId: null })
     },
-    [sync],
+    [sync, runCase],
+  )
+
+  /**
+   * Re-run a SINGLE patient (per-patient Resume after a rate-limit). Uses the run's
+   * captured prompt so the resumed card matches its siblings, but takes fresh opts
+   * (current key/model) when provided — e.g. the user added a key to get past the
+   * shared limit.
+   */
+  const resume = useCallback(
+    async (patientId: string, opts?: NotebookRunOptions) => {
+      if (runningRef.current) return
+      const c = casesRef.current.find((x) => x.patientId === patientId)
+      if (!c) return
+      if (opts) optsRef.current = opts
+
+      runningRef.current = true
+      const controller = new AbortController()
+      abortRef.current = controller
+      sync({ running: true, activePatientId: patientId })
+
+      const disposition = await runCase(c, controller.signal)
+      if (disposition === 'spend-cap') sync({ spendCapped: true })
+
+      runningRef.current = false
+      abortRef.current = null
+      sync({ running: false, activePatientId: null })
+    },
+    [sync, runCase],
   )
 
   /** Stop the in-flight run; the active card returns to pending. */
@@ -311,5 +435,5 @@ export function useNotebookRun() {
     abortRef.current?.abort()
   }, [])
 
-  return { ...state, run, abort }
+  return { ...state, run, resume, abort }
 }

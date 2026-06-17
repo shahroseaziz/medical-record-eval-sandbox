@@ -19,6 +19,36 @@ import styles from './notebook.module.css'
 const JUDGE_EVAL_KEY = 'judge:default'
 
 /**
+ * Build the per-case golden score rows, EXCLUDING stale entries from the pass/fail
+ * denominator. A stale entry (its output predates the current prompt) is marked
+ * `errored: true` — the SAME exclusion the judge already uses for un-gradable
+ * patients (see JudgeResults) — so a stale output is never counted pass OR fail.
+ * The cube denominator (`per.filter(p => p.pass !== undefined)`) drops it.
+ *
+ * Pure + exported so the stale-exclusion is unit-testable on its own.
+ */
+export function buildGoldenPerCase(
+  order: string[],
+  grades: Record<string, GoldenGrade | undefined>,
+  stale: ReadonlySet<string>,
+): PerCaseScore[] {
+  return order.map((id) => {
+    // Stale → excluded (errored), regardless of how it graded under the old prompt.
+    if (stale.has(id)) {
+      return { patientId: id, errored: true, fails: [] }
+    }
+    const g = grades[id]
+    const graded = g != null && (g.state === 'pass' || g.state === 'fail')
+    return {
+      patientId: id,
+      ...(graded ? { pass: g!.state === 'pass' } : { errored: true }),
+      fails: g ? g.fails.map((f) => f.field) : [],
+      ...(g?.error ? { reason: g.error } : {}),
+    }
+  })
+}
+
+/**
  * A scored eval row lifted up to the cube owner. The shell stamps the current run
  * id onto it; this carries only the eval identity + the rolled-up row, so the cube
  * stays the single source the score line projects from.
@@ -370,6 +400,13 @@ export interface EvalCellProps {
    * score line then PROJECTS the cube — this cell never renders the trail itself.
    */
   onScoreReport?: (report: ScoreReport) => void
+  /**
+   * The current prompt differs from the one that produced this run — the outputs
+   * are STALE. Scoring is disabled ("Re-run to score"), the existing score is
+   * quieted, and any entry scored while stale drops from the denominator. Pure
+   * client state; defaults to false.
+   */
+  stale?: boolean
 }
 
 type Mode = null | 'golden' | 'judge'
@@ -381,6 +418,7 @@ export function EvalCell({
   onViewChart,
   byoKey,
   onScoreReport,
+  stale = false,
 }: EvalCellProps) {
   const [mode, setMode] = useState<Mode>(null)
   const [golden, setGolden] = useState<Record<string, string>>({})
@@ -404,8 +442,10 @@ export function EvalCell({
   }, [])
 
   // CLIENT-SIDE scoring: pure functions over local state. No fetch, no metered
-  // call — grading a golden never touches the network.
+  // call — grading a golden never touches the network. Disabled while stale (the
+  // outputs predate the prompt) — "Re-run to score".
   const onScore = useCallback(() => {
+    if (stale) return
     const next: Record<string, GoldenGrade> = {}
     for (const id of order) {
       const r = results[id]
@@ -414,19 +454,14 @@ export function EvalCell({
     setScores(next)
 
     // Lift the golden row into the cube. Only pass/fail patients count toward the
-    // denominator — invalid/no-output golds are `errored` (excluded), matching the
-    // displayed overall. The score line projects this; it is not computed there.
+    // denominator — invalid/no-output golds AND stale entries are `errored`
+    // (excluded), matching the displayed overall. The score line projects this; it
+    // is not computed there.
     if (onScoreReport) {
-      const per: PerCaseScore[] = order.map((id) => {
-        const g = next[id]
-        const graded = g.state === 'pass' || g.state === 'fail'
-        return {
-          patientId: id,
-          ...(graded ? { pass: g.state === 'pass' } : { errored: true }),
-          fails: g.fails.map((f) => f.field),
-          ...(g.error ? { reason: g.error } : {}),
-        }
-      })
+      // Stale outputs never count pass/fail. When the whole run is stale every
+      // entry is excluded; the same helper drops any subset of stale ids.
+      const staleSet = stale ? new Set(order) : new Set<string>()
+      const per = buildGoldenPerCase(order, next, staleSet)
       const gradedTotal = per.filter((p) => p.pass !== undefined).length
       const passN = per.filter((p) => p.pass === true).length
       onScoreReport({
@@ -436,7 +471,7 @@ export function EvalCell({
         row: { frac: `${passN}/${gradedTotal}`, per },
       })
     }
-  }, [order, results, golden, onScoreReport])
+  }, [order, results, golden, onScoreReport, stale])
 
   // Lift the judge row into the cube once a run of verdicts settles (no longer
   // judging, at least one verdict in). Errored patients are `errored` (excluded
@@ -478,14 +513,14 @@ export function EvalCell({
   // two-call faithfulness pipeline is never reached from here. Patients without a
   // completed output have nothing to judge and are skipped (no wasted call).
   const onJudge = useCallback(() => {
-    if (!criteria.trim()) return
+    if (!criteria.trim() || stale) return
     const cases: JudgeCase[] = order
       .map((id) => results[id])
       .filter((r): r is OutputCardResult => Boolean(r) && r.status === 'done' && r.output.trim().length > 0)
       .map((r) => ({ patientId: r.patientId, output: r.output }))
     if (cases.length === 0) return
     void runJudge(cases, criteria, { byoKey })
-  }, [criteria, order, results, runJudge, byoKey])
+  }, [criteria, order, results, runJudge, byoKey, stale])
 
   // A fresh judge run produces fresh verdicts, so prior agree marks no longer apply
   // — clear them when the run id bumps (the first run goes 0 → 1, also clearing).
@@ -574,13 +609,19 @@ export function EvalCell({
               type="button"
               className={styles.btnPrimarySm}
               data-testid="judge-run"
-              disabled={judging || !criteria.trim()}
+              disabled={judging || !criteria.trim() || stale}
               onClick={onJudge}
             >
-              {judging ? 'Judging…' : 'Run judge'}
+              {stale ? 'Re-run to score' : judging ? 'Judging…' : 'Run judge'}
             </button>
           </div>
         </div>
+
+        {stale && (
+          <p className={styles.evalStaleNote} data-testid="eval-stale-note">
+            The prompt changed after this run — the outputs above are stale. Re-run to score them.
+          </p>
+        )}
 
         <p className={styles.goldenNudge} data-testid="judge-copy">
           Describe in plain language what a correct answer must contain. The judge reads each
@@ -604,14 +645,16 @@ export function EvalCell({
           the number below is honest about what fully met your criteria.
         </p>
 
-        <JudgeResults
-          order={order}
-          verdicts={verdicts}
-          patientsById={patientsById}
-          agree={agree}
-          onToggleAgree={onToggleAgree}
-          goldenScores={scores}
-        />
+        <div className={stale ? styles.evalQuiet : undefined} data-stale={stale ? 'true' : 'false'}>
+          <JudgeResults
+            order={order}
+            verdicts={verdicts}
+            patientsById={patientsById}
+            agree={agree}
+            onToggleAgree={onToggleAgree}
+            goldenScores={scores}
+          />
+        </div>
       </section>
     )
   }
@@ -636,12 +679,19 @@ export function EvalCell({
             type="button"
             className={styles.btnPrimarySm}
             data-testid="golden-score"
+            disabled={stale}
             onClick={onScore}
           >
-            Score
+            {stale ? 'Re-run to score' : 'Score'}
           </button>
         </div>
       </div>
+
+      {stale && (
+        <p className={styles.evalStaleNote} data-testid="eval-stale-note">
+          The prompt changed after this run — the outputs above are stale. Re-run to score them.
+        </p>
+      )}
 
       <p className={styles.goldenNudge} data-testid="golden-nudge">
         Grade the chart, not the output: write each expected answer from the patient&apos;s record,
@@ -668,14 +718,19 @@ export function EvalCell({
       </p>
 
       {overall && (
-        <div className={styles.goldenOverall} data-testid="golden-overall">
+        <div
+          className={`${styles.goldenOverall} ${stale ? styles.evalQuiet : ''}`}
+          data-testid="golden-overall"
+          data-stale={stale ? 'true' : 'false'}
+        >
           <span className={styles.ovNum}>
             {overall.passN}/{overall.total}
           </span>{' '}
           pass
           <span className={styles.ovNote}>
-            {' '}
-            · scored against your golden answers, on your machine
+            {stale
+              ? ' · stale — re-run to score'
+              : ' · scored against your golden answers, on your machine'}
           </span>
         </div>
       )}
