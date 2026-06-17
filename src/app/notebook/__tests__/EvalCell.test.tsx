@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { EvalCell } from '../EvalCell'
+import { EvalCell, buildGoldenPerCase } from '../EvalCell'
 import { JUDGE_MODEL, modelDisplayName } from '@/lib/models'
 import type { OutputCardResult } from '../useNotebookRun'
 import type { NotebookPatient } from '../types'
+import type { GoldenGrade } from '../goldenGrade'
 
 // SHA-161 N9 — golden-answer eval cell. No-chooser invite → per-patient golden
 // editors → CLIENT-SIDE deterministic scoring via lib/eval/normalize. The final
@@ -325,5 +326,85 @@ describe('EvalCell — ZERO metered calls during scoring (collateral guard)', ()
     expect(screen.getByTestId('golden-overall')).toBeInTheDocument()
     // … and not a single fetch was made.
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+// ── N12: stale-on-edit — exclude stale entries from the score denominator ─────
+
+describe('buildGoldenPerCase — stale entries drop from the denominator', () => {
+  const pass = (): GoldenGrade => ({ state: 'pass', fields: [], fails: [] })
+  const fail = (): GoldenGrade => ({
+    state: 'fail',
+    fields: [],
+    fails: [{ field: 'a1c_current', expected: '6', got: '7' }],
+  })
+
+  it('marks a stale entry errored (excluded) and counts only fresh entries pass/fail', () => {
+    const order = ['p1', 'p2', 'p3']
+    const grades: Record<string, GoldenGrade> = { p1: pass(), p2: fail(), p3: pass() }
+    // p3's output predates the current prompt → stale → excluded.
+    const per = buildGoldenPerCase(order, grades, new Set(['p3']))
+
+    const byId = Object.fromEntries(per.map((p) => [p.patientId, p]))
+    expect(byId.p1.pass).toBe(true)
+    expect(byId.p2.pass).toBe(false)
+    // Stale → errored, NOT counted pass or fail (the same exclusion as judge-errored).
+    expect(byId.p3.errored).toBe(true)
+    expect(byId.p3.pass).toBeUndefined()
+
+    // The denominator = entries with a defined pass; the stale one is gone.
+    const gradedTotal = per.filter((p) => p.pass !== undefined).length
+    const passN = per.filter((p) => p.pass === true).length
+    expect(gradedTotal).toBe(2)
+    expect(passN).toBe(1)
+  })
+
+  it('excludes EVERY entry when the whole run is stale (denominator 0)', () => {
+    const order = ['p1', 'p2']
+    const grades: Record<string, GoldenGrade> = { p1: pass(), p2: pass() }
+    const per = buildGoldenPerCase(order, grades, new Set(order))
+    expect(per.every((p) => p.errored === true)).toBe(true)
+    expect(per.filter((p) => p.pass !== undefined).length).toBe(0)
+  })
+})
+
+describe('EvalCell — N12 stale disables scoring ("Re-run to score")', () => {
+  function renderStale(stale: boolean) {
+    const order = ['p1', 'p2']
+    const results = {
+      p1: doneResult('p1', MODEL_OUT),
+      p2: doneResult('p2', MODEL_OUT),
+    } as Record<string, OutputCardResult>
+    const patientsById = new Map<string, NotebookPatient>([
+      ['p1', patient('p1', 'Ada Lovelace')],
+      ['p2', patient('p2', 'Alan Turing')],
+    ])
+    render(
+      <EvalCell
+        order={order}
+        results={results}
+        patientsById={patientsById}
+        onViewChart={vi.fn()}
+        stale={stale}
+      />,
+    )
+  }
+
+  it('disables the golden Score button and shows "Re-run to score" when stale', async () => {
+    const user = userEvent.setup()
+    renderStale(true)
+    await user.click(screen.getByTestId('golden-invite-add'))
+    const score = screen.getByTestId('golden-score')
+    expect(score).toBeDisabled()
+    expect(score).toHaveTextContent(/re-run to score/i)
+    expect(screen.getByTestId('eval-stale-note')).toBeInTheDocument()
+  })
+
+  it('keeps the golden Score button enabled when not stale', async () => {
+    const user = userEvent.setup()
+    renderStale(false)
+    await user.click(screen.getByTestId('golden-invite-add'))
+    expect(screen.getByTestId('golden-score')).toBeEnabled()
+    expect(screen.queryByTestId('eval-stale-note')).not.toBeInTheDocument()
   })
 })

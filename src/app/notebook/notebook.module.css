@@ -665,6 +665,106 @@
   color: var(--color-danger-text);
 }
 
+/* ── N12 failure + stale states ─────────────────────────────────────────────── */
+
+/* Rate-limited card body (REAL Upstash limiter 429): plain-language line + the
+   per-patient Resume control. */
+.cardState {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.csText {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.csBtn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.csBtn:hover {
+  background: var(--color-surface-muted);
+}
+
+/* Spend-cap state (REAL daily kill-switch 429): preserved prompt/patients +
+   the BYO "Add your key" path. */
+.capState {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+}
+
+.capBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.capTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-warning-text);
+}
+
+.capSub {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+/* Stale-on-edit: cards + score visually de-emphasized; output predates the prompt. */
+.ocardStale {
+  opacity: 0.55;
+}
+
+.ocStaleFlag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-warning-text);
+}
+
+.outStale {
+  font-size: var(--text-xs);
+  font-style: italic;
+  color: var(--color-warning-text);
+}
+
+.evalStaleNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-warning-text);
+  line-height: var(--leading-normal);
+}
+
+.evalQuiet {
+  opacity: 0.55;
+}
+
 .ocFoot {
   display: flex;
   align-items: center;

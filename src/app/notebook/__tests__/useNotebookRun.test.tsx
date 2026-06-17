@@ -62,6 +62,39 @@ function errorResponse(status: number, message: string): Response {
   })
 }
 
+/**
+ * The REAL Upstash limiter 429: body "Rate limit exceeded…" PLUS X-RateLimit-*
+ * headers. This is the structural signal the run loop keys on to distinguish a
+ * rate-limit (per-patient, resumable) from the daily kill-switch.
+ */
+function rateLimitedResponse(): Response {
+  return new Response(
+    JSON.stringify({ error: 'Rate limit exceeded. Max 10 requests per hour per IP.' }),
+    {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': '10',
+        'X-RateLimit-Remaining': '0',
+        'X-RateLimit-Reset': '1718600000',
+      },
+    },
+  )
+}
+
+/**
+ * The REAL daily kill-switch 429: body "Free-tier usage limit reached…" and NO
+ * X-RateLimit-* headers. This is the spend-cap signal (session-level, BYO path).
+ */
+function spendCapResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'Free-tier usage limit reached. Provide your own Anthropic API key to continue.',
+    }),
+    { status: 429, headers: { 'Content-Type': 'application/json' } },
+  )
+}
+
 const CASES: NotebookRunCase[] = [
   { patientId: 'p1', record: 'record-1' },
   { patientId: 'p2', record: 'record-2' },
@@ -188,8 +221,8 @@ describe('useNotebookRun (notebook run loop)', () => {
     expect(result.current.results['p1'].context).toBeNull()
   })
 
-  it('marks a card errored when the run fails', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(errorResponse(429, 'Free-tier usage limit reached.'))
+  it('marks a card errored on an ordinary (non-429) failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(errorResponse(500, 'Something broke.'))
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() => useNotebookRun())
@@ -197,6 +230,73 @@ describe('useNotebookRun (notebook run loop)', () => {
       await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
     })
     expect(result.current.results['p1'].status).toBe('error')
-    expect(result.current.results['p1'].error).toBe('Free-tier usage limit reached.')
+    expect(result.current.results['p1'].error).toBe('Something broke.')
+    expect(result.current.spendCapped).toBe(false)
+  })
+
+  // ── REAL 429 signals — rate-limit vs spend-cap are NEVER conflated ──────────
+
+  it('classifies the limiter 429 (X-RateLimit-* headers) as a per-patient rate-limited card', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(rateLimitedResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+    // Per-patient, resumable — NOT the session-level spend cap.
+    expect(result.current.results['p1'].status).toBe('rate-limited')
+    expect(result.current.spendCapped).toBe(false)
+  })
+
+  it('classifies the kill-switch 429 (no RL headers) as the session-level spend cap, preserving the card', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(spendCapResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+    // Nothing charged: the card is PRESERVED as un-run (pending), and the cap is
+    // surfaced at the session level for the BYO path — not stamped on the card.
+    expect(result.current.spendCapped).toBe(true)
+    expect(result.current.results['p1'].status).toBe('pending')
+  })
+
+  it('stops the fan-out on the spend cap — remaining patients stay pending (preserved)', async () => {
+    // First patient trips the daily kill-switch; the loop must not call again.
+    const fetchMock = vi.fn().mockResolvedValue(spendCapResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run(CASES, 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(result.current.spendCapped).toBe(true)
+    expect(result.current.results['p1'].status).toBe('pending')
+    expect(result.current.results['p2'].status).toBe('pending')
+  })
+
+  it('resumes a single rate-limited patient (re-running just that one case)', async () => {
+    // Run: p1 rate-limited. Resume: p1 succeeds. Only p1 is re-fetched.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(rateLimitedResponse())
+      .mockResolvedValueOnce(streamResponse('recovered', 'claude-haiku-4-5-20251001'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useNotebookRun())
+    await act(async () => {
+      await result.current.run([CASES[0]], 'p', { model: 'claude-haiku-4-5-20251001' })
+    })
+    expect(result.current.results['p1'].status).toBe('rate-limited')
+
+    await act(async () => {
+      await result.current.resume('p1', { model: 'claude-haiku-4-5-20251001' })
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.current.results['p1'].status).toBe('done')
+    expect(result.current.results['p1'].output).toBe('recovered')
   })
 })
