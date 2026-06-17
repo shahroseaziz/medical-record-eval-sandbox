@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react'
 import { genPromptHash } from '@/lib/cases'
 import {
   createEmptyState,
-  type NotebookEval,
+  upsertEvalVersion,
   type NotebookRun,
   type NotebookState,
   type OutputStatus,
@@ -135,26 +135,21 @@ export function useNotebookCube() {
 
   const recordScore = useCallback((runId: string, def: EvalDefInput, row: ScoreRow) => {
     setState((prev) => {
-      // Upsert the eval definition (one version per notebook eval).
-      const contentHash = genPromptHash(def.criteriaOrGolden)
+      // Upsert the eval with content-hash versioning: a changed criteria/golden
+      // bumps the version and extends history; a whitespace-only edit does not.
       const existing = prev.evals.find((e) => e.key === def.key)
-      const evalDef: NotebookEval = existing
-        ? { ...existing, label: def.label, criteriaOrGolden: def.criteriaOrGolden }
-        : {
-            key: def.key,
-            label: def.label,
-            version: 1,
-            criteriaOrGolden: def.criteriaOrGolden,
-            history: [{ version: 1, contentHash }],
-          }
+      const evalDef = upsertEvalVersion(existing, def)
       const evals = existing
         ? prev.evals.map((e) => (e.key === def.key ? evalDef : e))
         : [...prev.evals, evalDef]
 
-      // Write the cell into scores[evalKey][runId].
+      // Stamp the row with the eval version it was graded under, then write the
+      // cell into scores[evalKey][runId]. The stamp is what ties this row to the
+      // exact criteria/golden even after a later version bump (rows are immutable).
+      const stampedRow: ScoreRow = { ...row, evalVersion: evalDef.version }
       const scores = {
         ...prev.scores,
-        [def.key]: { ...(prev.scores[def.key] ?? {}), [runId]: row },
+        [def.key]: { ...(prev.scores[def.key] ?? {}), [runId]: stampedRow },
       }
       return { ...prev, evals, scores }
     })

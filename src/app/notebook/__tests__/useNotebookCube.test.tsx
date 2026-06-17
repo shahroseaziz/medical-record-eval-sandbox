@@ -43,3 +43,45 @@ describe('useNotebookCube — removeScore', () => {
     expect(result.current.state).toBe(before)
   })
 })
+
+// SHA-168 N16 — eval versioning. recordScore bumps the eval version on a
+// content-hash change and stamps each row with the version it was graded under;
+// a whitespace-only edit does not false-bump.
+describe('useNotebookCube — eval versioning', () => {
+  it('bumps the eval version on a criteria change and stamps each row', () => {
+    const { result } = renderHook(() => useNotebookCube())
+
+    act(() => {
+      result.current.recordScore('run-1', { key: 'judge:j1', label: 'Judge', criteriaOrGolden: 'be grounded' }, ROW)
+    })
+    expect(result.current.state.evals.find((e) => e.key === 'judge:j1')?.version).toBe(1)
+    expect(result.current.state.scores['judge:j1']['run-1'].evalVersion).toBe(1)
+
+    // Revise the criteria, re-score a new run → version 2, history extends.
+    act(() => {
+      result.current.recordScore(
+        'run-2',
+        { key: 'judge:j1', label: 'Judge', criteriaOrGolden: 'be grounded in the context' },
+        ROW,
+      )
+    })
+    const def = result.current.state.evals.find((e) => e.key === 'judge:j1')
+    expect(def?.version).toBe(2)
+    expect(def?.history.map((h) => h.version)).toEqual([1, 2])
+    // The new row stamps v2; the prior row keeps its v1 stamp (immutable).
+    expect(result.current.state.scores['judge:j1']['run-2'].evalVersion).toBe(2)
+    expect(result.current.state.scores['judge:j1']['run-1'].evalVersion).toBe(1)
+  })
+
+  it('does not bump on a whitespace-only criteria edit', () => {
+    const { result } = renderHook(() => useNotebookCube())
+    act(() => {
+      result.current.recordScore('run-1', { key: 'golden', label: 'Golden', criteriaOrGolden: '{"a": 1}' }, ROW)
+      result.current.recordScore('run-2', { key: 'golden', label: 'Golden', criteriaOrGolden: '{"a":   1}\n' }, ROW)
+    })
+    const def = result.current.state.evals.find((e) => e.key === 'golden')
+    expect(def?.version).toBe(1)
+    expect(def?.history).toHaveLength(1)
+    expect(result.current.state.scores.golden['run-2'].evalVersion).toBe(1)
+  })
+})
