@@ -9,6 +9,7 @@ import {
   projectOnlyTrail,
   projectEvalTrail,
   scoredEvalKeys,
+  scoredRunsInOrder,
   evalContentHash,
   upsertEvalVersion,
   isRevised,
@@ -322,6 +323,14 @@ describe('notebook bench-state v1', () => {
       expect(scoredEvalKeys(validated)).toEqual(['golden', 'judge:faithfulness'])
       const empty = createEmptyState()
       expect(scoredEvalKeys(empty)).toEqual([])
+    })
+
+    it('scoredRunsInOrder returns scored runs in run order — the grid columns', () => {
+      // run-2 has no score cell on any eval → it is not a grid column.
+      const state = importState(serializeState(multiRunState()))
+      expect(scoredRunsInOrder(state).map((r) => r.id)).toEqual(['run-1', 'run-3', 'run-4'])
+      // No scores at all → no columns.
+      expect(scoredRunsInOrder(createEmptyState())).toEqual([])
     })
   })
 

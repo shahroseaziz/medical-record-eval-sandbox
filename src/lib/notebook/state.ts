@@ -390,3 +390,14 @@ export function projectEvalTrail(
 export function scoredEvalKeys(state: NotebookState): string[] {
   return Object.keys(state.scores).filter((k) => Object.keys(state.scores[k]).length > 0)
 }
+
+/**
+ * The runs that have at least one score cell, in `state.runs` (chronological)
+ * order. These are the GRID's columns — a run with no scored eval is not a
+ * column, and the last one is the "current" run the grid highlights. Like the
+ * trail, this is a pure projection of the cube; it stores nothing new.
+ */
+export function scoredRunsInOrder(state: NotebookState): NotebookRun[] {
+  const evalKeys = Object.keys(state.scores)
+  return state.runs.filter((run) => evalKeys.some((k) => state.scores[k]?.[run.id]))
+}
