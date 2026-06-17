@@ -149,7 +149,7 @@ describe('EvalCell — LLM judge (N10)', () => {
   // per call, so a sequential judge run can be driven deterministically.
   function stubScore(responses: Array<{ ok: boolean; status?: number; body: unknown }>) {
     let i = 0
-    const fetchMock = vi.fn(async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
       const r = responses[Math.min(i, responses.length - 1)]
       i += 1
       return {
