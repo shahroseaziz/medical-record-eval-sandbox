@@ -1,13 +1,15 @@
 /**
- * SHA-73 R17: the landing front door. `/` routes by persona — "Learn evals"
- * (primary → /lesson) and "Open the workbench" (→ /workbench) — with a quiet
- * link to the re-homed classic workspace (/workspace). Fully static: no DB, no
- * model call, so we assert zero API traffic on cold load.
+ * SHA-173 N18 cutover: `/` now serves the notebook FRONT PAGE (authored at
+ * /notebook/start in N6). The product surface is /notebook, reached from here via
+ * two co-equal actions ("Open the sandbox" → /notebook, "Load the worked example"
+ * → /notebook?example=1). The classic persona front door is retired from `/`, and
+ * the workbench is UNLINKED from the front page — reachable only by direct URL.
+ * Fully static: no DB, no model call, so we assert zero API traffic on cold load.
  */
 import { test, expect } from '@playwright/test'
 
-test.describe('landing: persona router at /', () => {
-  test('renders without any API calls (static front door)', async ({ page }) => {
+test.describe('landing: notebook front page at / (N18 cutover)', () => {
+  test('renders the notebook front page without any API calls (static)', async ({ page }) => {
     const apiCalls: string[] = []
     page.on('request', (req) => {
       if (req.url().includes('/api/')) apiCalls.push(req.url())
@@ -16,48 +18,48 @@ test.describe('landing: persona router at /', () => {
 
     await page.goto('/')
 
-    await expect(page.getByTestId('landing-page')).toBeVisible()
-    // It is NOT the old workspace — the authoring surface no longer lives here.
-    await expect(page.getByTestId('golden-set-builder')).toHaveCount(0)
+    await expect(page.getByTestId('notebook-front-page')).toBeVisible()
+    // It is the cutover front page, NOT the retired persona router.
+    await expect(page.getByTestId('landing-page')).toHaveCount(0)
+    await expect(page.getByTestId('route-workbench')).toHaveCount(0)
     expect(apiCalls).toHaveLength(0)
   })
 
-  test('offers the two persona routes with the right destinations', async ({ page }) => {
+  test('offers two co-equal actions into the product (sandbox + worked example)', async ({
+    page,
+  }) => {
     await page.route('/api/**', async (route) => route.abort())
     await page.goto('/')
 
-    const lesson = page.getByTestId('route-lesson')
-    await expect(lesson).toBeVisible()
-    await expect(lesson).toHaveAttribute('href', '/lesson')
-    await expect(lesson).toContainText(/learn evals/i)
+    const sandbox = page.getByTestId('action-open-sandbox')
+    await expect(sandbox).toBeVisible()
+    await expect(sandbox).toHaveAttribute('href', '/notebook')
 
-    const workbench = page.getByTestId('route-workbench')
-    await expect(workbench).toBeVisible()
-    await expect(workbench).toHaveAttribute('href', '/workbench')
-    await expect(workbench).toContainText(/workbench/i)
+    const example = page.getByTestId('action-worked-example')
+    await expect(example).toBeVisible()
+    await expect(example).toHaveAttribute('href', '/notebook?example=1')
   })
 
-  test('links quietly to the worked example; the classic workspace is retired (O12b)', async ({ page }) => {
+  test('says what this is — synthetic data, no real PHI', async ({ page }) => {
     await page.route('/api/**', async (route) => route.abort())
     await page.goto('/')
 
-    await expect(page.getByTestId('example-link')).toHaveAttribute('href', '/example')
-    await expect(page.getByTestId('workspace-link')).toHaveCount(0)
+    const honesty = page.getByTestId('front-honesty')
+    await expect(honesty).toContainText(/synthetic/i)
+    await expect(honesty).toContainText(/no real PHI/i)
   })
 
-  test('says what this is — synthetic data, no sign-up', async ({ page }) => {
-    await page.route('/api/**', async (route) => route.abort())
-    await page.goto('/')
-
-    // "synthetic" appears in both the lede and the chip — target the chip claim
-    // specifically (strict-mode: getByText(/synthetic/i) matches both).
-    await expect(page.getByText(/Synthetic records only/)).toBeVisible()
-    await expect(page.getByText(/no sign-up/i)).toBeVisible()
+  test('the workbench is reachable by direct URL but UNLINKED from the front page', async ({
+    page,
+  }) => {
+    // Not linked from `/` (asserted above: route-workbench has count 0), yet the
+    // surface itself still resolves directly — N18 unlinks, N19 deletes.
+    await page.goto('/workbench')
+    await expect(page.getByTestId('workbench-page')).toBeVisible()
   })
 
-  test('the retired /workspace lands on the bench (O12b)', async ({ page }) => {
+  test('the retired /workspace still lands on the bench (O12b)', async ({ page }) => {
     await page.goto('/workspace')
     expect(page.url()).toContain('/workbench')
-
   })
 })
