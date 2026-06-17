@@ -211,6 +211,101 @@ describe('ScoreLine (SHA-163 N11 / SHA-170 N15a)', () => {
     expect(screen.getByTestId('score-grid').textContent).not.toMatch(/disput/i)
   })
 
+  // ── N15c — grid navigation ─────────────────────────────────────────────────
+
+  it('row label is a button that scrolls to the eval editor via a timed stepper (NOT native smooth)', () => {
+    vi.useFakeTimers()
+    try {
+      const scrollTo = vi.fn()
+      vi.stubGlobal('scrollTo', scrollTo)
+      // Layout in jsdom: give the resolved editor a measurable top so the stepper
+      // computes a non-trivial distance and actually fires scroll steps.
+      const editor = document.createElement('div')
+      editor.setAttribute('data-testid', 'section-eval')
+      editor.getBoundingClientRect = () => ({ top: 800 }) as DOMRect
+      document.body.appendChild(editor)
+
+      try {
+        render(<ScoreLine state={fourRunState()} />)
+        const rowLabel = screen.getByTestId('grid-row')
+        expect(rowLabel.tagName).toBe('BUTTON')
+
+        // Native smooth scroll was dropped (no-ops in webviews): the row label must
+        // not lean on it. We assert the manual stepper drives window.scrollTo.
+        rowLabel.click()
+        expect(scrollTo).not.toHaveBeenCalled() // nothing fires before the settle delay
+        vi.advanceTimersByTime(110 + 26 * 14 + 5)
+        expect(scrollTo).toHaveBeenCalled()
+        // The stepper animates incrementally — many small steps, not one jump.
+        expect(scrollTo.mock.calls.length).toBeGreaterThan(1)
+        // It calls the imperative window.scrollTo(x, y) form — never sets a CSS
+        // `scroll-behavior: smooth` on the document.
+        expect(document.documentElement.style.scrollBehavior).toBe('')
+      } finally {
+        editor.remove()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('row label no-ops safely when the eval editor is not mounted', () => {
+    vi.useFakeTimers()
+    try {
+      const scrollTo = vi.fn()
+      vi.stubGlobal('scrollTo', scrollTo)
+      render(<ScoreLine state={fourRunState()} />)
+      screen.getByTestId('grid-row').click()
+      vi.advanceTimersByTime(110 + 26 * 14 + 5)
+      // No editor element → the scroll resolves to nothing and never moves the page.
+      expect(scrollTo).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('column header is a button that toggles a read-only run-prompt peek', async () => {
+    const user = userEvent.setup()
+    const state = fourRunState()
+    // Stamp a distinctive prompt on the current run so the peek body is identifiable.
+    state.runs[3].promptText = 'Summarize the active medications for this patient.'
+    render(<ScoreLine state={state} />)
+
+    // Closed by default.
+    expect(screen.queryByTestId('run-peek')).not.toBeInTheDocument()
+
+    const cols = screen.getAllByTestId('grid-col')
+    expect(cols[2].tagName).toBe('BUTTON')
+
+    // Click the current (run-4) column → its prompt peek opens, read-only.
+    await user.click(cols[2])
+    const peek = screen.getByTestId('run-peek')
+    expect(peek).toHaveAttribute('data-run-id', 'run-4')
+    expect(screen.getByTestId('run-peek-prompt').textContent).toBe(
+      'Summarize the active medications for this patient.',
+    )
+    // Read-only: the prompt is rendered in a <pre>, not an editable control.
+    expect(screen.getByTestId('run-peek-prompt').tagName).toBe('PRE')
+    expect(within(peek).queryByRole('textbox')).not.toBeInTheDocument()
+
+    // Clicking the same column again closes it (toggle).
+    await user.click(cols[2])
+    expect(screen.queryByTestId('run-peek')).not.toBeInTheDocument()
+
+    // The explicit close button also dismisses the peek.
+    await user.click(cols[2])
+    await user.click(screen.getByTestId('run-peek-close'))
+    expect(screen.queryByTestId('run-peek')).not.toBeInTheDocument()
+  })
+
+  it('the 1×1 trail has NO grid navigation (row label / column peek live on the grid only)', () => {
+    render(<ScoreLine state={oneByOneState()} />)
+    // The 1×1 path is the unchanged N11 trail — no clickable grid affordances.
+    expect(screen.queryByTestId('grid-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('grid-col')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('run-peek')).not.toBeInTheDocument()
+  })
+
   it('Export serializes the WHOLE cube + meta, round-tripping the import validator', async () => {
     const user = userEvent.setup()
     // Capture the JSON the export writes into the Blob (jsdom's Blob has no
