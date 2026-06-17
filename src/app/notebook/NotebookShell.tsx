@@ -68,7 +68,10 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   // The patient order captured at Run time, so output cards render in the order
   // they were submitted even as selection changes afterwards.
   const [runOrder, setRunOrder] = useState<string[]>([])
-  const { results, running, runId, run } = useNotebookRun()
+  // The prompt captured at Run time, in STATE (not just a ref) so editing the
+  // textarea afterwards re-renders the surface into its stale state.
+  const [runPrompt, setRunPrompt] = useState('')
+  const { results, running, runId, run, resume, spendCapped } = useNotebookRun()
 
   // ── The N4 bench-state cube (N11) ──────────────────────────────────────────
   // The single owner of a NotebookState. The score line is a PROJECTION of this
@@ -173,6 +176,11 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   const capsActive = !hasKey
   const tierLabel = hasKey ? 'your key' : 'free tier'
 
+  // Stale-on-edit: the textarea no longer matches the prompt that produced the
+  // current run, so its outputs + scores are stale. Pure client state — no engine
+  // call; derived from `prompt !== the run's captured prompt`.
+  const stale = runOrder.length > 0 && prompt.trim() !== runPrompt.trim()
+
   const patientsById = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients])
   const lockedId = patients.length ? patients[0].id : null
   // Show the load-example affordance only before the user has typed a prompt.
@@ -186,8 +194,10 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
     if (cases.length === 0 || prompt.trim().length === 0) return
     setRunOrder(cases.map((c) => c.patientId))
     // Capture the prompt that produced this run so the cube records it verbatim
-    // even if the textarea is edited before the next run.
+    // even if the textarea is edited before the next run, and so the surface can
+    // detect a later edit (stale-on-edit) by comparing against this snapshot.
     runPromptRef.current = prompt
+    setRunPrompt(prompt)
     setViewChartId(null)
     // The ACTIVE model id (imported, never a literal) is sent so the server records
     // and echoes back the model the user actually selected. The BYO key, if any, is
@@ -380,6 +390,18 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             results={results}
             patientsById={patientsById}
             onViewChart={setViewChartId}
+            stale={stale}
+            onResume={(id) =>
+              void resume(id, {
+                model: activeModel,
+                byoKey: hasKey ? apiKey.trim() : undefined,
+              })
+            }
+            // BYO bypasses the shared spend cap, so once a key is present the cap
+            // panel no longer applies — the preserved prompt/patients are ready to
+            // re-run on the user's own key.
+            spendCapped={spendCapped && !hasKey}
+            onAddKey={() => setKeyOpen(true)}
           />
 
           {/* Stub target for a card's "view chart" link. The real chart drawer
@@ -415,6 +437,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             byoKey={hasKey ? apiKey.trim() : undefined}
             onScoreReport={onScoreReport}
             onModeChange={setPrimaryMode}
+            stale={stale}
           />
 
           {/* Added judges (N14) — each its own removable cell; the golden stays

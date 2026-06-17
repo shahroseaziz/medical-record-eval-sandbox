@@ -157,3 +157,74 @@ describe('OutputCell — what-the-model-saw receipt (N8b)', () => {
     expect(screen.queryByTestId('what-model-saw')).not.toBeInTheDocument()
   })
 })
+
+// ── N12: failure + stale states (REAL engine signals, plain language) ─────────
+
+describe('OutputCell — N12 rate-limited card + per-patient Resume', () => {
+  it('renders a rate-limited card with a per-patient Resume on the limiter signal', async () => {
+    const user = userEvent.setup()
+    const onResume = vi.fn()
+    render(
+      <OutputCell
+        order={['p1']}
+        results={{
+          p1: { patientId: 'p1', status: 'rate-limited', output: '', model: null, context: null },
+        }}
+        patientsById={byId}
+        onViewChart={() => {}}
+        onResume={onResume}
+      />,
+    )
+    const card = screen.getByTestId('output-card')
+    expect(card).toHaveAttribute('data-status', 'rate-limited')
+    expect(screen.getByTestId('rate-limited-flag')).toHaveTextContent('rate-limited')
+    // Plain-language, honest that nothing was charged.
+    expect(screen.getByTestId('rate-limited-state')).toHaveTextContent(/nothing was charged/i)
+
+    await user.click(screen.getByTestId('resume-patient'))
+    expect(onResume).toHaveBeenCalledWith('p1')
+  })
+})
+
+describe('OutputCell — N12 spend-cap state (preserves prompt/patients, offers BYO key)', () => {
+  it('replaces the cards with a preserved-state panel offering "Add your key"', async () => {
+    const user = userEvent.setup()
+    const onAddKey = vi.fn()
+    render(
+      <OutputCell
+        order={[]}
+        results={{}}
+        patientsById={byId}
+        onViewChart={() => {}}
+        spendCapped
+        onAddKey={onAddKey}
+      />,
+    )
+    const cap = screen.getByTestId('spend-cap-state')
+    // Plain language; tells the user their prompt + patients are kept.
+    expect(cap).toHaveTextContent(/your prompt and the patients you picked are kept/i)
+    await user.click(screen.getByTestId('spend-cap-add-key'))
+    expect(onAddKey).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('OutputCell — N12 stale-on-edit', () => {
+  it('quiets a done card and flags it "stale — re-run" (no model stamp)', () => {
+    render(
+      <OutputCell
+        order={['p1']}
+        results={{
+          p1: { patientId: 'p1', status: 'done', output: '{}', model: GENERATION_MODEL, context: null },
+        }}
+        patientsById={byId}
+        onViewChart={() => {}}
+        stale
+      />,
+    )
+    expect(screen.getByTestId('output-card')).toHaveAttribute('data-stale', 'true')
+    expect(screen.getByTestId('stale-flag')).toHaveTextContent('stale — re-run')
+    // The model stamp is replaced by the stale flag while stale.
+    expect(screen.queryByTestId('model-stamp')).not.toBeInTheDocument()
+    expect(screen.getByTestId('output-stale-note')).toHaveTextContent('edited since this run')
+  })
+})

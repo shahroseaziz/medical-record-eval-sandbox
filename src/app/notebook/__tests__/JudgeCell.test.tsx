@@ -18,7 +18,7 @@ function done(id: string, output: string): OutputCardResult {
 
 function stubScore(responses: Array<{ ok: boolean; status?: number; body: unknown }>) {
   let i = 0
-  const fetchMock = vi.fn(async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
     const r = responses[Math.min(i, responses.length - 1)]
     i += 1
     return { ok: r.ok, status: r.status ?? (r.ok ? 200 : 503), json: async () => r.body } as Response
