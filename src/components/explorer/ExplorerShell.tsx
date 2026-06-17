@@ -11,9 +11,9 @@
  * in-progress prompt text / notebook state survive the cycle. The notebook is
  * merely PADDED to make room for the slide-over.
  *
- * The selected-patient state is the defined stub target for N7b (per-patient chart
- * detail + raw-XML toggle): a row click records the patient here; N7b renders the
- * detail off it.
+ * The drawer (N7b) renders the per-patient chart detail + raw-XML toggle off its
+ * own internal selection. The shell still records the last row-clicked patient in
+ * `selectedPatient` so descendants (e.g. the notebook) can read the current pick.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
@@ -44,11 +44,18 @@ export interface ExplorerShellProps {
   children: ReactNode
   /** Render the built-in "Explore the data" trigger button. Default true. */
   showTrigger?: boolean
-  /** Test seam: override the drawer's fetch endpoint. */
+  /** Test seam: override the drawer's all-patients fetch endpoint. */
   endpoint?: string
+  /** Test seam: override the chart detail's chunks fetch endpoint. */
+  chunksEndpoint?: string
 }
 
-export function ExplorerShell({ children, showTrigger = true, endpoint }: ExplorerShellProps) {
+export function ExplorerShell({
+  children,
+  showTrigger = true,
+  endpoint,
+  chunksEndpoint,
+}: ExplorerShellProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState<ExplorerPatient | null>(null)
 
@@ -56,8 +63,8 @@ export function ExplorerShell({ children, showTrigger = true, endpoint }: Explor
   const close = useCallback(() => setIsOpen(false), [])
   const toggle = useCallback(() => setIsOpen((v) => !v), [])
 
-  // N7b stub target: record the row-clicked patient. N7b swaps this for the chart
-  // detail + raw-XML view; for now selecting a row simply parks the patient here.
+  // Record the row-clicked patient. The drawer renders the chart detail off its own
+  // internal selection (N7b); this keeps the host shell aware of the current pick.
   const handleSelectPatient = useCallback((patient: ExplorerPatient) => {
     setSelectedPatient(patient)
   }, [])
@@ -93,6 +100,7 @@ export function ExplorerShell({ children, showTrigger = true, endpoint }: Explor
           onClose={close}
           onSelectPatient={handleSelectPatient}
           endpoint={endpoint}
+          chunksEndpoint={chunksEndpoint}
         />
       </div>
     </ExplorerContext.Provider>

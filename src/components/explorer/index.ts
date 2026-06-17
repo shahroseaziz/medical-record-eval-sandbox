@@ -8,4 +8,12 @@ export type { ExplorerDrawerProps } from './ExplorerDrawer'
 export { ExplorerShell, useExplorer } from './ExplorerShell'
 export type { ExplorerShellProps } from './ExplorerShell'
 
-export type { ExplorerPatient, AllPatientsResponse } from './types'
+export { PatientChartDetail } from './PatientChartDetail'
+export type { PatientChartDetailProps } from './PatientChartDetail'
+
+export type {
+  ExplorerPatient,
+  AllPatientsResponse,
+  ChunkRow,
+  ChunksResponse,
+} from './types'
