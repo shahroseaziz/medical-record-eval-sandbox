@@ -1,6 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import { modelDisplayName } from '@/lib/models'
+import type { ContextManifest } from '@/lib/run/context-manifest'
 import type { OutputCardResult } from './useNotebookRun'
 import type { NotebookPatient } from './types'
 import styles from './notebook.module.css'
@@ -19,6 +21,14 @@ import styles from './notebook.module.css'
  * (wired to a live target in the shell) so the control is real, not dead. The
  * chart drawer itself lands in N7b (parallel work) — this is acceptance-noted
  * collateral, not an incomplete feature.
+ *
+ * "What the model saw" (SHA-160 N8b) — each done card carries a toggleable receipt
+ * rendering the `type:'context'` manifest the run emitted (captured in
+ * `result.context`). It is HONEST about the grounding mode: in FULL mode it reads
+ * "full chart · fit in context" and lists the sections sent; in RETRIEVED mode it
+ * reads "retrieved sections · chart too large", lists the retrieved sections, and
+ * names any `droppedSections` the budget cut. It renders ONLY what the manifest
+ * carries — no raw record text is re-shipped, and nothing is fabricated.
  */
 
 interface OutputCardProps {
@@ -27,7 +37,62 @@ interface OutputCardProps {
   onViewChart: (patientId: string) => void
 }
 
+/**
+ * The "what the model saw" receipt — renders the context manifest for a done card.
+ * Pure presentation of `result.context`: mode label, the sections the model saw
+ * (name + char size), and any sections dropped for budget. Both modes covered;
+ * the default full/stuff path included.
+ */
+function ContextReceipt({ context, model }: { context: ContextManifest; model: string | null }) {
+  const retrieved = context.contextMode === 'retrieved'
+  const modeCopy = retrieved
+    ? 'retrieved sections · chart too large'
+    : 'full chart · fit in context'
+  const dropped = context.droppedSections ?? []
+
+  return (
+    <div className={styles.saw} data-testid="context-receipt" data-context-mode={context.contextMode}>
+      <div className={styles.sawHead}>
+        <span className={styles.sawTitle}>
+          What {model ? modelDisplayName(model) : 'the model'} saw · read-only
+        </span>
+        <span
+          className={`${styles.sawCtx} ${retrieved ? styles.ctxWarn : styles.ctxOk}`}
+          data-testid="context-mode-label"
+        >
+          {modeCopy}
+        </span>
+      </div>
+
+      {context.sections.length > 0 ? (
+        <ul className={styles.sawSections}>
+          {context.sections.map((s, i) => (
+            <li
+              key={`${s.section}-${i}`}
+              className={styles.sawSection}
+              data-testid="context-section"
+            >
+              <span className={styles.sawSectionName}>{s.section}</span>
+              <span className={styles.sawSectionChars}>{s.chars.toLocaleString()} chars</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={styles.sawEmpty}>No context was sent to the model.</p>
+      )}
+
+      {dropped.length > 0 && (
+        <div className={styles.sawDropped} data-testid="context-dropped">
+          <span className={styles.sawDroppedLabel}>dropped for budget</span>
+          <span className={styles.sawDroppedList}>{dropped.join(' · ')}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OutputCard({ result, patient, onViewChart }: OutputCardProps) {
+  const [sawOpen, setSawOpen] = useState(false)
   const name = patient?.name ?? result.patientId
   const done = result.status === 'done'
   const streaming = result.status === 'streaming'
@@ -76,17 +141,33 @@ function OutputCard({ result, patient, onViewChart }: OutputCardProps) {
       )}
 
       {done && (
-        <div className={styles.ocFoot}>
-          <button
-            type="button"
-            className={styles.linkBtn}
-            data-testid="view-chart"
-            onClick={() => onViewChart(result.patientId)}
-          >
-            view chart
-          </button>
-          {modelLabel && <span className={styles.ocModelTag}>{modelLabel}</span>}
-        </div>
+        <>
+          <div className={styles.ocFoot}>
+            <button
+              type="button"
+              className={styles.linkBtn}
+              data-testid="view-chart"
+              onClick={() => onViewChart(result.patientId)}
+            >
+              view chart
+            </button>
+            {result.context && (
+              <button
+                type="button"
+                className={`${styles.linkBtn} ${styles.linkBtnQuiet}`}
+                data-testid="what-model-saw"
+                aria-expanded={sawOpen}
+                onClick={() => setSawOpen((o) => !o)}
+              >
+                what the model saw
+              </button>
+            )}
+            {modelLabel && <span className={styles.ocModelTag}>{modelLabel}</span>}
+          </div>
+          {sawOpen && result.context && (
+            <ContextReceipt context={result.context} model={result.model} />
+          )}
+        </>
       )}
     </div>
   )

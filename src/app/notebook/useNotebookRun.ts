@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { RunRequest } from '@/app/api/run/types'
 import { parseLine } from '@/hooks/useRun'
 import { BYO_KEY_HEADER } from '@/lib/redact'
+import type { ContextManifest, ContextSection } from '@/lib/run/context-manifest'
 
 // ── Notebook run loop ────────────────────────────────────────────────────────
 //
@@ -45,6 +46,14 @@ export interface OutputCardResult {
    * THIS rather than any local literal so the stamp cannot drift from lib/models.
    */
   model: string | null
+  /**
+   * The "what the model saw" receipt — the `type:'context'` manifest emitted by
+   * /api/run (N2) BEFORE generation, describing the grounding the model received:
+   * the context mode (full/retrieved), the sections sent, and (retrieve mode) any
+   * sections dropped for budget. Null until the context frame arrives. The card
+   * renders ONLY what this carries — no fabricated context.
+   */
+  context: ContextManifest | null
   error?: string
 }
 
@@ -80,6 +89,7 @@ export interface NotebookRunOptions {
 interface OneCaseOutcome {
   output: string
   model: string | null
+  context: ContextManifest | null
   error?: string
   aborted: boolean
 }
@@ -95,7 +105,7 @@ async function runOneCase(
   masterSignal: AbortSignal,
   onToken: (partial: string) => void,
 ): Promise<OneCaseOutcome> {
-  if (masterSignal.aborted) return { output: '', model: null, aborted: true }
+  if (masterSignal.aborted) return { output: '', model: null, context: null, aborted: true }
 
   const controller = new AbortController()
   const onAbort = () => controller.abort()
@@ -137,16 +147,17 @@ async function runOneCase(
       } catch {
         /* non-JSON error body */
       }
-      return { output: '', model: null, error: msg, aborted: false }
+      return { output: '', model: null, context: null, error: msg, aborted: false }
     }
 
     const reader = res.body?.getReader()
-    if (!reader) return { output: '', model: null, error: 'No response body', aborted: false }
+    if (!reader) return { output: '', model: null, context: null, error: 'No response body', aborted: false }
 
     const decoder = new TextDecoder()
     let partial = ''
     let output = ''
     let model: string | null = null
+    let context: ContextManifest | null = null
     let streamError: string | undefined
 
     const processLine = (line: string) => {
@@ -165,6 +176,23 @@ async function runOneCase(
           if (d.type === 'trace') {
             const trace = d.trace as { generationModel?: string } | undefined
             if (trace?.generationModel) model = trace.generationModel
+          } else if (d.type === 'context') {
+            // The "what the model saw" receipt (N2). We keep ONLY the manifest
+            // fields — contextMode / sections / droppedSections — discarding the
+            // retrieve-mode chunk detail the workbench surface uses. The card
+            // renders exactly what arrives here; nothing is fabricated.
+            const mode = d.contextMode
+            if (mode === 'full' || mode === 'retrieved') {
+              const sections = Array.isArray(d.sections) ? (d.sections as ContextSection[]) : []
+              const dropped = Array.isArray(d.droppedSections)
+                ? (d.droppedSections as string[])
+                : []
+              context = {
+                contextMode: mode,
+                sections,
+                ...(dropped.length > 0 ? { droppedSections: dropped } : {}),
+              }
+            }
           } else if (d.type === 'error') {
             streamError = (d.message ?? 'Unknown error') as string
           }
@@ -182,11 +210,11 @@ async function runOneCase(
     }
     if (partial) processLine(partial)
 
-    return { output, model, error: streamError, aborted: false }
+    return { output, model, context, error: streamError, aborted: false }
   } catch (e) {
-    if (masterSignal.aborted) return { output: '', model: null, aborted: true }
+    if (masterSignal.aborted) return { output: '', model: null, context: null, aborted: true }
     const msg = e instanceof Error ? e.message : 'Network error'
-    return { output: '', model: null, error: msg, aborted: false }
+    return { output: '', model: null, context: null, error: msg, aborted: false }
   } finally {
     clearTimeout(timeoutId)
     masterSignal.removeEventListener('abort', onAbort)
@@ -213,7 +241,13 @@ export function useNotebookRun() {
 
       const next: Record<string, OutputCardResult> = {}
       for (const c of cases) {
-        next[c.patientId] = { patientId: c.patientId, status: 'pending', output: '', model: null }
+        next[c.patientId] = {
+          patientId: c.patientId,
+          status: 'pending',
+          output: '',
+          model: null,
+          context: null,
+        }
       }
       resultsRef.current = next
 
@@ -231,6 +265,7 @@ export function useNotebookRun() {
           status: 'streaming',
           output: '',
           model: null,
+          context: null,
         }
         sync({ activePatientId: c.patientId })
 
@@ -248,6 +283,7 @@ export function useNotebookRun() {
             status: 'pending',
             output: '',
             model: null,
+            context: null,
           }
           break
         }
@@ -257,6 +293,7 @@ export function useNotebookRun() {
           status: outcome.error ? 'error' : 'done',
           output: outcome.output,
           model: outcome.model,
+          context: outcome.context,
           error: outcome.error,
         }
         sync({})
