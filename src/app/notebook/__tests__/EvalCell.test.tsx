@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EvalCell } from '../EvalCell'
+import { JUDGE_MODEL, modelDisplayName } from '@/lib/models'
 import type { OutputCardResult } from '../useNotebookRun'
 import type { NotebookPatient } from '../types'
 
@@ -63,11 +64,11 @@ describe('EvalCell — invite (no chooser)', () => {
     expect(screen.getByTestId('section-eval')).toBeInTheDocument()
   })
 
-  it('the judge link reveals a live, defined stub (judge path is N10)', async () => {
+  it('the judge link reveals the LLM-judge cell with a criteria box (N10)', async () => {
     const user = userEvent.setup()
     renderCell()
     await user.click(screen.getByTestId('golden-invite-judge'))
-    expect(screen.getByTestId('judge-stub')).toBeInTheDocument()
+    expect(screen.getByTestId('judge-criteria')).toBeInTheDocument()
   })
 })
 
@@ -140,6 +141,138 @@ describe('EvalCell — golden editors', () => {
 
     expect(screen.getByTestId('golden-verdict')).toHaveAttribute('data-verdict', 'pass')
     expect(screen.getByTestId('golden-overall')).toHaveTextContent('1/1')
+  })
+})
+
+describe('EvalCell — LLM judge (N10)', () => {
+  // A fetch stub that returns a queued {pass, reason} body (or an error status)
+  // per call, so a sequential judge run can be driven deterministically.
+  function stubScore(responses: Array<{ ok: boolean; status?: number; body: unknown }>) {
+    let i = 0
+    const fetchMock = vi.fn(async () => {
+      const r = responses[Math.min(i, responses.length - 1)]
+      i += 1
+      return {
+        ok: r.ok,
+        status: r.status ?? (r.ok ? 200 : 503),
+        json: async () => r.body,
+      } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function openJudge() {
+    const user = userEvent.setup()
+    renderCell()
+    await user.click(screen.getByTestId('golden-invite-judge'))
+    return user
+  }
+
+  it('shows a criteria box with the worked-example placeholder', async () => {
+    await openJudge()
+    const box = screen.getByTestId('judge-criteria')
+    expect(box).toHaveAttribute('placeholder', expect.stringContaining('Pass if a1c_current'))
+  })
+
+  it('ships the DECISION D1 binary copy — no "partial" verdict state', async () => {
+    await openJudge()
+    const note = screen.getByTestId('judge-binary-note')
+    expect(note).toHaveTextContent(/single pass or fail/i)
+    expect(note).toHaveTextContent(/no partial credit|conservatively/i)
+    // No "partial" verdict ever rendered.
+    expect(screen.queryByText(/partial/i, { selector: '[data-verdict]' })).toBeNull()
+  })
+
+  it('makes EXACTLY one metered call per patient and renders {pass, reason} per patient', async () => {
+    const fetchMock = stubScore([
+      { ok: true, body: { pass: true, reason: 'Matches the chart on every field.' } },
+      { ok: true, body: { pass: false, reason: 'The A1c value is stale.' } },
+    ])
+    const user = await openJudge()
+
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if the A1c is current.')
+    await user.click(screen.getByTestId('judge-run'))
+
+    await waitFor(() => expect(screen.getByTestId('judge-overall')).toBeInTheDocument())
+
+    // EXACTLY one call per patient (two patients → two calls), all to the criteria contract.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe('/api/score')
+      const body = JSON.parse((call[1] as RequestInit).body as string)
+      expect(body.source).toBe('criteria')
+    }
+
+    const verdicts = screen.getAllByTestId('judge-verdict')
+    expect(verdicts).toHaveLength(2)
+    expect(verdicts[0]).toHaveAttribute('data-verdict', 'pass')
+    expect(verdicts[0]).toHaveTextContent('Matches the chart on every field.')
+    expect(verdicts[1]).toHaveAttribute('data-verdict', 'fail')
+    expect(verdicts[1]).toHaveTextContent('The A1c value is stale.')
+  })
+
+  it('stamps the producing judge model id on each verdict', async () => {
+    stubScore([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: false, reason: 'no' } },
+    ])
+    const user = await openJudge()
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if correct.')
+    await user.click(screen.getByTestId('judge-run'))
+
+    await waitFor(() => expect(screen.getAllByTestId('judge-verdict')).toHaveLength(2))
+    const stamps = screen.getAllByTestId('judge-model-stamp')
+    expect(stamps).toHaveLength(2)
+    for (const s of stamps) {
+      expect(s).toHaveTextContent(`judged by ${modelDisplayName(JUDGE_MODEL)}`)
+    }
+  })
+
+  it('EXCLUDES a judge-errored patient from the denominator with the exact "couldn\'t grade" copy', async () => {
+    // p1 passes; p2's judge call fails → excluded from the score, not a fail.
+    stubScore([
+      { ok: true, body: { pass: true, reason: 'Matches.' } },
+      { ok: false, status: 503, body: { error: 'Judge unavailable.' } },
+    ])
+    const user = await openJudge()
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if correct.')
+    await user.click(screen.getByTestId('judge-run'))
+
+    await waitFor(() => expect(screen.getByTestId('judge-overall')).toBeInTheDocument())
+
+    // Exact design copy on the errored row.
+    const errored = screen.getByTestId('judge-verdict-errored')
+    expect(errored).toHaveTextContent("couldn't grade — excluded from the score")
+
+    // Exclusion arithmetic: denominator is 1 (only the scored patient), not 2.
+    const overall = screen.getByTestId('judge-overall')
+    expect(overall).toHaveTextContent('1/1')
+    expect(overall).toHaveTextContent(/1 couldn't grade — excluded from the score/i)
+  })
+
+  it('never fabricates a reason on a judge error', async () => {
+    // Every call errors (the stub returns the error body for all patients).
+    stubScore([{ ok: false, status: 503, body: { error: 'Judge unavailable.' } }])
+    const user = await openJudge()
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if correct.')
+    await user.click(screen.getByTestId('judge-run'))
+
+    await waitFor(() => expect(screen.getAllByTestId('judge-verdict-errored').length).toBeGreaterThan(0))
+    const errored = screen.getAllByTestId('judge-verdict-errored')[0]
+    // The error message comes through; the judge's "reason" paragraph is never invented.
+    expect(errored).toHaveTextContent(/judge call failed/i)
+    // An errored row is excluded — it is NOT rendered as a fail verdict.
+    expect(errored).toHaveAttribute('data-verdict', 'errored')
+    expect(screen.queryByTestId('judge-verdict')).toBeNull()
   })
 })
 

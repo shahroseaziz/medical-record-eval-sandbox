@@ -316,6 +316,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             results={results}
             patientsById={patientsById}
             onViewChart={setViewChartId}
+            byoKey={hasKey ? apiKey.trim() : undefined}
           />
 
           <section className={styles.cell} data-testid="section-score" aria-label="Score">
