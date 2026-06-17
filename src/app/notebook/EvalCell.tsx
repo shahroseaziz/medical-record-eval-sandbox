@@ -12,7 +12,6 @@ import {
   computeYouVsJudge,
   type AgreeMark,
 } from './judgeAgreement'
-import type { PerCaseScore } from '@/lib/notebook/state'
 import { WORKED_CRITERIA } from './worked-example'
 import styles from './notebook.module.css'
 
