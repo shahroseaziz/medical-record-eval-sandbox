@@ -1487,11 +1487,30 @@
   color: var(--color-text-muted);
   text-align: center;
   background: var(--color-surface-muted);
+  /* Column headers are buttons (N15c peek) — reset the chrome, keep the cell look. */
+  border: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.sgCol:hover {
+  color: var(--color-text);
+}
+
+.sgCol:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: -2px;
 }
 
 .sgColCur {
   color: var(--color-text);
   font-weight: var(--weight-semibold);
+}
+
+/* The column whose prompt peek is open — a subtle pinned tint. */
+.sgColOpen {
+  background: var(--color-primary-subtle);
+  color: var(--color-text);
 }
 
 .sgCur {
@@ -1514,6 +1533,20 @@
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   background: var(--color-surface-muted);
+  /* Row labels are buttons (N15c scroll-to-editor) — reset the chrome, keep look. */
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.sgRowLabel:hover .sgRlMain {
+  text-decoration: underline;
+}
+
+.sgRowLabel:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: -2px;
 }
 
 .sgRlMain {
@@ -1580,6 +1613,61 @@
 
 .sgCellEmpty {
   color: var(--color-text-subtle);
+}
+
+/* ── Run-prompt peek (N15c) — read-only popover for a column header ──────────── */
+.runPeek {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.rpHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.rpTitle {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.rpClose {
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.rpClose:hover {
+  color: var(--color-text);
+}
+
+.rpBody {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 /* ── Worked-example replay (N13b) ─────────────────────────────────────────── */
