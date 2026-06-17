@@ -10,8 +10,8 @@ import type { ContextManifest, ContextSection } from '@/lib/run/context-manifest
 //
 // N8a: author ONE prompt, pick patients, hit Run → fan out a POST /api/run per
 // selected patient and stream each output back as it arrives. Modeled on the
-// established live-generation fan-out (src/hooks/useGenerationRun) but kept
-// self-contained for the notebook for two reasons:
+// prior live-generation fan-out pattern but kept self-contained for the notebook
+// for two reasons:
 //   • the notebook holds its BYO key under its own sessionStorage key
 //     (`mres.nb.byokey`), so the key + active model are threaded in explicitly
 //     rather than read from the bench's separate `byo_api_key` slot, and

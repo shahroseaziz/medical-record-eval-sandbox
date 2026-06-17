@@ -8,7 +8,7 @@ import {
   recordTokenEstimate,
   RECORD_BUDGET_TOKENS,
   type RecordChunk,
-} from '@/lib/workbench/composer'
+} from '@/lib/record'
 
 // "Give me N random patients" with the D3 record-size guard. The sample is drawn
 // UNIFORMLY over the budget-ELIGIBLE patient set: we pull a random candidate pool,
