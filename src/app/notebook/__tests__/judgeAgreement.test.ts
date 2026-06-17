@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { computeYouVsJudge, computeJudgeVsGolden } from '../judgeAgreement'
+import {
+  computeYouVsJudge,
+  computeJudgeVsGolden,
+  hasDisputedVerdict,
+  judgeRowMarkers,
+} from '../judgeAgreement'
 import type { PerCaseScore } from '@/lib/notebook/state'
 
 // SHA-169 N17 — the two derived lines, computed on N4-shaped per[] arrays.
@@ -55,5 +60,54 @@ describe('computeJudgeVsGolden — overlap only', () => {
 
   it('is empty when there is no golden at all', () => {
     expect(computeJudgeVsGolden([judge('p1', true)], [])).toEqual({ matched: 0, overlap: 0 })
+  })
+})
+
+// SHA-171 N15b — the grid lifts the same counts onto a judge row, and marks a cell
+// disputed from the `agree` marks alone.
+
+describe('hasDisputedVerdict — derived SOLELY from agree==="m"', () => {
+  it('is true when any verdict was marked disagree', () => {
+    expect(hasDisputedVerdict([judge('p1', true, 'a'), judge('p2', false, 'm')])).toBe(true)
+  })
+
+  it('is false when nothing is marked disagree (agree, unmarked, or errored)', () => {
+    expect(hasDisputedVerdict([judge('p1', true, 'a'), judge('p2', false), judgeErr('p3')])).toBe(
+      false,
+    )
+  })
+
+  it('a golden cell (no agree) is never disputed, even on a failing verdict', () => {
+    expect(hasDisputedVerdict([golden('p1', false), golden('p2', true)])).toBe(false)
+  })
+})
+
+describe('judgeRowMarkers — current-column markers for a judge row', () => {
+  it('emits both lines: "vs your golden m/n" (overlap) + "you: a/m" (of-marked)', () => {
+    const judgePer = [judge('p1', true, 'a'), judge('p2', true)]
+    const goldenPer = [golden('p1', true), golden('p2', false)]
+    expect(judgeRowMarkers(judgePer, goldenPer)).toEqual([
+      { kind: 'vg', text: 'vs your golden 1/2' },
+      // of-MARKED: only p1 was thumbed → 1/1, not 1/2.
+      { kind: 'you', text: 'you: 1/1' },
+    ])
+  })
+
+  it('omits the golden line when no golden scored this column (no overlap)', () => {
+    expect(judgeRowMarkers([judge('p1', true, 'a')], undefined)).toEqual([
+      { kind: 'you', text: 'you: 1/1' },
+    ])
+  })
+
+  it('omits the you line when nothing is marked on this column', () => {
+    const judgePer = [judge('p1', true), judge('p2', false)]
+    const goldenPer = [golden('p1', true), golden('p2', false)]
+    expect(judgeRowMarkers(judgePer, goldenPer)).toEqual([
+      { kind: 'vg', text: 'vs your golden 2/2' },
+    ])
+  })
+
+  it('emits no markers when there is neither overlap nor a mark', () => {
+    expect(judgeRowMarkers([judge('p1', true)], [])).toEqual([])
   })
 })
