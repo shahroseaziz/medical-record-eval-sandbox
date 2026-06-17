@@ -19,6 +19,7 @@
     "verify:seed": "tsx scripts/verify-seed.ts",
     "generate:baseline": "tsx scripts/generate-baseline.ts",
     "generate:baseline:replay": "tsx scripts/generate-baseline.ts --replay",
+    "gen:notebook-example": "tsx scripts/gen-notebook-example.ts",
     "compute:kappa": "tsx scripts/compute-kappa.ts",
     "validate:evals": "tsx scripts/validate-evals.ts",
     "eval:gate": "tsx evals/run_evals.ts",

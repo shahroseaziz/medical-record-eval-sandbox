@@ -1,0 +1,25 @@
+{
+  "_README": "Curated INPUTS for scripts/gen-notebook-example.ts (N13a). The maintainer owns this file: pin REAL seeded patient ids and author TRUTHFUL goldens (derived from each chart) before running the generator. The generator runs the live engine over these inputs, then refuses to write the artifact unless BOTH teaching moments survive (>=1 failing golden, >=1 errored verdict). NEVER edit a golden to manufacture a failure — change the patient selection until the live model genuinely gets one wrong. The golden-leg prompt is pinned to WORKED_PROMPT and the judge criteria to WORKED_CRITERIA (src/app/notebook/worked-example.ts); only the prose-output query lives here.",
+  "golden": {
+    "patients": [
+      {
+        "patientId": "REPLACE-WITH-A-SEEDED-DIABETES-PATIENT-ID",
+        "golden": "{\n  \"a1c_current\": 7.2,\n  \"a1c_date\": \"2026-03-01\",\n  \"a1c_trend\": \"improving\",\n  \"diabetes_meds\": [\"Metformin 1000 MG\", \"Insulin glargine 100 UNT/ML\"]\n}"
+      },
+      {
+        "patientId": "REPLACE-WITH-A-SECOND-SEEDED-DIABETES-PATIENT-ID",
+        "golden": "{\n  \"a1c_current\": 8.4,\n  \"a1c_date\": \"2026-02-15\",\n  \"a1c_trend\": \"worsening\",\n  \"diabetes_meds\": [\"Metformin 500 MG\"]\n}"
+      }
+    ]
+  },
+  "judge": {
+    "prosePrompt": "Write a two-sentence clinical summary of this patient's diabetes control over the last year, citing the trend in their A1c.",
+    "patients": [
+      { "patientId": "REPLACE-WITH-A-SEEDED-DIABETES-PATIENT-ID" },
+      {
+        "patientId": "REPLACE-WITH-A-SECOND-SEEDED-DIABETES-PATIENT-ID",
+        "erroredDemo": true
+      }
+    ]
+  }
+}
