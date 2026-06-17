@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AllPatientsResponse, ExplorerPatient } from './types'
+import { PatientChartDetail } from './PatientChartDetail'
 import styles from './ExplorerDrawer.module.css'
 
 /** The six sortable columns of the patient table. */
@@ -53,13 +54,14 @@ export interface ExplorerDrawerProps {
   open: boolean
   onClose: () => void
   /**
-   * Row-click target. N7a wires this as a defined stub; N7b replaces the handler
-   * with the per-patient chart detail + raw-XML toggle. Always defined so the row
-   * is interactive from N7a on.
+   * Row-click notification. Still fired (N7a contract) so the host shell can record
+   * the selection; N7b ALSO drives the in-drawer chart detail off internal state.
    */
   onSelectPatient?: (patient: ExplorerPatient) => void
   /** Override the fetch endpoint (tests). Production uses `?all=1` — no random/limit. */
   endpoint?: string
+  /** Test seam forwarded to the chart detail's chunks fetch. */
+  chunksEndpoint?: string
 }
 
 function formatChartSize(bytes: number): string {
@@ -90,12 +92,15 @@ export function ExplorerDrawer({
   onClose,
   onSelectPatient,
   endpoint = '/api/patients?all=1',
+  chunksEndpoint,
 }: ExplorerDrawerProps) {
   const [patients, setPatients] = useState<ExplorerPatient[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  // N7b: the row-clicked patient whose chart detail is shown. Null → the table.
+  const [selected, setSelected] = useState<ExplorerPatient | null>(null)
   const fetchedRef = useRef(false)
 
   // Lazy, once: fetch the full corpus the first time the drawer opens. Keeping the
@@ -126,15 +131,35 @@ export function ExplorerDrawer({
     }
   }, [open, endpoint])
 
-  // Close on Escape while open — standard slide-over affordance.
+  // Close on Escape while open. If a chart is open, Escape first backs out to the
+  // table; a second Escape closes the drawer.
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      setSelected((cur) => {
+        if (cur) return null
+        onClose()
+        return null
+      })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  // Reset the selection (and thus the chart's Parsed/Raw toggle, which is keyed by
+  // patient id) whenever the drawer closes, so reopening lands on the table.
+  useEffect(() => {
+    if (!open) setSelected(null)
+  }, [open])
+
+  const handleSelect = useCallback(
+    (patient: ExplorerPatient) => {
+      setSelected(patient)
+      onSelectPatient?.(patient)
+    },
+    [onSelectPatient],
+  )
 
   const onSort = useCallback((key: SortKey) => {
     setSortKey((prevKey) => {
@@ -158,10 +183,21 @@ export function ExplorerDrawer({
       data-testid="explorer-drawer"
     >
       <div className={styles.top}>
-        <div className={styles.title}>
-          Corpus
-          {patients ? <span className={styles.count}>{patients.length} patients</span> : null}
-        </div>
+        {selected ? (
+          <button
+            type="button"
+            className={styles.backBtn}
+            onClick={() => setSelected(null)}
+            data-testid="chart-back"
+          >
+            ← All patients
+          </button>
+        ) : (
+          <div className={styles.title}>
+            Corpus
+            {patients ? <span className={styles.count}>{patients.length} patients</span> : null}
+          </div>
+        )}
         <button
           type="button"
           className={styles.closeBtn}
@@ -174,14 +210,22 @@ export function ExplorerDrawer({
       </div>
 
       <div className={styles.body}>
-        {loading ? <div className={styles.note}>Loading corpus…</div> : null}
-        {error ? (
+        {selected ? (
+          <PatientChartDetail
+            key={selected.id}
+            patient={selected}
+            endpoint={chunksEndpoint}
+          />
+        ) : null}
+
+        {!selected && loading ? <div className={styles.note}>Loading corpus…</div> : null}
+        {!selected && error ? (
           <div className={styles.error} role="alert">
             {error}
           </div>
         ) : null}
 
-        {patients && !error ? (
+        {!selected && patients && !error ? (
           <table className={styles.table}>
             <thead>
               <tr>
@@ -214,14 +258,14 @@ export function ExplorerDrawer({
                 <tr
                   key={p.id}
                   className={styles.row}
-                  onClick={() => onSelectPatient?.(p)}
+                  onClick={() => handleSelect(p)}
                   data-testid={`patient-row-${p.id}`}
                   tabIndex={0}
                   role="button"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      onSelectPatient?.(p)
+                      handleSelect(p)
                     }
                   }}
                 >

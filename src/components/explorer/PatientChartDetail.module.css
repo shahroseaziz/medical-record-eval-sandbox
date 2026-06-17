@@ -1,0 +1,181 @@
+/*
+ * Per-patient chart detail (N7b). Token-driven (no hardcoded color/space). Lives
+ * inside the drawer body (which owns the scroll). Visual reference:
+ * design/reference/notebook/drawer.jsx.
+ */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-1) var(--space-4);
+}
+
+/* Sticky chart header: patient identity + the Parsed / Raw-XML segmented toggle. */
+.head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.name {
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+}
+
+.meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  margin-top: var(--space-1);
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.segBtn {
+  border: none;
+  background: var(--color-surface);
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.segBtn + .segBtn {
+  border-left: 1px solid var(--color-border);
+}
+
+.segBtn:hover {
+  background: var(--neutral-100);
+}
+
+.segOn {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-text);
+  font-weight: var(--weight-medium);
+}
+
+.section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.secHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.secTitle {
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
+}
+
+.secCount {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-2);
+  min-width: 1.4em;
+  text-align: center;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Each chunk block. `content-visibility: auto` lets the browser skip layout/paint
+ * for off-screen chunks while scrolling — the key to the ~6 MB outlier not freezing.
+ * `contain-intrinsic-size` gives skipped blocks a placeholder height so the
+ * scrollbar stays stable.
+ */
+.chunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4rem;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.chunk:last-child {
+  border-bottom: none;
+}
+
+.empty {
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.showMore {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  padding: var(--space-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--color-primary);
+}
+
+.showMore:hover {
+  background: var(--blue-50);
+}
+
+.rawXml {
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Same off-screen skipping as parsed chunks: a 6 MB chart's raw blocks are large. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 8rem;
+}
+
+.rawUnavailable {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-warning-text);
+  background: var(--color-warning-subtle);
+}
+
+.note,
+.error {
+  padding: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+.error {
+  color: var(--red-700);
+}

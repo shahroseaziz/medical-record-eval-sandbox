@@ -23,3 +23,22 @@ export interface AllPatientsResponse {
   patients: ExplorerPatient[]
   count: number
 }
+
+/**
+ * One chunk row from `GET /api/patients/[id]/chunks` (N7b extends the SELECT to
+ * carry `source_xml`). A section is split into multiple chunks when its narrative
+ * exceeds the per-chunk char budget; every chunk of a section shares the same
+ * `source_xml` (the verbatim <section>…</section> substring, nullable).
+ */
+export interface ChunkRow {
+  section: string
+  ord: number
+  text: string
+  source_xml: string | null
+}
+
+/** Response envelope of `GET /api/patients/[id]/chunks`. */
+export interface ChunksResponse {
+  chunks?: ChunkRow[]
+  error?: string
+}

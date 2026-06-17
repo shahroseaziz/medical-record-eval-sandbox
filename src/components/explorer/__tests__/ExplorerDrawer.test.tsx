@@ -132,3 +132,59 @@ describe('ExplorerDrawer — sortable all-patients table', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to load patients/)
   })
 })
+
+describe('ExplorerDrawer — row → chart detail (N7b)', () => {
+  // Branch fetch by URL: the table endpoint returns patients; the chunks endpoint
+  // returns one section so the detail renders without hitting the network.
+  function mockBranchedFetch() {
+    const fetchMock = vi.fn((url: string) => {
+      if (typeof url === 'string' && url.includes('chunks')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            chunks: [{ section: 'problems', ord: 0, text: 'Hypertension', source_xml: '<section>X</section>' }],
+          }),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => RESPONSE })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('opens the chart detail on row click and backs out to the table', async () => {
+    const user = userEvent.setup()
+    mockBranchedFetch()
+    render(<ExplorerDrawer open onClose={vi.fn()} chunksEndpoint="/api/patients/c/chunks" />)
+    await user.click(await screen.findByTestId('patient-row-c'))
+
+    // Detail replaces the table; the section renders.
+    expect(await screen.findByTestId('patient-chart-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('section-problems')).toHaveTextContent('Hypertension')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+
+    // Back returns to the table.
+    await user.click(screen.getByTestId('chart-back'))
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+    expect(screen.queryByTestId('patient-chart-detail')).not.toBeInTheDocument()
+  })
+
+  it('resets the selection when the drawer closes (reopening lands on the table)', async () => {
+    const user = userEvent.setup()
+    mockBranchedFetch()
+    const { rerender } = render(
+      <ExplorerDrawer open onClose={vi.fn()} chunksEndpoint="/api/patients/c/chunks" />,
+    )
+    await user.click(await screen.findByTestId('patient-row-c'))
+    expect(await screen.findByTestId('patient-chart-detail')).toBeInTheDocument()
+
+    rerender(<ExplorerDrawer open={false} onClose={vi.fn()} chunksEndpoint="/api/patients/c/chunks" />)
+    rerender(<ExplorerDrawer open onClose={vi.fn()} chunksEndpoint="/api/patients/c/chunks" />)
+
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+    expect(screen.queryByTestId('patient-chart-detail')).not.toBeInTheDocument()
+  })
+})
