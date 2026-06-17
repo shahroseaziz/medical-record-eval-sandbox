@@ -467,7 +467,7 @@ describe('buildGoldenPerCase — stale entries drop from the denominator', () =>
   const fail = (): GoldenGrade => ({
     state: 'fail',
     fields: [],
-    fails: [{ field: 'a1c_current', expected: '6', got: '7' }],
+    fails: [{ field: 'a1c_current', expected: '6', got: '7', pass: false }],
   })
 
   it('marks a stale entry errored (excluded) and counts only fresh entries pass/fail', () => {
