@@ -1212,6 +1212,71 @@
   color: var(--color-text-subtle);
   font-style: italic;
 }
+
+/* ── Do-you-agree thumbs + derived lines (N17) ──────────────────────────────── */
+.agreeWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.agreeLabel {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.agreeBtn {
+  padding: 1px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.agreeBtn:hover {
+  border-color: var(--color-border-strong);
+}
+
+.agreeYes {
+  color: var(--color-success-text);
+  background: var(--color-success-subtle);
+  border-color: var(--color-success-text);
+}
+
+.agreeNo {
+  color: var(--color-danger-text);
+  background: var(--color-danger-subtle);
+  border-color: var(--color-danger-text);
+}
+
+.crossLine {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clMain {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.clSub {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  line-height: var(--leading-normal);
+}
+
+.youVsJudge {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
 .ctxWarn {
   color: var(--color-warning-text);
   background: var(--color-warning-subtle);
