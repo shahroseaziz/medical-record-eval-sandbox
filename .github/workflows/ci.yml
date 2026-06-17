@@ -106,6 +106,15 @@ jobs:
       - name: Validate eval artifacts
         run: npm run validate:evals
 
+      # Worked-example artifact integrity (N13b) — deterministic, no DB / model /
+      # network, so it runs in the ordinary CI job. Asserts the committed teaching
+      # fixture has BOTH legs, ≥1 failing golden, ≥1 errored verdict, and a sha256
+      # that matches its sidecar (silent-drift guard). PENDING (exit 0) until the
+      # maintainer lands the live-engine-verified artifact; load-bearing the moment
+      # it does. The four failure paths are covered in `npm test`.
+      - name: Worked-example artifact integrity gate
+        run: npm run gate:example-integrity
+
       - name: Unit + integration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
@@ -124,6 +133,7 @@ jobs:
             "src/lib/killswitch.ts" "src/lib/tokens.ts" "evals/golden" "evals/scorers"
             "evals/results" "evals/harness" "evals/thresholds.yaml" "evals/run_evals.ts"
             "evals/run_evals_example.ts" "src/example/eval-example.json"
+            "evals/example-integrity-gate.ts" "scripts/canary-example-judge.ts"
             "scripts" "observability"
             "factory.json" ".env.example" "docker-compose.yml" ".github/workflows/ci.yml"
           )

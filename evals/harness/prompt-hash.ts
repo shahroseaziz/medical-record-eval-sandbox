@@ -18,12 +18,15 @@
 import { createHash } from 'node:crypto'
 import { buildExtractPrompt, buildVerdictPrompt } from '../../src/lib/eval/scorers/faithfulness.js'
 import { buildReferencePrompt } from '../../src/lib/eval/scorers/reference-judge.js'
+import { buildCriteriaPrompt } from '../../src/lib/eval/scorers/criteria-judge.js'
+import { WORKED_CRITERIA } from '../../src/app/notebook/worked-example.js'
 
 const SENTINEL = {
   output: '__PROMPT_HASH_SENTINEL_OUTPUT__',
   claims: ['__SENTINEL_CLAIM_1__', '__SENTINEL_CLAIM_2__'],
   grounding: '__PROMPT_HASH_SENTINEL_GROUNDING__',
   expected: '__PROMPT_HASH_SENTINEL_EXPECTED__',
+  criteria: '__PROMPT_HASH_SENTINEL_CRITERIA__',
 } as const
 
 function sha256(text: string): string {
@@ -39,6 +42,16 @@ export function computeJudgePromptHashes(): Record<string, string> {
     // baseline + example gate score with).
     verdict: sha256(buildVerdictPrompt([...SENTINEL.claims], SENTINEL.grounding)),
     reference: sha256(buildReferencePrompt(SENTINEL.output, SENTINEL.expected)),
+    // The single-call criteria-judge TEMPLATE (N13b). The worked example's judge
+    // leg replays a recorded verdict ruled by THIS template; pinning it means a
+    // silent template edit (which would re-roll the live judge the nightly canary
+    // re-runs against the committed verdicts) trips the parity gate.
+    criteria: sha256(buildCriteriaPrompt(SENTINEL.criteria, SENTINEL.output)),
+    // The worked example's CRITERIA TEXT itself (N13b) — the pinned acceptance
+    // criteria the committed verdicts were ruled against. An edit here invalidates
+    // the recorded verdicts (and the canary's vs-committed comparison), so it must
+    // be a visible, reviewed re-baseline, never silent.
+    workedCriteria: sha256(WORKED_CRITERIA),
   }
 }
 
@@ -47,6 +60,8 @@ export const EXPECTED_JUDGE_PROMPT_HASHES: Record<string, string> = {
   extract: '888649381c5d011392119b59fa8b3025778f7785ded7abee82e2966a8de80573',
   verdict: '4b0f2dc2ed4b4a0eb344d5055be9b5d7c371e06351d9b84a9db676547f132060',
   reference: '046c3297de9aad1a23d0c7b40b9553320c1a2ab1537e0139b828fda761c51310',
+  criteria: '1eb68119e29104b29b08981db1f45ecd46dfe6d580d5400ea9f6e5100eca9404',
+  workedCriteria: '658079fb5e2bbe605ac329fe4ba9a7e413eed7029123523de6b01926663b0c3a',
 }
 
 /** Returns a violation string per drifted template; empty = parity holds. */
