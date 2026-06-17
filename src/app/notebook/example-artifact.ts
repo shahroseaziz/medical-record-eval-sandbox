@@ -150,6 +150,14 @@ export class EmptyJudgeLegError extends ExampleArtifactError {
   }
 }
 
+/** The committed artifact bytes did not parse into the expected shape. */
+export class MalformedArtifactError extends ExampleArtifactError {
+  constructor(detail: string) {
+    super(`Worked example artifact is malformed: ${detail}`)
+    this.name = 'MalformedArtifactError'
+  }
+}
+
 /**
  * No golden row FAILS. The failing-golden row is a load-bearing teaching moment
  * ("a mismatch is a lead"); the generator refuses to ship without one and NEVER
@@ -250,4 +258,94 @@ export function assertTeachingConditions(artifact: NotebookExampleArtifact): voi
  */
 export function serializeArtifact(artifact: NotebookExampleArtifact): string {
   return JSON.stringify(artifact, null, 2) + '\n'
+}
+
+// ── Runtime validation (parse committed bytes → typed artifact) ───────────────
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x)
+}
+
+function asString(v: unknown, where: string): string {
+  if (typeof v !== 'string') throw new MalformedArtifactError(`${where} must be a string`)
+  return v
+}
+
+function parseRecordedVerdict(v: unknown, where: string): RecordedVerdict {
+  if (!isRecord(v)) throw new MalformedArtifactError(`${where} must be an object`)
+  if (v.errored === true) return { errored: true }
+  if (v.errored === false) {
+    if (typeof v.pass !== 'boolean') throw new MalformedArtifactError(`${where}.pass must be boolean`)
+    return { errored: false, pass: v.pass, reason: asString(v.reason, `${where}.reason`) }
+  }
+  throw new MalformedArtifactError(`${where}.errored must be true or false`)
+}
+
+function parseGoldenCase(v: unknown, i: number): GoldenLegCase {
+  if (!isRecord(v)) throw new MalformedArtifactError(`golden.cases[${i}] must be an object`)
+  return {
+    patientId: asString(v.patientId, `golden.cases[${i}].patientId`),
+    patientName: asString(v.patientName, `golden.cases[${i}].patientName`),
+    output: asString(v.output, `golden.cases[${i}].output`),
+    model: asString(v.model, `golden.cases[${i}].model`),
+    golden: asString(v.golden, `golden.cases[${i}].golden`),
+  }
+}
+
+function parseJudgeCase(v: unknown, i: number): JudgeLegCase {
+  if (!isRecord(v)) throw new MalformedArtifactError(`judge.cases[${i}] must be an object`)
+  const verdict = parseRecordedVerdict(v.verdict, `judge.cases[${i}].verdict`)
+  // An errored verdict carries NO judge model id (the call never settled); a
+  // settled verdict must stamp one. We honour whatever the artifact recorded but
+  // require the type to be string-or-null so the contract can't silently soften.
+  const judgeModel =
+    v.judgeModel === null ? null : asString(v.judgeModel, `judge.cases[${i}].judgeModel`)
+  return {
+    patientId: asString(v.patientId, `judge.cases[${i}].patientId`),
+    patientName: asString(v.patientName, `judge.cases[${i}].patientName`),
+    output: asString(v.output, `judge.cases[${i}].output`),
+    model: asString(v.model, `judge.cases[${i}].model`),
+    verdict,
+    judgeModel,
+  }
+}
+
+/**
+ * Parse untrusted bytes (a fetched / read-from-disk artifact) into a typed
+ * `NotebookExampleArtifact`, throwing a NAMED `MalformedArtifactError` on any shape
+ * violation. Shared by the N13b client loader and the CI integrity gate so both
+ * reject the same malformed inputs identically. Does NOT assert the teaching
+ * conditions — that is `assertTeachingConditions`, run separately.
+ */
+export function parseExampleArtifact(raw: unknown): NotebookExampleArtifact {
+  if (!isRecord(raw)) throw new MalformedArtifactError('top-level value is not an object')
+  if (raw.schemaVersion !== EXAMPLE_SCHEMA_VERSION) {
+    throw new MalformedArtifactError(
+      `schemaVersion must be "${EXAMPLE_SCHEMA_VERSION}", got ${JSON.stringify(raw.schemaVersion)}`,
+    )
+  }
+  if (!isRecord(raw.golden)) throw new MalformedArtifactError('golden leg is missing')
+  if (!isRecord(raw.judge)) throw new MalformedArtifactError('judge leg is missing')
+  if (!Array.isArray(raw.golden.cases)) throw new MalformedArtifactError('golden.cases must be an array')
+  if (!Array.isArray(raw.judge.cases)) throw new MalformedArtifactError('judge.cases must be an array')
+  if (!isRecord(raw.models)) throw new MalformedArtifactError('models is missing')
+
+  return {
+    schemaVersion: EXAMPLE_SCHEMA_VERSION,
+    description: asString(raw.description, 'description'),
+    generatedAt: asString(raw.generatedAt, 'generatedAt'),
+    models: {
+      generation: asString(raw.models.generation, 'models.generation'),
+      judge: asString(raw.models.judge, 'models.judge'),
+    },
+    golden: {
+      prompt: asString(raw.golden.prompt, 'golden.prompt'),
+      cases: raw.golden.cases.map((c, i) => parseGoldenCase(c, i)),
+    },
+    judge: {
+      prompt: asString(raw.judge.prompt, 'judge.prompt'),
+      criteria: asString(raw.judge.criteria, 'judge.criteria'),
+      cases: raw.judge.cases.map((c, i) => parseJudgeCase(c, i)),
+    },
+  }
 }

@@ -9,6 +9,8 @@ import { JudgeCell } from './JudgeCell'
 import { ScoreLine } from './ScoreLine'
 import { useNotebookRun } from './useNotebookRun'
 import { useNotebookCube } from './useNotebookCube'
+import { useWorkedExample } from './useWorkedExample'
+import { WorkedExampleSection } from './WorkedExampleReplay'
 import { judgeCostLine, countJudgeable } from './judgeCost'
 import { scoredEvalKeys } from '@/lib/notebook/state'
 import type { NotebookPatient } from './types'
@@ -49,6 +51,14 @@ const FREE_TIER_PATIENT_CAP = 5
 const BYO_KEY_STORAGE = 'mres.nb.byokey'
 
 export function NotebookShell({ patientCount }: { patientCount: number | null }) {
+  // ── Worked-example replay (N13b) ───────────────────────────────────────────
+  // `?example=1` replays the committed artifact client-side with ZERO metered
+  // calls. Read on mount (false on first render → no SSR/CSR mismatch); a real run
+  // dismisses the on-ramp affordance. `useWorkedExample` only fetches while active.
+  const [replayActive, setReplayActive] = useState(false)
+  const [hasRealRun, setHasRealRun] = useState(false)
+  const workedExample = useWorkedExample(replayActive)
+
   // The BYO key. Initialised empty for a deterministic first render (no SSR/CSR
   // mismatch); hydrated from sessionStorage on mount.
   const [apiKey, setApiKey] = useState('')
@@ -120,6 +130,16 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
     }
   }, [])
 
+  // Activate replay from `?example=1` after mount (kept off the first render so SSR
+  // and the initial client render agree).
+  useEffect(() => {
+    try {
+      setReplayActive(new URLSearchParams(window.location.search).get('example') === '1')
+    } catch {
+      // A non-browser / locked-down context simply never enters replay.
+    }
+  }, [])
+
   // Load a roster of patients to run against. Each carries its assembled stuff-mode
   // record (the run grounding) + light framing for the chips. The first is
   // pre-selected. A DB-less / empty environment degrades to an explained empty
@@ -183,8 +203,10 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
 
   const patientsById = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients])
   const lockedId = patients.length ? patients[0].id : null
-  // Show the load-example affordance only before the user has typed a prompt.
-  const showLoadExample = prompt.trim().length === 0
+  // Show the "Load the worked example" on-ramp before the user has typed a prompt
+  // AND before their first real run — it offers the worked example and is dismissed
+  // once they have actually run something of their own (N13b).
+  const showLoadExample = prompt.trim().length === 0 && !hasRealRun
 
   const onRun = useCallback(() => {
     const cases = selected
@@ -192,6 +214,8 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
       .filter((p): p is NotebookPatient => Boolean(p))
       .map((p) => ({ patientId: p.id, record: p.record }))
     if (cases.length === 0 || prompt.trim().length === 0) return
+    // The user has now made a real run — dismiss the worked-example on-ramp.
+    setHasRealRun(true)
     setRunOrder(cases.map((c) => c.patientId))
     // Capture the prompt that produced this run so the cube records it verbatim
     // even if the textarea is edited before the next run, and so the surface can
@@ -370,6 +394,14 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             </aside>
           )}
 
+          {replayActive ? (
+            <WorkedExampleSection
+              status={workedExample.status}
+              artifact={workedExample.artifact}
+              message={workedExample.message}
+            />
+          ) : (
+          <>
           {/* ── Section scaffolding (document order; later steps fill these) ── */}
           <PromptCell
             prompt={prompt}
@@ -481,6 +513,8 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
           )}
 
           <ScoreLine state={cubeState} />
+          </>
+          )}
 
           <div className={styles.nbEnd} aria-hidden="true" />
         </div>

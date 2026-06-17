@@ -64,6 +64,23 @@ jobs:
           cat drift/drift-history.jsonl
           # exit 2 = upstream outage (inconclusive, do not alarm); 1 = drift/red (alarm)
           if [ "$code" -eq 1 ]; then exit 1; fi
+      # N13b: re-run the worked example's JUDGE leg live and compare to the COMMITTED
+      # verdicts — the highest-visibility correctness surface (every first-time user
+      # replays it). PENDING (exit 0) until the maintainer lands the artifact; a fresh
+      # verdict that flips vs the committed one (exit 1) alarms; upstream-down (exit 2)
+      # does not.
+      - name: Worked-example judge-leg drift canary
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p drift
+          ts=$(date -u +%FT%TZ)
+          set +e
+          npx tsx scripts/canary-example-judge.ts | tee drift/example-judge-canary.txt
+          code=$?
+          set -e
+          echo "{\"ts\":\"$ts\",\"canary\":\"example-judge\",\"exit\":$code}" >> drift/drift-history.jsonl
+          if [ "$code" -eq 1 ]; then exit 1; fi
       - name: Upload drift history
         if: always()
         uses: actions/upload-artifact@v4
