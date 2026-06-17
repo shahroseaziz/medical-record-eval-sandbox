@@ -1524,8 +1524,10 @@
 
 .sgRowLabel {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -1548,8 +1550,29 @@
 }
 
 .sgRlMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   text-transform: lowercase;
   letter-spacing: 0.04em;
+}
+
+/* Current-column trust markers, stacked under the row label (judge rows only). */
+.sgRlMarkers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sgMarker {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-subtle);
+}
+
+.sgMarkerVg,
+.sgMarkerYou {
+  color: var(--color-text-muted);
 }
 
 .sgVer {
@@ -1562,14 +1585,24 @@
 }
 
 .sgCell {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--color-text-muted);
   background: var(--color-surface);
+}
+
+/* Disputed-cell mark — a verdict the user marked disagree lives in this cell.
+   Derived SOLELY from the `agree` marks (see hasDisputedVerdict). */
+.sgDispute {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-warning);
 }
 
 .sgCellCur {

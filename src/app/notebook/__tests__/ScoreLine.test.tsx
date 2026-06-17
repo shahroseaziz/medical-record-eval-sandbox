@@ -9,6 +9,7 @@ import {
   type NotebookEval,
   type NotebookRun,
   type NotebookState,
+  type PerCaseScore,
   type ScoreRow,
 } from '@/lib/notebook/state'
 
@@ -205,10 +206,140 @@ describe('ScoreLine (SHA-163 N11 / SHA-170 N15a)', () => {
     expect(judgeRow.map((c) => c.textContent)).toEqual(['—', '1/1'])
   })
 
-  it('has NO disputed-cell indicator or trust markers (arrive in N15b)', () => {
+  it('a golden-only grid has NO trust markers and NO disputed cell (golden carries neither)', () => {
+    // fourRunState is golden-only — no judge row, no agree marks anywhere.
     render(<ScoreLine state={fourRunState()} />)
+    expect(screen.queryByTestId('row-markers')).not.toBeInTheDocument()
     expect(screen.queryByTestId('disputed-cell')).not.toBeInTheDocument()
-    expect(screen.getByTestId('score-grid').textContent).not.toMatch(/disput/i)
+    screen
+      .getAllByTestId('grid-cell')
+      .forEach((c) => expect(c.getAttribute('data-disputed')).toBe('false'))
+  })
+
+  // ── N15b: current-column trust markers + the disputed-cell indicator ────────
+
+  function gp(patientId: string, pass: boolean): PerCaseScore {
+    return { patientId, pass, fails: [] }
+  }
+  function jp(patientId: string, state: 'pass' | 'fail', agree?: 'a' | 'm'): PerCaseScore {
+    return { patientId, state, fails: [], agree }
+  }
+  function judgeRow(state: NotebookState, evalKey: string): HTMLElement {
+    return screen.getAllByTestId('grid-row').find((r) => r.getAttribute('data-eval-key') === evalKey)!
+  }
+
+  it('judge row shows "vs your golden m/n" on the OVERLAP only, and "you: a/m" of-MARKED', () => {
+    // golden scored a (pass) + b (fail); judge scored a (pass) + b (pass) → overlap 2,
+    // match only on a. Of two scored judge verdicts the user MARKED only a (agree),
+    // so the agreement denominator is of-marked (1), never of-scored (2).
+    const state: NotebookState = {
+      ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+      runs: [mkRun('run-1', 1)],
+      evals: [mkEval('golden', 'Golden set', 1), mkEval('judge:j1', 'My judge', 1)],
+      scores: {
+        golden: { 'run-1': { frac: '1/2', per: [gp('patient-a', true), gp('patient-b', false)] } },
+        'judge:j1': {
+          'run-1': { frac: '2/2', per: [jp('patient-a', 'pass', 'a'), jp('patient-b', 'pass')] },
+        },
+      },
+    }
+    render(<ScoreLine state={state} />)
+
+    const markers = within(judgeRow(state, 'judge:j1')).getByTestId('row-markers')
+    // Overlap is both patients (n=2), the judge matched the golden on a only (m=1).
+    expect(within(markers).getByTestId('marker-vg')).toHaveTextContent('vs your golden 1/2')
+    // Of-MARKED denominator: only a was thumbed → 1/1, NOT 1/2 (the of-scored bug).
+    const you = within(markers).getByTestId('marker-you')
+    expect(you).toHaveTextContent('you: 1/1')
+    expect(you.textContent).not.toContain('1/2')
+  })
+
+  it('golden rows carry NO trust markers', () => {
+    const state: NotebookState = {
+      ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+      runs: [mkRun('run-1', 1)],
+      evals: [mkEval('golden', 'Golden set', 1), mkEval('judge:j1', 'My judge', 1)],
+      scores: {
+        golden: { 'run-1': { frac: '1/2', per: [gp('patient-a', true), gp('patient-b', false)] } },
+        'judge:j1': {
+          'run-1': { frac: '1/2', per: [jp('patient-a', 'pass', 'a'), jp('patient-b', 'fail', 'm')] },
+        },
+      },
+    }
+    render(<ScoreLine state={state} />)
+    expect(within(judgeRow(state, 'golden')).queryByTestId('row-markers')).not.toBeInTheDocument()
+    // …while the judge row in the same grid does carry them.
+    expect(within(judgeRow(state, 'judge:j1')).getByTestId('row-markers')).toBeInTheDocument()
+  })
+
+  it('disputed-cell mark derives SOLELY from agree==="m" — a disagreed verdict marks its cell', () => {
+    const state: NotebookState = {
+      ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+      runs: [mkRun('run-1', 1)],
+      evals: [mkEval('golden', 'Golden set', 1), mkEval('judge:j1', 'My judge', 1)],
+      scores: {
+        golden: { 'run-1': { frac: '0/1', per: [gp('patient-a', false)] } },
+        'judge:j1': { 'run-1': { frac: '1/1', per: [jp('patient-a', 'pass', 'm')] } },
+      },
+    }
+    render(<ScoreLine state={state} />)
+    const judgeCell = screen
+      .getAllByTestId('grid-cell')
+      .find((c) => c.getAttribute('data-eval-key') === 'judge:j1')!
+    expect(judgeCell.getAttribute('data-disputed')).toBe('true')
+    expect(within(judgeCell).getByTestId('disputed-cell')).toBeInTheDocument()
+    // The golden cell (no agree) and a passing verdict that disagrees with golden on
+    // pass/fail must NOT be disputed — only agree==='m' disputes, nothing else.
+    const goldenCell = screen
+      .getAllByTestId('grid-cell')
+      .find((c) => c.getAttribute('data-eval-key') === 'golden')!
+    expect(goldenCell.getAttribute('data-disputed')).toBe('false')
+  })
+
+  it('a verdict marked AGREE (agree==="a") does NOT dispute its cell', () => {
+    const state: NotebookState = {
+      ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+      runs: [mkRun('run-1', 1)],
+      evals: [mkEval('golden', 'Golden set', 1), mkEval('judge:j1', 'My judge', 1)],
+      scores: {
+        golden: { 'run-1': { frac: '1/1', per: [gp('patient-a', true)] } },
+        'judge:j1': { 'run-1': { frac: '1/1', per: [jp('patient-a', 'pass', 'a')] } },
+      },
+    }
+    render(<ScoreLine state={state} />)
+    const judgeCell = screen
+      .getAllByTestId('grid-cell')
+      .find((c) => c.getAttribute('data-eval-key') === 'judge:j1')!
+    expect(judgeCell.getAttribute('data-disputed')).toBe('false')
+    expect(within(judgeCell).queryByTestId('disputed-cell')).not.toBeInTheDocument()
+  })
+
+  it('markers + dispute reflect the CURRENT column only (marks on a prior run are ignored)', () => {
+    // judge scored two runs; the user marked verdicts on run-1 ONLY. The current
+    // column is run-2 (last scored), which has no marks → no "you:" marker there and
+    // its cell is not disputed, even though run-1's cell is.
+    const state: NotebookState = {
+      ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
+      runs: [mkRun('run-1', 1), mkRun('run-2', 2)],
+      evals: [mkEval('judge:j1', 'My judge', 1)],
+      scores: {
+        'judge:j1': {
+          'run-1': { frac: '1/1', per: [jp('patient-a', 'pass', 'm')] },
+          'run-2': { frac: '1/1', per: [jp('patient-a', 'pass')] },
+        },
+      },
+    }
+    render(<ScoreLine state={state} />)
+
+    // Current column (run-2) has no marks → the judge row shows no markers at all.
+    expect(within(judgeRow(state, 'judge:j1')).queryByTestId('row-markers')).not.toBeInTheDocument()
+
+    // The prior run-1 cell is disputed; the current run-2 cell is not.
+    const cells = screen.getAllByTestId('grid-cell')
+    const run1 = cells.find((c) => c.getAttribute('data-run-id') === 'run-1')!
+    const run2 = cells.find((c) => c.getAttribute('data-run-id') === 'run-2')!
+    expect(run1.getAttribute('data-disputed')).toBe('true')
+    expect(run2.getAttribute('data-disputed')).toBe('false')
   })
 
   // ── N15c — grid navigation ─────────────────────────────────────────────────

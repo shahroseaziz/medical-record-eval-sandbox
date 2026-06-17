@@ -80,3 +80,56 @@ export function computeJudgeVsGolden(
   }).length
   return { matched, overlap: comparable.length }
 }
+
+// ── Grid trust markers + disputed-cell (SHA-171 N15b) ────────────────────────
+//
+// The runs×evals grid (ScoreLine) lifts the SAME two derived counts onto each
+// JUDGE row as a current-column secondary line, plus a disputed-cell indicator —
+// both derived SOLELY from N4 state already on the cube (the `agree` marks and the
+// golden/judge `per[]`). No new score, no metered call. GOLDEN rows carry NO
+// markers (a golden has no judge-vs-golden and no agree of its own), and every
+// marker reflects the CURRENT column only — the caller passes that column's rows.
+
+/** A single trust marker on a judge row: the kind tags its tint, the text renders. */
+export interface TrustMarker {
+  /** `vg` = the judge-vs-golden overlap line; `you` = the of-marked agreement line. */
+  kind: 'vg' | 'you'
+  text: string
+}
+
+/**
+ * The current-column trust markers for ONE judge row, derived from that column's
+ * judge `per[]` and (when present) the golden `per[]` for the SAME run:
+ *
+ *   • "vs your golden m/n" — OVERLAP only: matches over patients scored by BOTH the
+ *     judge and the golden on this run (`computeJudgeVsGolden`). Omitted when the
+ *     golden did not score this run or there is no overlap.
+ *   • "you: a/m"           — MARKED verdicts only: agreed over the of-MARKED
+ *     denominator (`computeYouVsJudge`), never of-scored. Omitted when nothing is
+ *     marked on this column.
+ *
+ * Pass golden rows nothing — this is judge-row only; the caller gates on the key.
+ */
+export function judgeRowMarkers(
+  judgePer: PerCaseScore[],
+  goldenPer: PerCaseScore[] | undefined,
+): TrustMarker[] {
+  const markers: TrustMarker[] = []
+  if (goldenPer) {
+    const { matched, overlap } = computeJudgeVsGolden(judgePer, goldenPer)
+    if (overlap > 0) markers.push({ kind: 'vg', text: `vs your golden ${matched}/${overlap}` })
+  }
+  const { agreed, marked } = computeYouVsJudge(judgePer)
+  if (marked > 0) markers.push({ kind: 'you', text: `you: ${agreed}/${marked}` })
+  return markers
+}
+
+/**
+ * Whether a score cell holds a DISPUTED verdict — derived SOLELY from the N4
+ * `agree` marks: a verdict the user marked disagree (`agree === 'm'`) disputes its
+ * cell. Nothing else feeds this — not the judge's pass/fail, not a golden mismatch.
+ * Golden cells never carry an `agree`, so a golden cell is never disputed.
+ */
+export function hasDisputedVerdict(per: PerCaseScore[]): boolean {
+  return per.some((p) => p.agree === 'm')
+}

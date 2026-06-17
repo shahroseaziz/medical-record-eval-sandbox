@@ -9,6 +9,7 @@ import {
   serializeState,
   type NotebookState,
 } from '@/lib/notebook/state'
+import { hasDisputedVerdict, judgeRowMarkers } from './judgeAgreement'
 import styles from './notebook.module.css'
 
 /**
@@ -33,6 +34,11 @@ import styles from './notebook.module.css'
  *
  * Numbers + navigation only. Trust markers / the disputed indicator (N15b) still
  * read no new score here — the grid computes nothing the cube does not already hold.
+ * SHA-170 N15a was numbers only. SHA-171 N15b adds, on the grid ONLY, the
+ * current-column trust markers per JUDGE row ("vs your golden m/n" overlap + the
+ * "you: a/m" of-marked agreement) and the disputed-cell indicator — both derived
+ * SOLELY from N4 state already on the cube (golden `per[]` + the `agree` marks);
+ * golden rows carry no markers and the row/column navigation (N15c) is still later.
  *
  * Export sits beside the area and serializes the WHOLE cube + meta (model ids,
  * app version) — NOT the slice on screen. It round-trips through the N4 import
@@ -253,6 +259,18 @@ function useScrollToEditor(): (evalKey: string) => void {
  *
  * Navigation (N15c): a row label scrolls to that eval's editor (timed-stepper), and
  * a column header toggles a read-only peek at that run's prompt.
+ * The runs×evals grid. Columns are the scored runs (current highlighted, last 3 by
+ * default with an "all runs" expander); rows are the evals (label stamped with the
+ * eval version from state); cells are the "n/m" frac, or "—" when that (eval, run)
+ * pair was never scored.
+ *
+ * N15b adds, derived purely from the cube already on screen:
+ *   • per JUDGE row, a CURRENT-column secondary line — "vs your golden m/n" (the
+ *     judge↔golden overlap on the current run) and "you: a/m" (of-MARKED agreement).
+ *     Golden rows carry none.
+ *   • a disputed-cell mark on any cell holding a disagreed verdict (`agree==='m'`),
+ *     sourced SOLELY from the `agree` marks.
+ * Both read existing cube state — they compute no new score.
  */
 function ScoreGrid({
   state,
@@ -347,6 +365,17 @@ function ScoreGrid({
 
         {evalKeys.map((evalKey) => {
           const version = versionFor(state, evalKey)
+          // Trust markers reflect the CURRENT column only, and JUDGE rows only —
+          // a golden row has no judge-vs-golden and no agree of its own. Read the
+          // current run's judge `per[]` and (when scored) the golden `per[]` for
+          // the SAME run; the derivation lives in judgeAgreement (pure, tested).
+          const markers =
+            evalKey === 'golden'
+              ? []
+              : judgeRowMarkers(
+                  state.scores[evalKey]?.[currentRunId]?.per ?? [],
+                  state.scores.golden?.[currentRunId]?.per,
+                )
           return (
             <div className={styles.sgRow} key={evalKey}>
               <button
@@ -360,10 +389,28 @@ function ScoreGrid({
               >
                 <span className={styles.sgRlMain}>{labelFor(state, evalKey)}</span>
                 {version > 1 && <span className={styles.sgVer}>v{version}</span>}
+                {markers.length > 0 && (
+                  <span className={styles.sgRlMarkers} data-testid="row-markers">
+                    {markers.map((m) => (
+                      <span
+                        key={m.kind}
+                        className={`${styles.sgMarker} ${
+                          m.kind === 'vg' ? styles.sgMarkerVg : styles.sgMarkerYou
+                        }`}
+                        data-testid={`marker-${m.kind}`}
+                      >
+                        {m.text}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </button>
               {cols.map((run) => {
                 const cell = state.scores[evalKey]?.[run.id]
                 const isCurrent = run.id === currentRunId
+                // A cell is disputed iff it holds a verdict the user marked disagree
+                // (`agree === 'm'`) — derived SOLELY from the `agree` marks.
+                const disputed = cell ? hasDisputedVerdict(cell.per) : false
                 return (
                   <div
                     key={evalKey + run.id}
@@ -373,8 +420,19 @@ function ScoreGrid({
                     data-testid="grid-cell"
                     data-eval-key={evalKey}
                     data-run-id={run.id}
+                    data-disputed={disputed ? 'true' : 'false'}
                   >
                     {cell ? cell.frac : '—'}
+                    {disputed && (
+                      <span
+                        className={styles.sgDispute}
+                        data-testid="disputed-cell"
+                        title="disputed — you marked a verdict here"
+                        aria-label="disputed"
+                      >
+                        ⚑
+                      </span>
+                    )}
                   </div>
                 )
               })}
