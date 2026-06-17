@@ -1,0 +1,290 @@
+'use client'
+
+import { useCallback, useMemo, useState } from 'react'
+import type { OutputCardResult } from './useNotebookRun'
+import type { NotebookPatient } from './types'
+import { gradeGolden, type GoldenGrade } from './goldenGrade'
+import styles from './notebook.module.css'
+
+/**
+ * Eval cell — golden answers (SHA-161 N9). The FIRST eval layer.
+ *
+ * The invite is deliberately NO-CHOOSER: a single primary "Add golden answers"
+ * action plus a quieter "or use an LLM judge" link. The judge path is N10 — its
+ * link reveals a live, defined stub here rather than a dead control.
+ *
+ * Scoring is CLIENT-SIDE and DETERMINISTIC via `lib/eval/normalize` (wired through
+ * ./goldenGrade): a patient PASSES iff every field present in its golden matches
+ * the model output AFTER normalization (case / whitespace / list-order / clinical
+ * aliases). Fields ABSENT from the golden are not graded — a partial golden grades
+ * partially. ZERO metered calls, zero server state: pressing "Score" runs pure
+ * functions, never the network.
+ */
+
+const GOLDEN_PLACEHOLDER = `{
+  "a1c_current": …,
+  "a1c_trend": "…",
+  "diabetes_meds": […]
+}`
+
+interface GoldenRowProps {
+  patient: NotebookPatient | undefined
+  patientId: string
+  value: string
+  onChange: (value: string) => void
+  grade: GoldenGrade | undefined
+  onViewChart: (patientId: string) => void
+}
+
+function GoldenRow({ patient, patientId, value, onChange, grade, onViewChart }: GoldenRowProps) {
+  const [expanded, setExpanded] = useState(false)
+  const name = patient?.name ?? patientId
+  const state = grade?.state
+
+  return (
+    <div className={styles.goldenRow} data-testid="golden-editor" data-patient-id={patientId}>
+      <div className={styles.grSide}>
+        <span className={styles.grName}>{name}</span>
+        <button
+          type="button"
+          className={styles.linkBtn}
+          data-testid="golden-open-chart"
+          onClick={() => onViewChart(patientId)}
+        >
+          open chart
+        </button>
+
+        {state === 'pass' && (
+          <span
+            className={`${styles.goldenVerdict} ${styles.gvPass}`}
+            data-testid="golden-verdict"
+            data-verdict="pass"
+          >
+            pass
+          </span>
+        )}
+        {state === 'fail' && (
+          <button
+            type="button"
+            className={styles.failChip}
+            data-testid="golden-fail-chip"
+            data-verdict="fail"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((e) => !e)}
+          >
+            ≠ {grade!.fails.map((f) => f.field).join(', ')}
+            <span className={styles.chev} aria-hidden="true">
+              {expanded ? '▴' : '▾'}
+            </span>
+          </button>
+        )}
+        {state === 'invalid' && (
+          <span className={styles.grNote} data-testid="golden-invalid">
+            {grade!.error}
+          </span>
+        )}
+        {state === 'nooutput' && (
+          <span className={styles.grNote}>run the prompt to score this patient</span>
+        )}
+      </div>
+
+      <textarea
+        className={`${styles.goldenIn} ${state === 'pass' ? styles.goldenOk : ''} ${
+          state === 'fail' ? styles.goldenBad : ''
+        }`}
+        data-testid="golden-input"
+        value={value}
+        spellCheck={false}
+        placeholder={GOLDEN_PLACEHOLDER}
+        onChange={(e) => onChange(e.target.value)}
+      />
+
+      {state === 'fail' && expanded && (
+        <div className={styles.goldenDiff} data-testid="golden-diff">
+          <div className={styles.gdHead}>
+            <span>field</span>
+            <span>expected (your golden)</span>
+            <span>got (model)</span>
+          </div>
+          {grade!.fails.map((f) => (
+            <div className={styles.gdRow} key={f.field}>
+              <span className={styles.gdField}>{f.field}</span>
+              <span className={styles.gdExp}>{f.expected}</span>
+              <span className={styles.gdGot}>{f.got}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export interface EvalCellProps {
+  /** Patient ids in the order the current run submitted them. */
+  order: string[]
+  results: Record<string, OutputCardResult>
+  patientsById: Map<string, NotebookPatient>
+  onViewChart: (patientId: string) => void
+}
+
+type Mode = null | 'golden' | 'judge'
+
+export function EvalCell({ order, results, patientsById, onViewChart }: EvalCellProps) {
+  const [mode, setMode] = useState<Mode>(null)
+  const [golden, setGolden] = useState<Record<string, string>>({})
+  // The scored snapshot — null until "Score" is pressed. Holding a snapshot (vs.
+  // grading live on every keystroke) keeps the verdicts stable while the user
+  // edits, and makes "Score" a discrete, observable, network-free action.
+  const [scores, setScores] = useState<Record<string, GoldenGrade> | null>(null)
+
+  const hasOutput = order.some((id) => results[id]?.status === 'done')
+
+  const setOne = useCallback((id: string, value: string) => {
+    setGolden((g) => ({ ...g, [id]: value }))
+  }, [])
+
+  // CLIENT-SIDE scoring: pure functions over local state. No fetch, no metered
+  // call — grading a golden never touches the network.
+  const onScore = useCallback(() => {
+    const next: Record<string, GoldenGrade> = {}
+    for (const id of order) {
+      const r = results[id]
+      next[id] = gradeGolden(golden[id] ?? '', r?.output, r?.status === 'done')
+    }
+    setScores(next)
+  }, [order, results, golden])
+
+  const overall = useMemo(() => {
+    if (!scores) return null
+    const graded = order.filter((id) => {
+      const s = scores[id]?.state
+      return s === 'pass' || s === 'fail'
+    })
+    const passN = graded.filter((id) => scores[id]?.state === 'pass').length
+    return { passN, total: graded.length }
+  }, [scores, order])
+
+  // Before any run there is nothing to grade against — keep the section present
+  // (the scaffolding) but quiet.
+  if (!hasOutput) {
+    return (
+      <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
+        <span className={styles.cellLabel}>Eval</span>
+        <p className={styles.cellPlaceholder}>
+          Run the prompt, then add the answers you expect to check the output.
+        </p>
+      </section>
+    )
+  }
+
+  // ── No-chooser invite ──────────────────────────────────────────────────────
+  if (mode === null) {
+    return (
+      <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
+        <span className={styles.cellLabel}>Eval</span>
+        <div className={styles.evalInvite} data-testid="eval-invite">
+          <div className={styles.eiText}>
+            <div className={styles.eiTitle}>Does the output hold up?</div>
+            <div className={styles.eiSub}>
+              Add the answers you expect — graded right here, on your machine, against the chart.
+            </div>
+          </div>
+          <div className={styles.eiActions}>
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              data-testid="golden-invite-add"
+              onClick={() => setMode('golden')}
+            >
+              Add golden answers
+            </button>
+            <button
+              type="button"
+              className={styles.btnGhostLink}
+              data-testid="golden-invite-judge"
+              onClick={() => setMode('judge')}
+            >
+              or use an LLM judge
+            </button>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  // ── Judge path — N10. A live, defined stub (not a dead control). ────────────
+  if (mode === 'judge') {
+    return (
+      <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
+        <span className={styles.cellLabel}>Eval</span>
+        <div className={styles.judgeStub} data-testid="judge-stub" role="region">
+          <span>
+            An LLM judge reads each chart and rules per patient — arriving in a later step.
+          </span>
+          <button
+            type="button"
+            className={styles.exploreStubClose}
+            data-testid="judge-stub-back"
+            onClick={() => setMode('golden')}
+          >
+            Add golden answers instead
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  // ── Golden editors ──────────────────────────────────────────────────────────
+  return (
+    <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
+      <div className={styles.evalHead}>
+        <span className={styles.cellLabel}>Eval · golden answers</span>
+        <button
+          type="button"
+          className={styles.btnPrimarySm}
+          data-testid="golden-score"
+          onClick={onScore}
+        >
+          Score
+        </button>
+      </div>
+
+      <p className={styles.goldenNudge} data-testid="golden-nudge">
+        Grade the chart, not the output: write each expected answer from the patient&apos;s record,
+        not by copying the model&apos;s answer above.
+      </p>
+
+      <div className={styles.goldenRows}>
+        {order.map((id) => (
+          <GoldenRow
+            key={id}
+            patientId={id}
+            patient={patientsById.get(id)}
+            value={golden[id] ?? ''}
+            onChange={(v) => setOne(id, v)}
+            grade={scores?.[id]}
+            onViewChart={onViewChart}
+          />
+        ))}
+      </div>
+
+      <p className={styles.goldenForgive} data-testid="golden-forgive">
+        The diff forgives casing, whitespace, list order, and common clinical aliases — “QD” matches
+        “once daily”. A near-miss is still a miss, but you&apos;ll see exactly where.
+      </p>
+
+      {overall && (
+        <div className={styles.goldenOverall} data-testid="golden-overall">
+          <span className={styles.ovNum}>
+            {overall.passN}/{overall.total}
+          </span>{' '}
+          pass
+          <span className={styles.ovNote}>
+            {' '}
+            · scored against your golden answers, on your machine
+          </span>
+        </div>
+      )}
+    </section>
+  )
+}
