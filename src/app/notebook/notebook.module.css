@@ -898,6 +898,38 @@
   gap: var(--space-3);
 }
 
+/* ── "+ Add another eval" affordance (N14) ─────────────────────────────────── */
+.addEval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.addEvalBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+  background: var(--color-surface-muted);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.addEvalBtn:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+
+.addEvalHint {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
 .goldenNudge {
   margin: 0;
   font-size: var(--text-xs);

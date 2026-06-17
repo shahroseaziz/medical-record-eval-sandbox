@@ -98,6 +98,15 @@ describe('NotebookShell (SHA-156 N6)', () => {
     expect(label).toHaveAttribute('data-caps-active', 'false')
   })
 
+  it('does NOT show "+ Add another eval" until the first eval exists (1×1 unchanged)', () => {
+    // Fresh shell, nothing scored → the add-eval on-ramp is absent, and there is
+    // no added judge cell. The simple 1×1 path is unchanged until a 2nd eval.
+    render(<NotebookShell patientCount={111} />)
+    expect(screen.queryByTestId('add-eval')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('add-eval-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('judge-cell')).not.toBeInTheDocument()
+  })
+
   it('the Explore button has a live stub target (not a dead control)', async () => {
     const user = userEvent.setup()
     render(<NotebookShell patientCount={111} />)

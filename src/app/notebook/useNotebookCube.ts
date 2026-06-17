@@ -117,6 +117,22 @@ export function useNotebookCube() {
     })
   }, [])
 
+  // Remove an eval entirely from the cube — its score column AND its definition.
+  // Fired when a judge cell is removed (N14): a removed judge leaves no trace in
+  // state, so the score line stops projecting its row and an export never carries
+  // a judge the user deleted. The GOLDEN eval is singular and never removed here.
+  const removeScore = useCallback((evalKey: string) => {
+    setState((prev) => {
+      const hasScore = Boolean(prev.scores[evalKey])
+      const hasDef = prev.evals.some((e) => e.key === evalKey)
+      if (!hasScore && !hasDef) return prev
+      const scores = { ...prev.scores }
+      delete scores[evalKey]
+      const evals = prev.evals.filter((e) => e.key !== evalKey)
+      return { ...prev, evals, scores }
+    })
+  }, [])
+
   const recordScore = useCallback((runId: string, def: EvalDefInput, row: ScoreRow) => {
     setState((prev) => {
       // Upsert the eval definition (one version per notebook eval).
@@ -144,5 +160,5 @@ export function useNotebookCube() {
     })
   }, [])
 
-  return { state, recordRun, recordScore }
+  return { state, recordRun, recordScore, removeScore }
 }

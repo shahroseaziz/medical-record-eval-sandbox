@@ -195,7 +195,7 @@ interface JudgeResultsProps {
   goldenScores: Record<string, GoldenGrade> | null
 }
 
-function JudgeResults({
+export function JudgeResults({
   order,
   verdicts,
   patientsById,
@@ -401,6 +401,12 @@ export interface EvalCellProps {
    */
   onScoreReport?: (report: ScoreReport) => void
   /**
+   * Notify the owner of this PRIMARY eval's current mode (N14). The shell counts
+   * the primary as a judge for the multi-judge cost preview only when it is in
+   * judge mode — so the previewed fan-out tracks what will actually run.
+   */
+  onModeChange?: (mode: 'golden' | 'judge' | null) => void
+  /**
    * The current prompt differs from the one that produced this run — the outputs
    * are STALE. Scoring is disabled ("Re-run to score"), the existing score is
    * quieted, and any entry scored while stale drops from the denominator. Pure
@@ -418,6 +424,7 @@ export function EvalCell({
   onViewChart,
   byoKey,
   onScoreReport,
+  onModeChange,
   stale = false,
 }: EvalCellProps) {
   const [mode, setMode] = useState<Mode>(null)
@@ -436,6 +443,12 @@ export function EvalCell({
   const [scores, setScores] = useState<Record<string, GoldenGrade> | null>(null)
 
   const hasOutput = order.some((id) => results[id]?.status === 'done')
+
+  // Mirror the primary eval's mode up so the shell's multi-judge cost preview can
+  // count the primary as a judge only while it is actually a judge.
+  useEffect(() => {
+    onModeChange?.(mode)
+  }, [mode, onModeChange])
 
   const setOne = useCallback((id: string, value: string) => {
     setGolden((g) => ({ ...g, [id]: value }))
