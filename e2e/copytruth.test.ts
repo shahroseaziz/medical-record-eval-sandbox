@@ -27,12 +27,16 @@ async function openRagMode(page: Page) {
 }
 
 test.describe('copytruth (O12a / S27 / G7)', () => {
-  test('landing: cases-as-free-knobs copy and an in-app GitHub repo link', async ({ page }) => {
-    await page.goto('/')
-    // "free knobs" landing claim (true via S24 — the workbench is the real bench).
-    await expect(page.getByTestId('route-workbench')).toContainText('free knobs')
-    // The "visible in the open source" claim now has a home: a real repo link.
-    const repo = page.getByTestId('repo-link')
+  test('bench: cases-as-free-knobs copy and an in-app GitHub repo link', async ({ page }) => {
+    // N18 cutover relocated the front door to the notebook front page; these two
+    // claims no longer live on `/`. Both remain TRUE on the reachable /workbench:
+    // the "free knobs" copy is on the bench heading, and the open-source repo link
+    // is on the seeded scorecard (`scorecard-repo-link`, single-source REPO_URL).
+    await page.goto('/workbench')
+    // "free knobs" claim (true via S24 — the workbench is the real bench).
+    await expect(page.getByTestId('workbench-page')).toContainText('free knobs')
+    // The "visible in the open source" claim has a home: a real repo link.
+    const repo = page.getByTestId('scorecard-repo-link')
     await expect(repo).toBeVisible()
     await expect(repo).toHaveAttribute('href', new RegExp(REPO_HREF))
   })
