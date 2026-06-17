@@ -9,6 +9,9 @@ import {
   projectOnlyTrail,
   projectEvalTrail,
   scoredEvalKeys,
+  evalContentHash,
+  upsertEvalVersion,
+  isRevised,
   type NotebookState,
   type NotebookRun,
   type ScoreRow,
@@ -319,6 +322,128 @@ describe('notebook bench-state v1', () => {
       expect(scoredEvalKeys(validated)).toEqual(['golden', 'judge:faithfulness'])
       const empty = createEmptyState()
       expect(scoredEvalKeys(empty)).toEqual([])
+    })
+  })
+
+  // (f) Eval versioning: a content-hash change bumps the version + extends
+  // history; a whitespace-only edit does not. Applies to BOTH judge and golden.
+  describe('eval versioning (content hash → version)', () => {
+    it('seeds a new eval at version 1 with a one-entry history', () => {
+      const e = upsertEvalVersion(undefined, {
+        key: 'judge:faithfulness',
+        label: 'Faithfulness judge',
+        criteriaOrGolden: 'Every claim must be grounded.',
+      })
+      expect(e.version).toBe(1)
+      expect(e.history).toEqual([
+        { version: 1, contentHash: evalContentHash('Every claim must be grounded.') },
+      ])
+    })
+
+    it('bumps the version and appends history when the JUDGE criteria changes', () => {
+      const v1 = upsertEvalVersion(undefined, {
+        key: 'judge:faithfulness',
+        label: 'Faithfulness judge',
+        criteriaOrGolden: 'Every claim must be grounded.',
+      })
+      const v2 = upsertEvalVersion(v1, {
+        key: 'judge:faithfulness',
+        label: 'Faithfulness judge',
+        criteriaOrGolden: 'Every claim must be grounded in the provided context.',
+      })
+      expect(v2.version).toBe(2)
+      expect(v2.history).toHaveLength(2)
+      expect(v2.history[0]).toEqual(v1.history[0]) // prior entry retained
+      expect(v2.history[1].version).toBe(2)
+      expect(v2.history[1].contentHash).toBe(
+        evalContentHash('Every claim must be grounded in the provided context.'),
+      )
+    })
+
+    it('bumps the version when the GOLDEN JSON set changes (the reference can be wrong too)', () => {
+      const set1 = JSON.stringify({ 'patient-a': { meds: ['Lisinopril 10mg'] } })
+      const set2 = JSON.stringify({ 'patient-a': { meds: ['Lisinopril 20mg'] } })
+      const v1 = upsertEvalVersion(undefined, {
+        key: 'golden',
+        label: 'Golden set',
+        criteriaOrGolden: set1,
+      })
+      const v2 = upsertEvalVersion(v1, { key: 'golden', label: 'Golden set', criteriaOrGolden: set2 })
+      expect(v1.version).toBe(1)
+      expect(v2.version).toBe(2)
+      expect(v2.history.map((h) => h.version)).toEqual([1, 2])
+    })
+
+    it('does NOT false-bump on a trivial whitespace-only edit (normalized hash)', () => {
+      const v1 = upsertEvalVersion(undefined, {
+        key: 'judge:faithfulness',
+        label: 'Faithfulness judge',
+        criteriaOrGolden: 'Every claim must be grounded.',
+      })
+      const reformatted = upsertEvalVersion(v1, {
+        key: 'judge:faithfulness',
+        label: 'Faithfulness judge',
+        criteriaOrGolden: '  Every   claim\n must be\tgrounded.  ',
+      })
+      expect(reformatted.version).toBe(1)
+      expect(reformatted.history).toHaveLength(1)
+      // The latest text still refreshes even though the version held.
+      expect(reformatted.criteriaOrGolden).toBe('  Every   claim\n must be\tgrounded.  ')
+    })
+
+    it('does not mutate the existing eval', () => {
+      const v1 = upsertEvalVersion(undefined, {
+        key: 'golden',
+        label: 'Golden set',
+        criteriaOrGolden: 'a',
+      })
+      const snapshot = structuredClone(v1)
+      upsertEvalVersion(v1, { key: 'golden', label: 'Golden set', criteriaOrGolden: 'b' })
+      expect(v1).toEqual(snapshot)
+    })
+
+    it('isRevised gates the v2+ "tune it like a prompt" copy', () => {
+      const v1 = upsertEvalVersion(undefined, { key: 'golden', label: 'g', criteriaOrGolden: 'a' })
+      expect(isRevised(v1)).toBe(false)
+      const v2 = upsertEvalVersion(v1, { key: 'golden', label: 'g', criteriaOrGolden: 'b' })
+      expect(isRevised(v2)).toBe(true)
+    })
+
+    it('a versioned eval + stamped row round-trips through the schema', () => {
+      const e = upsertEvalVersion(
+        upsertEvalVersion(undefined, { key: 'golden', label: 'g', criteriaOrGolden: 'a' }),
+        { key: 'golden', label: 'g', criteriaOrGolden: 'b' },
+      )
+      const state: NotebookState = {
+        ...createEmptyState(),
+        runs: [
+          {
+            id: 'run-1',
+            version: 1,
+            promptText: 'p',
+            promptHash: 'h',
+            createdAt: '2026-06-16T00:00:00.000Z',
+            outputs: {
+              'patient-a': {
+                text: 'out',
+                model: 'claude-opus-4-8',
+                contextMode: 'full',
+                sections: [],
+                status: 'ok',
+              },
+            },
+          },
+        ],
+        evals: [e],
+        scores: {
+          golden: {
+            'run-1': { frac: '1/1', per: [{ patientId: 'patient-a', pass: true, fails: [] }], evalVersion: e.version },
+          },
+        },
+      }
+      const reimported = importState(serializeState(state))
+      expect(reimported.scores.golden['run-1'].evalVersion).toBe(2)
+      expect(reimported.evals[0].version).toBe(2)
     })
   })
 

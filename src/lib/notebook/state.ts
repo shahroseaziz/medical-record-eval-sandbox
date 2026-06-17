@@ -13,6 +13,7 @@
 // This module is pure (plus thin, guarded localStorage wrappers); no UI.
 
 import { z } from 'zod'
+import { genPromptHash } from '@/lib/cases'
 
 /** localStorage namespace for the notebook. Bumped with the schema version. */
 export const STORAGE_KEY = 'mres.nb.v1'
@@ -107,6 +108,11 @@ const PerCaseScoreSchema = z.object({
 const ScoreRowSchema = z.object({
   frac: z.string(),
   per: z.array(PerCaseScoreSchema),
+  // The eval VERSION this row was graded under, stamped at scoring time. Rows are
+  // immutable once written, so a later version bump never rewrites this — that is
+  // how the (run, eval@version) association survives without a runId in history.
+  // Optional so pre-versioning exports still validate; new writes always stamp it.
+  evalVersion: z.number().int().positive().optional(),
 })
 
 /** scores[evalKey][runId] → ScoreRow. (run, eval, patient) is the load-bearing key. */
@@ -155,6 +161,83 @@ export function createEmptyState(meta?: Partial<NotebookMeta>): NotebookState {
     scores: {},
     meta: { modelIds: meta?.modelIds ?? [], appVersion: meta?.appVersion ?? '' },
   }
+}
+
+// ── Eval versioning (content hash → version) ─────────────────────────────────
+//
+// An eval's VERSION is a content-hash trail. Both judges (criteria text) and the
+// golden (its JSON set) are versioned — the reference can be wrong for the same
+// reason a judge can. The hash is normalized (FNV over collapsed whitespace, via
+// `genPromptHash`) so a trivial reformat does NOT false-bump the version.
+//
+// History is a version→contentHash ledger ONLY; it carries NO runId. The
+// (run, eval@version) association is preserved instead by stamping each ScoreRow
+// with the eval version at scoring time — rows are immutable on a later bump and
+// `scores` is already keyed by runId. There is no inter-version diffing in v3.
+
+/**
+ * The normalized content hash of an eval's criteria (judge) or golden JSON set
+ * (golden). Reuses `genPromptHash` so the notebook has one content-identity
+ * primitive and whitespace-only edits collapse to the same hash.
+ */
+export function evalContentHash(criteriaOrGolden: string): string {
+  return genPromptHash(criteriaOrGolden)
+}
+
+/** A minimal eval definition the versioning upsert consumes. */
+export interface EvalDef {
+  key: string
+  label: string
+  criteriaOrGolden: string
+}
+
+/**
+ * Upsert an eval definition with content-hash versioning. Returns the updated
+ * eval — never mutates `existing`.
+ *
+ *   • New eval        → version 1, history seeded with {1, hash}.
+ *   • Unchanged hash  → same version + history; only label/content text refresh
+ *                       (a whitespace-only edit lands here — no false bump).
+ *   • Changed hash    → version increments and {version, contentHash} is appended
+ *                       to history; prior entries are retained so a row graded
+ *                       under an older version still resolves to its exact content.
+ */
+export function upsertEvalVersion(
+  existing: NotebookEval | undefined,
+  def: EvalDef,
+): NotebookEval {
+  const contentHash = evalContentHash(def.criteriaOrGolden)
+  if (!existing) {
+    return {
+      key: def.key,
+      label: def.label,
+      version: 1,
+      criteriaOrGolden: def.criteriaOrGolden,
+      history: [{ version: 1, contentHash }],
+    }
+  }
+  const lastHash = existing.history[existing.history.length - 1]?.contentHash
+  if (lastHash === contentHash) {
+    return { ...existing, label: def.label, criteriaOrGolden: def.criteriaOrGolden }
+  }
+  const version = existing.version + 1
+  return {
+    ...existing,
+    label: def.label,
+    version,
+    criteriaOrGolden: def.criteriaOrGolden,
+    history: [...existing.history, { version, contentHash }],
+  }
+}
+
+/**
+ * Whether an eval has been revised at least once — i.e. its version is ≥ 2. The
+ * "a judge is a prompt — tune it like one" copy is GATED on this (it only earns
+ * its place once an eval has actually been revised). Pure predicate; the UI reads
+ * it, this module owns the rule.
+ */
+export function isRevised(evalDef: Pick<NotebookEval, 'version'>): boolean {
+  return evalDef.version >= 2
 }
 
 // ── Export / import (zod-gated I/O) ──────────────────────────────────────────
