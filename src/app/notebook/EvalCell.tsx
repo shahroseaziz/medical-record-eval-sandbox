@@ -1,11 +1,17 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { modelDisplayName } from '@/lib/models'
 import type { OutputCardResult } from './useNotebookRun'
 import { useNotebookJudge, type JudgeVerdict, type JudgeCase } from './useNotebookJudge'
 import type { NotebookPatient } from './types'
 import { gradeGolden, type GoldenGrade } from './goldenGrade'
+import {
+  computeJudgeVsGolden,
+  computeYouVsJudge,
+  type AgreeMark,
+} from './judgeAgreement'
+import type { PerCaseScore } from '@/lib/notebook/state'
 import { WORKED_CRITERIA } from './worked-example'
 import styles from './notebook.module.css'
 
@@ -133,10 +139,52 @@ interface JudgeResultsProps {
   order: string[]
   verdicts: Record<string, JudgeVerdict>
   patientsById: Map<string, NotebookPatient>
+  /** The do-you-agree marks the user has pressed on judge rows, by patient id. */
+  agree: Record<string, AgreeMark>
+  /** Toggle the agree mark on one judge verdict (re-pressing clears it). */
+  onToggleAgree: (patientId: string, mark: AgreeMark) => void
+  /**
+   * The golden grades from this run, if the user also scored a golden — the source
+   * for the judge-vs-golden overlap line. Empty when no golden has been scored.
+   */
+  goldenScores: Record<string, GoldenGrade> | null
 }
 
-function JudgeResults({ order, verdicts, patientsById }: JudgeResultsProps) {
+function JudgeResults({
+  order,
+  verdicts,
+  patientsById,
+  agree,
+  onToggleAgree,
+  goldenScores,
+}: JudgeResultsProps) {
   const settled = order.map((id) => verdicts[id]).filter((v): v is JudgeVerdict => Boolean(v))
+
+  // ── N4-shaped per[] arrays — the source the two derived lines read from ──────
+  // Building the judge/golden rows in the committed `PerCaseScore` shape (judge
+  // verdict on `state`, golden verdict on `pass`, the thumb on `agree`) keeps this
+  // a pure projection of the cube: the agreement signal can be lifted into `scores`
+  // later with no translation. The thumb is NEVER read into the pass count below.
+  const judgePer: PerCaseScore[] = settled.map((v) =>
+    v.status === 'done'
+      ? {
+          patientId: v.patientId,
+          state: v.pass ? 'pass' : 'fail',
+          fails: [],
+          reason: v.reason ?? undefined,
+          agree: agree[v.patientId],
+        }
+      : { patientId: v.patientId, errored: v.status === 'errored', fails: [] },
+  )
+  const goldenPer: PerCaseScore[] = goldenScores
+    ? Object.entries(goldenScores)
+        .filter(([, g]) => g.state === 'pass' || g.state === 'fail')
+        .map(([patientId, g]) => ({ patientId, pass: g.state === 'pass', fails: [] }))
+    : []
+
+  const youVsJudge = computeYouVsJudge(judgePer)
+  const judgeVsGolden = computeJudgeVsGolden(judgePer, goldenPer)
+
   if (settled.length === 0) return null
 
   // Scored = patients that actually received a verdict. Errored patients are
@@ -209,6 +257,32 @@ function JudgeResults({ order, verdicts, patientsById }: JudgeResultsProps) {
                     judged by {modelDisplayName(v.model)}
                   </span>
                 )}
+
+                {/* Do-you-agree thumbs — JUDGE ROWS ONLY. Writes `agree` ('a'|'m')
+                    onto the score entry; never folded into the pass count above. */}
+                <span className={styles.agreeWrap} data-testid="agree-thumbs">
+                  <span className={styles.agreeLabel}>do you agree?</span>
+                  <button
+                    type="button"
+                    className={`${styles.agreeBtn} ${agree[v.patientId] === 'a' ? styles.agreeYes : ''}`}
+                    data-testid="agree-yes"
+                    data-on={agree[v.patientId] === 'a' ? 'true' : 'false'}
+                    aria-pressed={agree[v.patientId] === 'a'}
+                    onClick={() => onToggleAgree(v.patientId, 'a')}
+                  >
+                    agree
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.agreeBtn} ${agree[v.patientId] === 'm' ? styles.agreeNo : ''}`}
+                    data-testid="agree-no"
+                    data-on={agree[v.patientId] === 'm' ? 'true' : 'false'}
+                    aria-pressed={agree[v.patientId] === 'm'}
+                    onClick={() => onToggleAgree(v.patientId, 'm')}
+                  >
+                    disagree
+                  </button>
+                </span>
               </div>
               <div className={styles.jrReason}>{v.reason}</div>
             </div>
@@ -225,6 +299,38 @@ function JudgeResults({ order, verdicts, patientsById }: JudgeResultsProps) {
           <span className={styles.ovNote}>
             {stampModel ? ` · judged by ${modelDisplayName(stampModel)}` : ''}
             {erroredN > 0 ? ` · ${erroredN} couldn't grade — excluded from the score` : ''}
+          </span>
+        </div>
+      )}
+
+      {/* judge-vs-golden — the overlap where a judge AND the golden both scored the
+          same patient. A plain client-side count: no metered call, no kappa. */}
+      {judgeVsGolden.overlap > 0 && (
+        <div className={styles.crossLine} data-testid="judge-vs-golden">
+          <div className={styles.clMain}>
+            The judge matched your golden answers on{' '}
+            <span className={styles.ovNum}>
+              {judgeVsGolden.matched} of {judgeVsGolden.overlap}
+            </span>{' '}
+            patient{judgeVsGolden.overlap === 1 ? '' : 's'}.
+          </div>
+          <div className={styles.clSub}>
+            A mismatch is a lead, not a verdict — sometimes the judge is right and your golden
+            answer is stale.
+          </div>
+        </div>
+      )}
+
+      {/* you: a/m — agreed among MARKED (of-marked denominator, never of-scored). */}
+      {youVsJudge.marked > 0 && (
+        <div className={styles.youVsJudge} data-testid="judge-you-vs">
+          <span className={styles.ovNum}>
+            you: {youVsJudge.agreed}/{youVsJudge.marked}
+          </span>
+          <span className={styles.ovNote}>
+            {' '}
+            agreed with the judge, of the {youVsJudge.marked} verdict
+            {youVsJudge.marked === 1 ? '' : 's'} you marked
           </span>
         </div>
       )}
@@ -253,7 +359,11 @@ export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: 
   // The plain-language judge criteria the user writes (judge mode). A judge is a
   // prompt — this box IS that prompt.
   const [criteria, setCriteria] = useState('')
-  const { verdicts, judging, runJudge } = useNotebookJudge()
+  const { verdicts, judging, runJudge, judgeRunId } = useNotebookJudge()
+  // Do-you-agree marks, by patient id ('a' = agreed, 'm' = marked-disagree). The
+  // SOLE source for the "you: a/m" line and the later disputed-cell indicator —
+  // held separately from the verdict so it is never folded into the pass count.
+  const [agree, setAgree] = useState<Record<string, AgreeMark>>({})
   // The scored snapshot — null until "Score" is pressed. Holding a snapshot (vs.
   // grading live on every keystroke) keeps the verdicts stable while the user
   // edits, and makes "Score" a discrete, observable, network-free action.
@@ -299,6 +409,23 @@ export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: 
     if (cases.length === 0) return
     void runJudge(cases, criteria, { byoKey })
   }, [criteria, order, results, runJudge, byoKey])
+
+  // A fresh judge run produces fresh verdicts, so prior agree marks no longer apply
+  // — clear them when the run id bumps (the first run goes 0 → 1, also clearing).
+  useEffect(() => {
+    setAgree({})
+  }, [judgeRunId])
+
+  // Toggle one thumb: re-pressing the active mark clears it, so a mis-click is
+  // undoable and "marked" reflects a deliberate opinion.
+  const onToggleAgree = useCallback((patientId: string, mark: AgreeMark) => {
+    setAgree((prev) => {
+      const next = { ...prev }
+      if (next[patientId] === mark) delete next[patientId]
+      else next[patientId] = mark
+      return next
+    })
+  }, [])
 
   // Before any run there is nothing to grade against — keep the section present
   // (the scaffolding) but quiet.
@@ -400,7 +527,14 @@ export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: 
           the number below is honest about what fully met your criteria.
         </p>
 
-        <JudgeResults order={order} verdicts={verdicts} patientsById={patientsById} />
+        <JudgeResults
+          order={order}
+          verdicts={verdicts}
+          patientsById={patientsById}
+          agree={agree}
+          onToggleAgree={onToggleAgree}
+          goldenScores={scores}
+        />
       </section>
     )
   }
@@ -410,14 +544,26 @@ export function EvalCell({ order, results, patientsById, onViewChart, byoKey }: 
     <section className={styles.cell} data-testid="section-eval" aria-label="Eval">
       <div className={styles.evalHead}>
         <span className={styles.cellLabel}>Eval · golden answers</span>
-        <button
-          type="button"
-          className={styles.btnPrimarySm}
-          data-testid="golden-score"
-          onClick={onScore}
-        >
-          Score
-        </button>
+        <div className={styles.eiActions}>
+          {/* Symmetric to the judge view's switch — lets a user who scored a golden
+              also run a judge, so the judge-vs-golden overlap line (N17) is reachable. */}
+          <button
+            type="button"
+            className={styles.btnGhostLink}
+            data-testid="golden-switch-judge"
+            onClick={() => setMode('judge')}
+          >
+            or use an LLM judge instead
+          </button>
+          <button
+            type="button"
+            className={styles.btnPrimarySm}
+            data-testid="golden-score"
+            onClick={onScore}
+          >
+            Score
+          </button>
+        </div>
       </div>
 
       <p className={styles.goldenNudge} data-testid="golden-nudge">

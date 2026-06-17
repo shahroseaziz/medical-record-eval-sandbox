@@ -276,6 +276,137 @@ describe('EvalCell — LLM judge (N10)', () => {
   })
 })
 
+describe('EvalCell — do-you-agree thumbs + derived lines (N17)', () => {
+  function stubScore(responses: Array<{ ok: boolean; status?: number; body: unknown }>) {
+    let i = 0
+    const fetchMock = vi.fn(async () => {
+      const r = responses[Math.min(i, responses.length - 1)]
+      i += 1
+      return { ok: r.ok, status: r.status ?? (r.ok ? 200 : 503), json: async () => r.body } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function runJudge(responses: Array<{ ok: boolean; status?: number; body: unknown }>) {
+    const fetchMock = stubScore(responses)
+    const user = userEvent.setup()
+    renderCell()
+    await user.click(screen.getByTestId('golden-invite-judge'))
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if the A1c is current.')
+    await user.click(screen.getByTestId('judge-run'))
+    await waitFor(() => expect(screen.getAllByTestId('judge-verdict')).toHaveLength(2))
+    return { user, fetchMock }
+  }
+
+  it('puts agree/disagree thumbs on judge rows only — golden rows carry none', async () => {
+    const { user } = await runJudge([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: false, reason: 'no' } },
+    ])
+    // Both judge rows carry the thumbs.
+    expect(screen.getAllByTestId('agree-thumbs')).toHaveLength(2)
+
+    // Switch to golden answers — those rows have NO thumbs.
+    await user.click(screen.getByTestId('judge-switch-golden'))
+    const editors = screen.getAllByTestId('golden-editor')
+    expect(editors).toHaveLength(2)
+    for (const ed of editors) {
+      expect(within(ed).queryByTestId('agree-thumbs')).toBeNull()
+    }
+  })
+
+  it('"you: a/m" uses the of-MARKED denominator, never of-scored', async () => {
+    const { user } = await runJudge([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: true, reason: 'ok' } },
+    ])
+    // Two scored verdicts; mark only ONE (agree on p1).
+    const rows = screen.getAllByTestId('judge-verdict')
+    await user.click(within(rows[0]).getByTestId('agree-yes'))
+    expect(within(rows[0]).getByTestId('agree-yes')).toHaveAttribute('data-on', 'true')
+
+    const line = screen.getByTestId('judge-you-vs')
+    // of-MARKED: 1 agreed of 1 marked …
+    expect(line).toHaveTextContent('you: 1/1')
+    // … and NOT the of-scored denominator of 2 (the known bug).
+    expect(line).not.toHaveTextContent('/2')
+  })
+
+  it('counts a disagree toward the marked denominator but not the agreed count', async () => {
+    const { user } = await runJudge([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: false, reason: 'no' } },
+    ])
+    const rows = screen.getAllByTestId('judge-verdict')
+    await user.click(within(rows[0]).getByTestId('agree-yes'))
+    await user.click(within(rows[1]).getByTestId('agree-no'))
+    expect(screen.getByTestId('judge-you-vs')).toHaveTextContent('you: 1/2')
+  })
+
+  it('never folds the thumbs into the judge pass count', async () => {
+    const { user } = await runJudge([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: true, reason: 'ok' } },
+    ])
+    // Disagree with BOTH passes — the verdict count must stay 2/2.
+    const rows = screen.getAllByTestId('judge-verdict')
+    await user.click(within(rows[0]).getByTestId('agree-no'))
+    await user.click(within(rows[1]).getByTestId('agree-no'))
+    expect(screen.getByTestId('judge-overall')).toHaveTextContent('2/2')
+  })
+
+  it('re-pressing a thumb clears the mark (the line drops)', async () => {
+    const { user } = await runJudge([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: true, reason: 'ok' } },
+    ])
+    const row = screen.getAllByTestId('judge-verdict')[0]
+    await user.click(within(row).getByTestId('agree-yes'))
+    expect(screen.getByTestId('judge-you-vs')).toHaveTextContent('you: 1/1')
+    await user.click(within(row).getByTestId('agree-yes'))
+    expect(screen.queryByTestId('judge-you-vs')).toBeNull()
+  })
+
+  it('computes "judge-vs-golden m of n" from the overlap, with lead-not-verdict copy and no extra calls', async () => {
+    const user = userEvent.setup()
+    renderCell()
+
+    // 1) Score a golden first: p1 matches the model (pass), p2 does not (fail).
+    await user.click(screen.getByTestId('golden-invite-add'))
+    const inputs = screen.getAllByTestId('golden-input')
+    await user.click(inputs[0])
+    await user.paste(JSON.stringify({ a1c_current: 6.7 }))
+    await user.click(inputs[1])
+    await user.paste(JSON.stringify({ a1c_current: 5.9 }))
+    await user.click(screen.getByTestId('golden-score'))
+
+    // 2) Switch to the judge and run it — both patients pass per the stub.
+    const fetchMock = stubScore([
+      { ok: true, body: { pass: true, reason: 'ok' } },
+      { ok: true, body: { pass: true, reason: 'ok' } },
+    ])
+    await user.click(screen.getByTestId('golden-switch-judge'))
+    await user.click(screen.getByTestId('judge-criteria'))
+    await user.paste('Pass if the A1c is current.')
+    await user.click(screen.getByTestId('judge-run'))
+    await waitFor(() => expect(screen.getAllByTestId('judge-verdict')).toHaveLength(2))
+
+    // Overlap = 2 (both scored by judge AND golden); match = 1 (p1 pass/pass; p2 fail/pass).
+    const line = screen.getByTestId('judge-vs-golden')
+    expect(line).toHaveTextContent('1 of 2')
+    expect(line).toHaveTextContent(/lead, not a verdict/i)
+
+    // The derived line is pure client-side: only the two judge calls fired, nothing more.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('EvalCell — ZERO metered calls during scoring (collateral guard)', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
