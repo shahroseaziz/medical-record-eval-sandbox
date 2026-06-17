@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotebookShell } from '../NotebookShell'
@@ -7,6 +7,20 @@ import { BYO_MODEL, GENERATION_MODEL, modelDisplayName } from '@/lib/models'
 describe('NotebookShell (SHA-156 N6)', () => {
   beforeEach(() => {
     window.sessionStorage.clear()
+    // The N8a prompt cell loads a patient roster on mount; stub it so the
+    // async effect resolves cleanly inside these (N6) shell tests.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ patients: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('renders the header: wordmark, BYO-key slot, and a model label', () => {
