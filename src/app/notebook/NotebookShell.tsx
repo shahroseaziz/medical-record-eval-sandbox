@@ -1,11 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BYO_MODEL, GENERATION_MODEL, modelDisplayName } from '@/lib/models'
 import { PromptCell } from './PromptCell'
 import { OutputCell } from './OutputCell'
-import { EvalCell } from './EvalCell'
+import { EvalCell, type ScoreReport } from './EvalCell'
+import { ScoreLine } from './ScoreLine'
 import { useNotebookRun } from './useNotebookRun'
+import { useNotebookCube } from './useNotebookCube'
 import type { NotebookPatient } from './types'
 import styles from './notebook.module.css'
 
@@ -55,7 +57,18 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   // The patient order captured at Run time, so output cards render in the order
   // they were submitted even as selection changes afterwards.
   const [runOrder, setRunOrder] = useState<string[]>([])
-  const { results, running, run } = useNotebookRun()
+  const { results, running, runId, run } = useNotebookRun()
+
+  // ── The N4 bench-state cube (N11) ──────────────────────────────────────────
+  // The single owner of a NotebookState. The score line is a PROJECTION of this
+  // object and Export is the WHOLE object — so the trail on screen and the file
+  // downloaded never diverge. Runs are snapshot here on completion; eval rows are
+  // lifted up from the EvalCell and stamped with the current run id.
+  const { state: cubeState, recordRun, recordScore } = useNotebookCube()
+  // The prompt text used for the in-flight run, captured at Run time so the cube
+  // records the prompt that produced the outputs (not a later edit).
+  const runPromptRef = useRef('')
+  const wasRunningRef = useRef(false)
 
   useEffect(() => {
     try {
@@ -134,12 +147,46 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
       .map((p) => ({ patientId: p.id, record: p.record }))
     if (cases.length === 0 || prompt.trim().length === 0) return
     setRunOrder(cases.map((c) => c.patientId))
+    // Capture the prompt that produced this run so the cube records it verbatim
+    // even if the textarea is edited before the next run.
+    runPromptRef.current = prompt
     setViewChartId(null)
     // The ACTIVE model id (imported, never a literal) is sent so the server records
     // and echoes back the model the user actually selected. The BYO key, if any, is
     // forwarded in-flight only (header) — never persisted by this call.
     void run(cases, prompt, { model: activeModel, byoKey: hasKey ? apiKey.trim() : undefined })
   }, [selected, patientsById, prompt, run, activeModel, hasKey, apiKey])
+
+  // Snapshot a finished run into the cube as its own run column. Fires on the
+  // running → idle edge so the cube captures the run's final outputs once.
+  useEffect(() => {
+    if (wasRunningRef.current && !running && runId > 0) {
+      recordRun({
+        runId: `run-${runId}`,
+        version: runId,
+        promptText: runPromptRef.current,
+        order: runOrder,
+        results,
+        model: activeModel,
+      })
+    }
+    wasRunningRef.current = running
+  }, [running, runId, runOrder, results, activeModel, recordRun])
+
+  // Receive a scored eval row from the EvalCell and write it into the CURRENT
+  // run's column. The score line projects the cube from here — it is never a
+  // separate structure the cell maintains.
+  const onScoreReport = useCallback(
+    (report: ScoreReport) => {
+      if (runId <= 0) return
+      recordScore(
+        `run-${runId}`,
+        { key: report.evalKey, label: report.label, criteriaOrGolden: report.criteriaOrGolden },
+        report.row,
+      )
+    },
+    [runId, recordScore],
+  )
 
   return (
     <div className={styles.app}>
@@ -317,14 +364,10 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             patientsById={patientsById}
             onViewChart={setViewChartId}
             byoKey={hasKey ? apiKey.trim() : undefined}
+            onScoreReport={onScoreReport}
           />
 
-          <section className={styles.cell} data-testid="section-score" aria-label="Score">
-            <span className={styles.cellLabel}>Score</span>
-            <p className={styles.cellPlaceholder}>
-              The score line for this run. Arrives in a later step.
-            </p>
-          </section>
+          <ScoreLine state={cubeState} />
 
           <div className={styles.nbEnd} aria-hidden="true" />
         </div>
