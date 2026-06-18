@@ -63,6 +63,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Permanent banned-UI-vocabulary gate (SHA-174 N19). The correctness-first
+      # redesign replaced eval jargon with plain language in the shipped product;
+      # this keeps it from regressing. No user-facing string in the React UI
+      # surface may contain: faithfulness / grounding / rubric / knob /
+      # calibration / atom. (Engine/identifier use in non-.tsx logic is allowed.)
+      - name: Banned UI vocabulary gate
+        run: npm run gate:ui-vocab
+
       - name: Typecheck
         run: npm run typecheck
 

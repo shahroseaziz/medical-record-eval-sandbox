@@ -3,8 +3,8 @@
  * /notebook/start in N6). The product surface is /notebook, reached from here via
  * two co-equal actions ("Open the sandbox" → /notebook, "Load the worked example"
  * → /notebook?example=1). The classic persona front door is retired from `/`, and
- * the workbench is UNLINKED from the front page — reachable only by direct URL.
- * Fully static: no DB, no model call, so we assert zero API traffic on cold load.
+ * the legacy workbench surface is GONE (deleted in N19) — `/` links only into the
+ * notebook. Fully static: no DB, no model call, so we assert zero API traffic on cold load.
  */
 import { test, expect } from '@playwright/test'
 
@@ -47,19 +47,5 @@ test.describe('landing: notebook front page at / (N18 cutover)', () => {
     const honesty = page.getByTestId('front-honesty')
     await expect(honesty).toContainText(/synthetic/i)
     await expect(honesty).toContainText(/no real PHI/i)
-  })
-
-  test('the workbench is reachable by direct URL but UNLINKED from the front page', async ({
-    page,
-  }) => {
-    // Not linked from `/` (asserted above: route-workbench has count 0), yet the
-    // surface itself still resolves directly — N18 unlinks, N19 deletes.
-    await page.goto('/workbench')
-    await expect(page.getByTestId('workbench-page')).toBeVisible()
-  })
-
-  test('the retired /workspace still lands on the bench (O12b)', async ({ page }) => {
-    await page.goto('/workspace')
-    expect(page.url()).toContain('/workbench')
   })
 })

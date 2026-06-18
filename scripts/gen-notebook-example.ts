@@ -41,7 +41,7 @@ import {
   recordFitsBudget,
   recordTokenEstimate,
   type RecordChunk,
-} from '../src/lib/workbench/composer.js'
+} from '../src/lib/record.js'
 import { buildPrompt } from '../src/lib/run/prompt.js'
 import { scoreCriteriaJudge } from '../src/lib/eval/scorers/criteria-judge.js'
 import { GENERATION_MODEL, JUDGE_MODEL } from '../src/lib/models.js'
