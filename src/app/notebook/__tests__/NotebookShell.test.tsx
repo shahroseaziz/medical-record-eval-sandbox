@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotebookShell } from '../NotebookShell'
 import { BYO_MODEL, GENERATION_MODEL, modelDisplayName } from '@/lib/models'
@@ -107,14 +107,16 @@ describe('NotebookShell (SHA-156 N6)', () => {
     expect(screen.queryByTestId('judge-cell')).not.toBeInTheDocument()
   })
 
-  it('the Explore button has a live stub target (not a dead control)', async () => {
+  it('the Explore button opens the REAL data-explorer drawer (not a stub)', async () => {
     const user = userEvent.setup()
     render(<NotebookShell patientCount={111} />)
+    // The N6 orphaned-component stub is gone; the real drawer is mounted off-canvas
+    // (a fixed slide-over) and hidden until the Explore button opens it.
     expect(screen.queryByTestId('data-explorer-stub')).not.toBeInTheDocument()
+    const drawer = screen.getByTestId('explorer-drawer')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+
     await user.click(screen.getByTestId('explore-button'))
-    const stub = screen.getByTestId('data-explorer-stub')
-    expect(stub).toBeInTheDocument()
-    await user.click(within(stub).getByTestId('data-explorer-stub-close'))
-    expect(screen.queryByTestId('data-explorer-stub')).not.toBeInTheDocument()
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
   })
 })
