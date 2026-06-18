@@ -7,8 +7,8 @@
  * This is a FIXED-POSITION overlay, NOT a flex sibling of the notebook — the
  * flex-sibling "collapse the notebook" layout was tried in design and rejected.
  * Because it is a fixed overlay, it never participates in the notebook's layout
- * and never forces it to remount; the host shell (ExplorerShell) pads the
- * notebook to make room when the drawer is open.
+ * and never forces it to remount; the host shell pads the notebook to make room
+ * when the drawer is open.
  *
  * Scope here is the shell + table only. A row click calls `onSelectPatient`,
  * the defined stub target the per-patient chart detail + raw-XML toggle (N7b)
@@ -62,6 +62,13 @@ export interface ExplorerDrawerProps {
   endpoint?: string
   /** Test seam forwarded to the chart detail's chunks fetch. */
   chunksEndpoint?: string
+  /**
+   * Open the drawer directly onto a specific patient's chart (e.g. an output
+   * card's "view chart" link). When this id matches a loaded patient while the
+   * drawer is open, that patient's chart detail is shown instead of the table.
+   * Null/absent → the drawer opens on the all-patients table.
+   */
+  focusPatientId?: string | null
 }
 
 function formatChartSize(bytes: number): string {
@@ -93,6 +100,7 @@ export function ExplorerDrawer({
   onSelectPatient,
   endpoint = '/api/patients?all=1',
   chunksEndpoint,
+  focusPatientId,
 }: ExplorerDrawerProps) {
   const [patients, setPatients] = useState<ExplorerPatient[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -153,6 +161,17 @@ export function ExplorerDrawer({
     if (!open) setSelected(null)
   }, [open])
 
+  // External focus (e.g. an output card's "view chart" link): when the host asks
+  // for a specific patient and the corpus is loaded, open that patient's chart
+  // detail rather than the table. Keyed on the request + the loaded list, so a
+  // manual "← All patients" back-out is not re-overridden (deps unchanged); every
+  // reachable view-chart click toggles `open` closed→open, which re-fires this.
+  useEffect(() => {
+    if (!open || !focusPatientId || !patients) return
+    const match = patients.find((p) => p.id === focusPatientId)
+    if (match) setSelected(match)
+  }, [open, focusPatientId, patients])
+
   const handleSelect = useCallback(
     (patient: ExplorerPatient) => {
       setSelected(patient)
@@ -177,6 +196,7 @@ export function ExplorerDrawer({
 
   return (
     <aside
+      id="explorer-drawer"
       className={`${styles.drawer} ${open ? styles.open : ''}`}
       aria-hidden={!open}
       aria-label="Explore the data"

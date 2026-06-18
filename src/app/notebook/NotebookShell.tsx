@@ -11,6 +11,7 @@ import { useNotebookRun } from './useNotebookRun'
 import { useNotebookCube } from './useNotebookCube'
 import { useWorkedExample } from './useWorkedExample'
 import { WorkedExampleSection } from './WorkedExampleReplay'
+import { ExplorerDrawer } from '@/components/explorer'
 import { judgeCostLine, countJudgeable } from './judgeCost'
 import { scoredEvalKeys } from '@/lib/notebook/state'
 import type { NotebookPatient } from './types'
@@ -63,18 +64,30 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   // mismatch); hydrated from sessionStorage on mount.
   const [apiKey, setApiKey] = useState('')
   const [keyOpen, setKeyOpen] = useState(false)
-  // The Explore button's stub target — the real drawer lands in N7a. Wired to
-  // real state here so the control is live, not dead.
-  const [exploreOpen, setExploreOpen] = useState(false)
+  // Explore-the-data drawer (N7a shell + sortable table, N7b chart detail +
+  // Parsed/Raw-XML toggle), wired here. A fixed-position slide-over: the Explore
+  // button opens it to the all-patients table; an output/eval card's "view chart"
+  // link opens it focused on that patient's chart. The notebook is NEVER unmounted
+  // — the drawer is a fixed overlay and the notebook is merely padded to make room
+  // (the N7a contract: in-progress prompt text survives an open/close cycle).
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [focusPatientId, setFocusPatientId] = useState<string | null>(null)
+
+  const openExplorer = useCallback(() => {
+    setFocusPatientId(null)
+    setDrawerOpen(true)
+  }, [])
+  const openChart = useCallback((patientId: string) => {
+    setFocusPatientId(patientId)
+    setDrawerOpen(true)
+  }, [])
+  const closeDrawer = useCallback(() => setDrawerOpen(false), [])
 
   // ── Prompt cell + run loop state (N8a) ─────────────────────────────────────
   const [prompt, setPrompt] = useState('')
   const [patients, setPatients] = useState<NotebookPatient[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [patientsError, setPatientsError] = useState<string | null>(null)
-  // The "view chart" link's stub target — the real chart drawer lands in N7b.
-  // Wired to live state so the link is a DEFINED stub, not a dead control.
-  const [viewChartId, setViewChartId] = useState<string | null>(null)
   // The patient order captured at Run time, so output cards render in the order
   // they were submitted even as selection changes afterwards.
   const [runOrder, setRunOrder] = useState<string[]>([])
@@ -222,7 +235,6 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
     // detect a later edit (stale-on-edit) by comparing against this snapshot.
     runPromptRef.current = prompt
     setRunPrompt(prompt)
-    setViewChartId(null)
     // The ACTIVE model id (imported, never a literal) is sent so the server records
     // and echoes back the model the user actually selected. The BYO key, if any, is
     // forwarded in-flight only (header) — never persisted by this call.
@@ -339,7 +351,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
         </div>
       </header>
 
-      <main className={styles.notebook}>
+      <main className={`${styles.notebook} ${drawerOpen ? styles.drawerOpen : ''}`}>
         <div className={styles.nbInner}>
           {/* ── Data strip ─────────────────────────────────────────────── */}
           <div className={styles.dataStrip} data-testid="data-strip">
@@ -360,39 +372,16 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
               </span>
               <button
                 type="button"
-                className={`${styles.exploreBtn} ${exploreOpen ? styles.exploreOn : ''}`}
+                className={`${styles.exploreBtn} ${drawerOpen ? styles.exploreOn : ''}`}
                 data-testid="explore-button"
-                aria-expanded={exploreOpen}
-                aria-controls="data-explorer-stub"
-                onClick={() => setExploreOpen(true)}
+                aria-expanded={drawerOpen}
+                aria-controls="explorer-drawer"
+                onClick={openExplorer}
               >
                 Explore the data
               </button>
             </div>
           </div>
-
-          {/* Stub target for the Explore button. The real slide-over drawer lands
-              in N7a; until then this keeps the control live (not dead) and marks
-              the mount point. */}
-          {exploreOpen && (
-            <aside
-              id="data-explorer-stub"
-              className={styles.exploreStub}
-              data-testid="data-explorer-stub"
-              role="region"
-              aria-label="Data explorer"
-            >
-              <span>Data explorer opens here — arriving in a later step.</span>
-              <button
-                type="button"
-                className={styles.exploreStubClose}
-                data-testid="data-explorer-stub-close"
-                onClick={() => setExploreOpen(false)}
-              >
-                Close
-              </button>
-            </aside>
-          )}
 
           {replayActive ? (
             <WorkedExampleSection
@@ -421,7 +410,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             order={runOrder}
             results={results}
             patientsById={patientsById}
-            onViewChart={setViewChartId}
+            onViewChart={openChart}
             stale={stale}
             onResume={(id) =>
               void resume(id, {
@@ -436,36 +425,11 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             onAddKey={() => setKeyOpen(true)}
           />
 
-          {/* Stub target for a card's "view chart" link. The real chart drawer
-              lands in N7b (parallel work); until then this keeps the link live
-              (a DEFINED stub, not a dead control) and marks the mount point. */}
-          {viewChartId && (
-            <aside
-              className={styles.exploreStub}
-              data-testid="view-chart-stub"
-              role="region"
-              aria-label="Patient chart"
-            >
-              <span>
-                Chart for {patientsById.get(viewChartId)?.name ?? viewChartId} opens here —
-                arriving in a later step.
-              </span>
-              <button
-                type="button"
-                className={styles.exploreStubClose}
-                data-testid="view-chart-stub-close"
-                onClick={() => setViewChartId(null)}
-              >
-                Close
-              </button>
-            </aside>
-          )}
-
           <EvalCell
             order={runOrder}
             results={results}
             patientsById={patientsById}
-            onViewChart={setViewChartId}
+            onViewChart={openChart}
             byoKey={hasKey ? apiKey.trim() : undefined}
             onScoreReport={onScoreReport}
             onModeChange={setPrimaryMode}
@@ -519,6 +483,13 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
           <div className={styles.nbEnd} aria-hidden="true" />
         </div>
       </main>
+
+      {/* The Explore-the-data drawer (N7a/N7b). A fixed-position slide-over: it
+          never participates in the notebook's layout and never remounts it — the
+          notebook above is merely padded (.drawerOpen) to make room. The Explore
+          button opens it to the table; a card's "view chart" opens it focused on
+          that patient's chart via focusPatientId. */}
+      <ExplorerDrawer open={drawerOpen} onClose={closeDrawer} focusPatientId={focusPatientId} />
     </div>
   )
 }
