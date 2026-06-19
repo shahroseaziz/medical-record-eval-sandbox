@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { act, renderHook } from '@testing-library/react'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useNotebookCube } from '../useNotebookCube'
-import type { ScoreRow } from '@/lib/notebook/state'
+import { STORAGE_KEY, type ScoreRow, type NotebookState } from '@/lib/notebook/state'
 
 // SHA-167 N14 collateral — removing a judge cell must clean ITS scores from the
 // cube (and its eval definition), leaving the singular golden and other judges
@@ -83,5 +83,63 @@ describe('useNotebookCube — eval versioning', () => {
     expect(def?.version).toBe(1)
     expect(def?.history).toHaveLength(1)
     expect(result.current.state.scores.golden['run-2'].evalVersion).toBe(1)
+  })
+})
+
+// C6 / S35 — persistence. The cube auto-saves to localStorage and a fresh mount
+// rehydrates it (reload survival); replaceState is the all-or-nothing import swap.
+describe('useNotebookCube — persistence (C6/S35)', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('saves the cube to localStorage and rehydrates on a fresh mount', async () => {
+    const first = renderHook(() => useNotebookCube())
+    act(() => {
+      first.result.current.recordScore(
+        'run-1',
+        { key: 'golden', label: 'Golden set', criteriaOrGolden: '{}' },
+        ROW,
+      )
+    })
+    // The change is persisted under the notebook namespace…
+    await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy())
+    first.unmount()
+
+    // …and a brand-new mount loads it back (the mount effect hydrates from storage).
+    const second = renderHook(() => useNotebookCube())
+    await waitFor(() =>
+      expect(Object.keys(second.result.current.state.scores)).toEqual(['golden']),
+    )
+  })
+
+  it('does not persist the empty pre-hydration state over a stored session', async () => {
+    // Seed a stored session, then mount fresh: the first effect run must LOAD, not
+    // overwrite with the initial empty cube.
+    const seed = renderHook(() => useNotebookCube())
+    act(() => {
+      seed.result.current.recordScore(
+        'run-1',
+        { key: 'judge:j1', label: 'LLM judge', criteriaOrGolden: 'c' },
+        ROW,
+      )
+    })
+    await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy())
+    seed.unmount()
+
+    const remount = renderHook(() => useNotebookCube())
+    await waitFor(() =>
+      expect(Object.keys(remount.result.current.state.scores)).toEqual(['judge:j1']),
+    )
+  })
+
+  it('replaceState swaps the whole cube (import path)', () => {
+    const { result } = renderHook(() => useNotebookCube())
+    const imported: NotebookState = {
+      ...result.current.state,
+      scores: { golden: { 'run-1': ROW } },
+    }
+    act(() => {
+      result.current.replaceState(imported)
+    })
+    expect(Object.keys(result.current.state.scores)).toEqual(['golden'])
   })
 })
