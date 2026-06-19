@@ -324,3 +324,50 @@ describe('summary v3 fields', () => {
     expect(parseCcda(xml).summary.age).toBeNull();
   });
 });
+
+// Results lab VALUES reach the grounding. Synthea writes numeric results into coded
+// <entry><observation> PQ values, not the <text> order list; the parser now renders
+// them into the results chunk so a prompt can extract the actual lab value.
+describe('results: numeric lab values surfaced from <entry> observations', () => {
+  const CCDA_WITH_LAB = `<?xml version="1.0"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <recordTarget><patientRole><id root="r" extension="lab-pt"/>
+    <patient><name><given>T</given><family>P</family></name>
+      <administrativeGenderCode code="F"/><birthTime value="19900101"/></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Results</title>
+      <text><table><tbody><tr><td>Glucose</td></tr></tbody></table></text>
+      <entry><organizer><component><observation>
+        <code code="2339-0" displayName="Glucose [Mass/volume] in Blood"/>
+        <effectiveTime value="20240630120000"/>
+        <value xsi:type="PQ" value="105.4231" unit="mg/dL"/>
+      </observation></component>
+      <component><observation>
+        <code code="2947-0" displayName="Sodium [Moles/volume] in Blood"/>
+        <effectiveTime value="20240630120000"/>
+        <value xsi:type="PQ" value="139.0" unit="mmol/L"/>
+      </observation></component></organizer></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>`;
+
+  it('renders "Name: value unit (date)" lines into the results chunk', () => {
+    const text = parseCcda(CCDA_WITH_LAB)
+      .chunks.filter((c) => c.section === 'results')
+      .map((c) => c.text)
+      .join('\n');
+    expect(text).toContain('Glucose [Mass/volume] in Blood: 105.4 mg/dL (Jun 30, 2024)');
+    expect(text).toContain('Sodium [Moles/volume] in Blood: 139 mmol/L (Jun 30, 2024)');
+  });
+
+  it('rounds excessive Synthea precision (raw value never leaks)', () => {
+    const text = parseCcda(CCDA_WITH_LAB)
+      .chunks.filter((c) => c.section === 'results')
+      .map((c) => c.text)
+      .join('\n');
+    expect(text).not.toContain('105.4231');
+  });
+});

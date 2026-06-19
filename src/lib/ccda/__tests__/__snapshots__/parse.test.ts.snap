@@ -12,4 +12,4 @@ exports[`fixture: Agustin437 (6 MB gate) > snapshot: section list (sorted) > agu
 ]
 `;
 
-exports[`fixture: Agustin437 (6 MB gate) > snapshot: total chunk count > agustin-chunk-count 1`] = `33`;
+exports[`fixture: Agustin437 (6 MB gate) > snapshot: total chunk count > agustin-chunk-count 1`] = `59`;

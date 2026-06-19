@@ -2,7 +2,8 @@ import { XMLParser } from 'fast-xml-parser';
 import type { Chunk, Demographics, ParseResult, PatientSummary, SectionResult } from './types';
 
 export type { Chunk, Demographics, ParseResult, PatientSummary, SectionResult };
-export { formatCcdaDate } from './format-date';
+import { formatCcdaDate } from './format-date';
+export { formatCcdaDate };
 
 /** LOINC code → section name for the 7 coded C-CDA sections */
 const LOINC_TO_SECTION: Record<string, string> = {
@@ -108,6 +109,66 @@ function chunkSection(
   return chunks.length > 0
     ? chunks
     : [{ patientId, section, ord: 0, text: fullText, sourceXml }];
+}
+
+/** Round a Synthea PQ value to at most 1 decimal, dropping a trailing ".0". */
+function roundValue(raw: string): string {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return String(Math.round(n * 10) / 10);
+}
+
+/**
+ * Render the lab RESULT VALUES from a results <section> XML substring.
+ *
+ * Synthea writes the numeric results into coded <entry><observation> elements (a
+ * PQ <value value unit>), NOT into the section's <text> narrative — which is only
+ * the order list (test names + dates, no values). The narrative chunker therefore
+ * drops every lab value, so a prompt asking for "the glucose" or "abnormal labs"
+ * sees nothing. This surfaces each numeric observation as a plain
+ * "Name: value unit (date)" line so the values reach the model's grounding (and
+ * the explorer's "Labs" view). Only PQ (numeric) observations are rendered; coded
+ * / string results are deferred to a later pass.
+ */
+function renderResultValues(sectionXml: string): string {
+  const lines: string[] = [];
+  for (const m of sectionXml.matchAll(/<observation\b[\s\S]*?<\/observation>/g)) {
+    const block = m[0];
+    const pq = /<value\b[^>]*\bxsi:type="PQ"[^>]*\bvalue="([^"]*)"[^>]*\bunit="([^"]*)"/.exec(block);
+    if (!pq) continue;
+    const name = /\bdisplayName="([^"]*)"/.exec(block)?.[1];
+    if (!name) continue;
+    const rawDate =
+      /<effectiveTime\b[^>]*\bvalue="([^"]*)"/.exec(block)?.[1] ??
+      /<effectiveTime\b[\s\S]*?<low\b[^>]*\bvalue="([^"]*)"/.exec(block)?.[1];
+    const date = rawDate ? formatCcdaDate(rawDate) : '';
+    const unit = pq[2] && pq[2] !== '1' && pq[2] !== '{score}' ? ` ${pq[2]}` : '';
+    lines.push(`${decodeHtmlEntities(name)}: ${roundValue(pq[1])}${unit}${date ? ` (${date})` : ''}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Chunk already-plain text by lines, packing each chunk up to APPROX_MAX_CHARS.
+ * Used for the rendered results values (which are line-structured, not HTML), so
+ * the line breaks survive instead of being collapsed by the HTML stripper.
+ */
+function chunkPlain(patientId: string, section: string, text: string, sourceXml: string): Chunk[] {
+  if (text.length <= APPROX_MAX_CHARS) {
+    return [{ patientId, section, ord: 0, text, sourceXml }];
+  }
+  const chunks: Chunk[] = [];
+  let current = '';
+  let ord = 0;
+  for (const line of text.split('\n')) {
+    if (current.length > 0 && current.length + line.length + 1 > APPROX_MAX_CHARS) {
+      chunks.push({ patientId, section, ord: ord++, text: current, sourceXml });
+      current = '';
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  if (current) chunks.push({ patientId, section, ord: ord++, text: current, sourceXml });
+  return chunks.length > 0 ? chunks : [{ patientId, section, ord: 0, text, sourceXml }];
 }
 
 function toStr(val: unknown): string {
@@ -269,7 +330,20 @@ export function parseCcda(xml: string, asOf: Date = new Date()): ParseResult {
     if (sectionName === 'medications') medCount = countEntries(sectionXml);
 
     sections.push({ section: sectionName, text: narrativeText });
-    chunks.push(...chunkSection(patientId, sectionName, rawText, sectionXml));
+    // The results (labs) narrative is an ORDER list; the numeric results live in
+    // coded <entry><observation> PQ values the narrative chunker would drop. Surface
+    // those values into the chunk text so lab values reach the model's grounding and
+    // the explorer's "Labs" view. Fall back to the narrative if no PQ value is found.
+    if (sectionName === 'results') {
+      const values = renderResultValues(sectionXml);
+      chunks.push(
+        ...(values
+          ? chunkPlain(patientId, sectionName, values, sectionXml)
+          : chunkSection(patientId, sectionName, rawText, sectionXml)),
+      );
+    } else {
+      chunks.push(...chunkSection(patientId, sectionName, rawText, sectionXml));
+    }
   }
 
   const summary: PatientSummary = {
