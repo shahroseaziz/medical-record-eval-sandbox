@@ -1,9 +1,11 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { genPromptHash } from '@/lib/cases'
 import {
   createEmptyState,
+  loadState,
+  saveState,
   upsertEvalVersion,
   type NotebookRun,
   type NotebookState,
@@ -95,6 +97,28 @@ export function useNotebookCube() {
     createEmptyState({ appVersion: APP_VERSION }),
   )
 
+  // C6 / S35 — persistence (localStorage `mres.nb.v1`). Initialised empty for a
+  // deterministic first render (no SSR/CSR mismatch), then hydrated on mount and
+  // saved on every subsequent change. The first effect run LOADS and returns
+  // without saving, so the pre-hydration empty never clobbers a stored session;
+  // every run after that persists the cube. loadState rejects a corrupt/foreign
+  // blob (via the import gate) rather than partially loading.
+  const hydratedRef = useRef(false)
+  useEffect(() => {
+    if (!hydratedRef.current) {
+      hydratedRef.current = true
+      const stored = loadState()
+      if (stored) setState(stored)
+      return
+    }
+    saveState(state)
+  }, [state])
+
+  // Replace the whole cube — the JSON import path. The caller validates the payload
+  // against the N4 schema (safeImportState) before handing in a state, so this is
+  // an all-or-nothing swap, never a partial load.
+  const replaceState = useCallback((next: NotebookState) => setState(next), [])
+
   const recordRun = useCallback((input: RecordRunInput) => {
     const outputs = buildRunOutputs(input)
     if (Object.keys(outputs).length === 0) return
@@ -155,5 +179,5 @@ export function useNotebookCube() {
     })
   }, [])
 
-  return { state, recordRun, recordScore, removeScore }
+  return { state, recordRun, recordScore, removeScore, replaceState }
 }

@@ -1,6 +1,4 @@
 import { test, expect, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 /*
  * Explorer spine (N7a/N7b wire-in) — the END-TO-END regression journey for the
@@ -15,12 +13,21 @@ import { join } from 'node:path'
  * actual route, so a silent un-wiring can never ship green again.
  *
  * No DB / keys needed: every /api/* route the journey touches is mocked with
- * realistic shapes (the run stream reuses the shared fixture). Patient ids are kept
- * consistent across /api/patients/sample, /api/patients?all=1, and the chunks route
- * so the output-card "view chart" → drawer-focus handoff resolves to one patient.
+ * realistic shapes. Patient ids are kept consistent across /api/patients/sample,
+ * /api/patients?all=1, and the chunks route so the output-card "view chart" →
+ * drawer-focus handoff resolves to one patient.
  */
 
-const FIXTURE_STREAM = readFileSync(join(__dirname, 'fixtures/run-stream.txt'), 'utf-8')
+// A minimal Vercel-AI data stream for /api/run — self-contained (the shared
+// workbench fixture was removed in N19's deletion cut). Text deltas + a finish
+// frame make the card go `done` (so "view chart" appears); the trace frame stamps
+// the producing model id.
+const RUN_STREAM = [
+  '0:"Active problems: Type 2 diabetes mellitus."',
+  'd:{"finishReason":"stop","usage":{"promptTokens":42,"completionTokens":7}}',
+  '2:[{"type":"trace","trace":{"generationModel":"claude-haiku-4-5-20251001"}}]',
+  '',
+].join('\n')
 
 // The notebook roster (/api/patients/sample) — one pre-selected patient is enough
 // to author a prompt and Run. `summary` carries the chip framing fields.
@@ -81,7 +88,7 @@ async function mockApis(page: Page) {
       return route.fulfill({
         status: 200,
         contentType: 'text/plain; charset=utf-8',
-        body: FIXTURE_STREAM,
+        body: RUN_STREAM,
       })
     }
     // Any other API call (e.g. /api/score) is not part of this journey.
