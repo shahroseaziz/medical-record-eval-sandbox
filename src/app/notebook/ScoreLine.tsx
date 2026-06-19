@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState, type ChangeEvent } from 'react'
 import {
   projectEvalTrail,
   safeImportState,
@@ -99,10 +99,63 @@ function downloadExport(json: string): void {
   URL.revokeObjectURL(url)
 }
 
-export function ScoreLine({ state }: { state: NotebookState }) {
+export function ScoreLine({
+  state,
+  onImport,
+}: {
+  state: NotebookState
+  /** Replace the whole cube from an imported JSON export (C6). Omitted → no Import control. */
+  onImport?: (next: NotebookState) => void
+}) {
   // The "all runs" expander only matters in the grid; declared up front so the
   // hook order is stable across the empty / simple / grid branches below.
   const [expandRuns, setExpandRuns] = useState(false)
+
+  // C6 import — the symmetric partner of Export. The file is validated through the
+  // SAME N4 gate (`safeImportState`); an invalid payload surfaces an error and the
+  // current cube is left untouched (never a partial load).
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const onImportFile = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = '' // let the same filename be re-picked later
+      if (!file || !onImport) return
+      const result = safeImportState(await file.text())
+      if (result.ok) {
+        onImport(result.state)
+        setImportError(null)
+      } else {
+        setImportError(result.error)
+      }
+    },
+    [onImport],
+  )
+  const importControl = onImport ? (
+    <>
+      <button
+        type="button"
+        className={styles.btnGhostLink}
+        data-testid="score-import"
+        onClick={() => fileRef.current?.click()}
+      >
+        ↑ Import
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={onImportFile}
+        data-testid="score-import-input"
+        hidden
+      />
+    </>
+  ) : null
+  const importErrorLine = importError ? (
+    <p className={styles.importError} role="alert" data-testid="score-import-error">
+      Import rejected — {importError}
+    </p>
+  ) : null
 
   const onExport = useCallback(() => {
     // Export is the FULL cube + meta — serialize the whole NotebookState, never
@@ -125,10 +178,14 @@ export function ScoreLine({ state }: { state: NotebookState }) {
   if (evalKeys.length === 0) {
     return (
       <section className={styles.cell} data-testid="section-score" aria-label="Score">
-        <span className={styles.cellLabel}>Score</span>
+        <div className={styles.scoreHead}>
+          <span className={styles.cellLabel}>Score</span>
+          {importControl}
+        </div>
         <p className={styles.cellPlaceholder}>
           Score an eval above and the run-over-run trail shows up here.
         </p>
+        {importErrorLine}
       </section>
     )
   }
@@ -142,14 +199,17 @@ export function ScoreLine({ state }: { state: NotebookState }) {
     <section className={styles.cell} data-testid="section-score" aria-label="Score">
       <div className={styles.scoreHead}>
         <span className={styles.cellLabel}>Score</span>
-        <button
-          type="button"
-          className={styles.btnGhostLink}
-          data-testid="score-export"
-          onClick={onExport}
-        >
-          ↓ Export
-        </button>
+        <div className={styles.scoreActions}>
+          <button
+            type="button"
+            className={styles.btnGhostLink}
+            data-testid="score-export"
+            onClick={onExport}
+          >
+            ↓ Export
+          </button>
+          {importControl}
+        </div>
       </div>
 
       {isSimple ? (
@@ -202,6 +262,13 @@ export function ScoreLine({ state }: { state: NotebookState }) {
           setExpandRuns={setExpandRuns}
         />
       )}
+
+      {/* §5 honest small-n caveat — the on-screen score is a spot check, not a
+          population claim. */}
+      <p className={styles.scoreCaveat} data-testid="score-caveat">
+        A handful of patients is a spot check — real evals run on hundreds.
+      </p>
+      {importErrorLine}
     </section>
   )
 }

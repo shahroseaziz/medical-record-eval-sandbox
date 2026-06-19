@@ -101,7 +101,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
   // object and Export is the WHOLE object — so the trail on screen and the file
   // downloaded never diverge. Runs are snapshot here on completion; eval rows are
   // lifted up from the EvalCell and stamped with the current run id.
-  const { state: cubeState, recordRun, recordScore, removeScore } = useNotebookCube()
+  const { state: cubeState, recordRun, recordScore, removeScore, replaceState } = useNotebookCube()
 
   // ── Multi-judge: "+ Add another eval" (N14) ────────────────────────────────
   // The golden set is SINGULAR — only judges multiply. Each added judge is its own
@@ -476,7 +476,7 @@ export function NotebookShell({ patientCount }: { patientCount: number | null })
             </div>
           )}
 
-          <ScoreLine state={cubeState} />
+          <ScoreLine state={cubeState} onImport={replaceState} />
           </>
           )}
 
