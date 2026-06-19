@@ -1362,6 +1362,26 @@
   gap: var(--space-3);
 }
 
+.scoreActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* §5 small-n honesty caveat under the score trail/grid. */
+.scoreCaveat {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+/* C6 import-rejected message (invalid/foreign JSON payload). */
+.importError {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--red-700);
+}
+
 .scoreLines {
   display: flex;
   flex-direction: column;
