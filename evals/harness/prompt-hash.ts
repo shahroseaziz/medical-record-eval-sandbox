@@ -61,7 +61,7 @@ export const EXPECTED_JUDGE_PROMPT_HASHES: Record<string, string> = {
   verdict: '4b0f2dc2ed4b4a0eb344d5055be9b5d7c371e06351d9b84a9db676547f132060',
   reference: '046c3297de9aad1a23d0c7b40b9553320c1a2ab1537e0139b828fda761c51310',
   criteria: '1eb68119e29104b29b08981db1f45ecd46dfe6d580d5400ea9f6e5100eca9404',
-  workedCriteria: '658079fb5e2bbe605ac329fe4ba9a7e413eed7029123523de6b01926663b0c3a',
+  workedCriteria: 'fe6b8062782b3ec2debf37b161658faf2351fe1ea8ef888c4eab98fcb07531b5',
 }
 
 /** Returns a violation string per drifted template; empty = parity holds. */

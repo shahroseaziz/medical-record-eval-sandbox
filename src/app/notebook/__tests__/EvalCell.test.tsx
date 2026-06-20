@@ -204,7 +204,7 @@ describe('EvalCell — LLM judge (N10)', () => {
   it('shows a criteria box with the worked-example placeholder', async () => {
     await openJudge()
     const box = screen.getByTestId('judge-criteria')
-    expect(box).toHaveAttribute('placeholder', expect.stringContaining('Pass if a1c_current'))
+    expect(box).toHaveAttribute('placeholder', expect.stringContaining('Pass if the summary'))
   })
 
   it('ships the DECISION D1 binary copy — no "partial" verdict state', async () => {

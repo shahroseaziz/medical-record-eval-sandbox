@@ -39,6 +39,40 @@ export interface GoldenGrade {
 }
 
 /**
+ * §5 "name the failure" — classify a failing golden field as a FORMATTING failure
+ * (the answer is semantically right but represented differently — fix it with
+ * output instructions) or a CONTENT failure (the model got the value wrong). Pure,
+ * deterministic, display-only; it never changes the pass/fail verdict.
+ *
+ *   • formatting — expected & got are both emptiness representations (null/[]/—/""),
+ *     or numerically equal but textually different (7 vs 7.0). The clinical content
+ *     matches; only the shape differs.
+ *   • content    — the values genuinely differ.
+ */
+export type FailureKind = 'formatting' | 'content'
+
+const EMPTY_REPRS = new Set(['', 'null', '[]', '{}', '—'])
+
+export function classifyFailure(diff: Pick<GoldenFieldDiff, 'expected' | 'got'>): FailureKind {
+  const e = diff.expected.trim()
+  const g = diff.got.trim()
+  if (EMPTY_REPRS.has(e) && EMPTY_REPRS.has(g)) return 'formatting'
+  const en = Number(e)
+  const gn = Number(g)
+  if (e !== '' && g !== '' && Number.isFinite(en) && Number.isFinite(gn) && en === gn) {
+    return 'formatting'
+  }
+  return 'content'
+}
+
+/** The one-line, plain-language label for a failure kind (no banned vocab). */
+export function failureLabel(kind: FailureKind): string {
+  return kind === 'formatting'
+    ? 'formatting — fix with output instructions'
+    : 'content — the model got it wrong'
+}
+
+/**
  * Tolerantly parse a JSON object out of free text. Returns null when the text is
  * not a JSON object. Handles a Markdown ```json fence and trailing prose by
  * falling back to the first `{` … last `}` slice.
