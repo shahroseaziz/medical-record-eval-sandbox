@@ -136,14 +136,25 @@ export function parseDataStream(body: string): Record<string, unknown>[] {
 }
 
 /**
+ * True for an `AbortSignal.timeout()` abort — a transient prod-latency signal
+ * (cold start, slow model call), NOT model/scoring drift. SHA-43: callers treat
+ * a timed-out canary case as inconclusive rather than red.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+}
+
+/**
  * POST /api/run and return the parsed trace + raw body.
- * Returns { error } on network failure or missing trace event.
+ * Returns { error } on network failure or missing trace event; `timeout: true`
+ * flags a transient request timeout (fetch or body read) so the caller can treat
+ * it as inconclusive instead of drift.
  */
 async function runOne(
   prodUrl: string,
   body: Record<string, unknown>,
   byoKey: string | undefined
-): Promise<{ trace: Record<string, unknown>; events: Record<string, unknown>[]; rawBody: string } | { error: string }> {
+): Promise<{ trace: Record<string, unknown>; events: Record<string, unknown>[]; rawBody: string } | { error: string; timeout?: boolean }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (byoKey) headers['x-byo-api-key'] = byoKey
 
@@ -156,10 +167,18 @@ async function runOne(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   } catch (err) {
-    return { error: `network error: ${err instanceof Error ? err.message : String(err)}` }
+    return { error: `network error: ${err instanceof Error ? err.message : String(err)}`, timeout: isTimeoutError(err) }
   }
 
-  const rawBody = await resp.text()
+  // The body read shares the request's abort signal, so a stream that stalls past
+  // the timeout throws HERE — previously uncaught, which escaped to main() and
+  // red-flagged the whole Health Check on a single slow prod call (SHA-43).
+  let rawBody: string
+  try {
+    rawBody = await resp.text()
+  } catch (err) {
+    return { error: `body read error: ${err instanceof Error ? err.message : String(err)}`, timeout: isTimeoutError(err) }
+  }
 
   if (!resp.ok) {
     return { error: `HTTP ${resp.status}: ${rawBody.slice(0, 300)}` }
@@ -332,6 +351,11 @@ async function liveRunCheck(prodUrl: string): Promise<HealthCheckAlert[]> {
 
 async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheckAlert[]> {
   const alerts: HealthCheckAlert[] = []
+  // SHA-43: a transient prod timeout on a case is inconclusive, not drift. Track
+  // attempts vs timeouts so a single slow call is skipped — but a TOTAL outage
+  // (every case timed out) still reds, so a dead endpoint isn't silently green.
+  let attempts = 0
+  let timeouts = 0
 
   let baseline: BaselineData
   let seedCases: SeedCase[]
@@ -374,9 +398,15 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
       requestBody.record = getPatientRecord(sc.patientId)
     }
 
+    attempts++
     const result = await runOne(prodUrl, requestBody, byoKey)
 
     if ('error' in result) {
+      if (result.timeout) {
+        timeouts++
+        log(`[drift] ${sc.id} INCONCLUSIVE — transient prod timeout, not counted as drift: ${result.error}`)
+        continue
+      }
       alerts.push({ check: 'drift-canary', message: `Case ${sc.id} run failed: ${result.error}` })
       continue
     }
@@ -501,6 +531,17 @@ async function driftCanary(prodUrl: string, byoKey: string): Promise<HealthCheck
         ok(`${sc.id}: section-hit=1 ✓`)
       }
     }
+  }
+
+  // SHA-43: transient timeouts are inconclusive, not drift — UNLESS every attempted
+  // case timed out, which is a real outage (dead/saturated endpoint) and must red.
+  if (attempts > 0 && timeouts === attempts) {
+    alerts.push({
+      check: 'drift-canary',
+      message: `All ${attempts} canary cases timed out — prod endpoint unreachable or saturated (not a transient single-case timeout).`,
+    })
+  } else if (timeouts > 0) {
+    log(`[drift] ${timeouts}/${attempts} case(s) inconclusive (transient timeout) — not treated as drift.`)
   }
 
   return alerts
