@@ -23,7 +23,7 @@ const JUDGE_EVAL_KEY = 'judge:default'
  * denominator. A stale entry (its output predates the current prompt) is marked
  * `errored: true` — the SAME exclusion the judge already uses for un-gradable
  * patients (see JudgeResults) — so a stale output is never counted pass OR fail.
- * The cube denominator (`per.filter(p => p.pass !== undefined)`) drops it.
+ * The cube denominator (`per.filter(p => p.state !== undefined)`) drops it.
  *
  * Pure + exported so the stale-exclusion is unit-testable on its own.
  */
@@ -41,7 +41,7 @@ export function buildGoldenPerCase(
     const graded = g != null && (g.state === 'pass' || g.state === 'fail')
     return {
       patientId: id,
-      ...(graded ? { pass: g!.state === 'pass' } : { errored: true }),
+      ...(graded ? { state: g!.state } : { errored: true }),
       fails: g ? g.fails.map((f) => f.field) : [],
       ...(g?.error ? { reason: g.error } : {}),
     }
@@ -210,10 +210,11 @@ export function JudgeResults({
   const settled = order.map((id) => verdicts[id]).filter((v): v is JudgeVerdict => Boolean(v))
 
   // ── N4-shaped per[] arrays — the source the two derived lines read from ──────
-  // Building the judge/golden rows in the committed `PerCaseScore` shape (judge
-  // verdict on `state`, golden verdict on `pass`, the thumb on `agree`) keeps this
-  // a pure projection of the cube: the agreement signal can be lifted into `scores`
-  // later with no translation. The thumb is NEVER read into the pass count below.
+  // Building the judge/golden rows in the committed `PerCaseScore` shape (both the
+  // judge and golden verdict on the unified `state` field, the thumb on `agree`)
+  // keeps this a pure projection of the cube: the agreement signal can be lifted
+  // into `scores` later with no translation. The thumb is NEVER read into the pass
+  // count below.
   const judgePer: PerCaseScore[] = settled.map((v) =>
     v.status === 'done'
       ? {
@@ -228,7 +229,7 @@ export function JudgeResults({
   const goldenPer: PerCaseScore[] = goldenScores
     ? Object.entries(goldenScores)
         .filter(([, g]) => g.state === 'pass' || g.state === 'fail')
-        .map(([patientId, g]) => ({ patientId, pass: g.state === 'pass', fails: [] }))
+        .map(([patientId, g]) => ({ patientId, state: g.state, fails: [] }))
     : []
 
   const youVsJudge = computeYouVsJudge(judgePer)
@@ -479,8 +480,8 @@ export function EvalCell({
       // entry is excluded; the same helper drops any subset of stale ids.
       const staleSet = stale ? new Set(order) : new Set<string>()
       const per = buildGoldenPerCase(order, next, staleSet)
-      const gradedTotal = per.filter((p) => p.pass !== undefined).length
-      const passN = per.filter((p) => p.pass === true).length
+      const gradedTotal = per.filter((p) => p.state !== undefined).length
+      const passN = per.filter((p) => p.state === 'pass').length
       onScoreReport({
         evalKey: 'golden',
         label: 'Golden set',

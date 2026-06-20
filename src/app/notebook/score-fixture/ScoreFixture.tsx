@@ -40,7 +40,7 @@ const ONE_BY_ONE: NotebookState = {
       history: [{ version: 1, contentHash: 'fixture-hash' }],
     },
   ],
-  scores: { golden: { 'run-1': { frac: '1/1', per: [{ patientId: 'patient-a', pass: true, fails: [] }] } } },
+  scores: { golden: { 'run-1': { frac: '1/1', per: [{ patientId: 'patient-a', state: 'pass', fails: [] }] } } },
 }
 
 export function ScoreFixture() {

@@ -18,7 +18,7 @@ function judgeErr(patientId: string): PerCaseScore {
   return { patientId, errored: true, fails: [] }
 }
 function golden(patientId: string, pass: boolean): PerCaseScore {
-  return { patientId, pass, fails: [] }
+  return { patientId, state: pass ? 'pass' : 'fail', fails: [] }
 }
 
 describe('computeYouVsJudge — of-marked denominator', () => {

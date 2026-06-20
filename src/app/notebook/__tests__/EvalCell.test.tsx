@@ -168,7 +168,7 @@ describe('EvalCell — golden editors', () => {
     const report = onScoreReport.mock.calls[0][0]
     expect(report.evalKey).toBe('golden')
     expect(report.row.frac).toBe('1/1')
-    expect(report.row.per).toEqual([{ patientId: 'p1', pass: true, fails: [] }])
+    expect(report.row.per).toEqual([{ patientId: 'p1', state: 'pass', fails: [] }])
   })
 })
 
@@ -477,15 +477,15 @@ describe('buildGoldenPerCase — stale entries drop from the denominator', () =>
     const per = buildGoldenPerCase(order, grades, new Set(['p3']))
 
     const byId = Object.fromEntries(per.map((p) => [p.patientId, p]))
-    expect(byId.p1.pass).toBe(true)
-    expect(byId.p2.pass).toBe(false)
+    expect(byId.p1.state).toBe('pass')
+    expect(byId.p2.state).toBe('fail')
     // Stale → errored, NOT counted pass or fail (the same exclusion as judge-errored).
     expect(byId.p3.errored).toBe(true)
-    expect(byId.p3.pass).toBeUndefined()
+    expect(byId.p3.state).toBeUndefined()
 
-    // The denominator = entries with a defined pass; the stale one is gone.
-    const gradedTotal = per.filter((p) => p.pass !== undefined).length
-    const passN = per.filter((p) => p.pass === true).length
+    // The denominator = entries with a defined state; the stale one is gone.
+    const gradedTotal = per.filter((p) => p.state !== undefined).length
+    const passN = per.filter((p) => p.state === 'pass').length
     expect(gradedTotal).toBe(2)
     expect(passN).toBe(1)
   })
@@ -495,7 +495,7 @@ describe('buildGoldenPerCase — stale entries drop from the denominator', () =>
     const grades: Record<string, GoldenGrade> = { p1: pass(), p2: pass() }
     const per = buildGoldenPerCase(order, grades, new Set(order))
     expect(per.every((p) => p.errored === true)).toBe(true)
-    expect(per.filter((p) => p.pass !== undefined).length).toBe(0)
+    expect(per.filter((p) => p.state !== undefined).length).toBe(0)
   })
 })
 

@@ -5,10 +5,11 @@
 // SAME object: the simple trail is a PROJECTION of one row of `scores`, never a
 // separate field (see `projectSimpleTrail` below).
 //
-// Storage lives under the new namespace `mres.nb.v1`. We do NOT migrate the old
-// `bench.*` or pivot keys — this is a fresh model, and a versioned zod schema
-// gates every import: a malformed payload is REJECTED with a message and loads
-// NOTHING (no partial load), so the surface never paints half-validated state.
+// Storage lives under the namespace `mres.nb.v2` (bumped from v1 when the
+// per-case `pass`/`state` fields were unified — SHA-175). We do NOT migrate older
+// keys — this is a fresh model, and a versioned zod schema gates every import: a
+// stale/malformed payload is REJECTED with a message and loads NOTHING (no partial
+// load), so the surface never paints half-validated state.
 //
 // This module is pure (plus thin, guarded localStorage wrappers); no UI.
 
@@ -16,10 +17,10 @@ import { z } from 'zod'
 import { genPromptHash } from '@/lib/cases'
 
 /** localStorage namespace for the notebook. Bumped with the schema version. */
-export const STORAGE_KEY = 'mres.nb.v1'
+export const STORAGE_KEY = 'mres.nb.v2'
 
 /** The schema version literal stamped into every export and checked on import. */
-export const SCHEMA_VERSION = 'mres.nb.v1'
+export const SCHEMA_VERSION = 'mres.nb.v2'
 
 // ── Leaf schemas ─────────────────────────────────────────────────────────────
 
@@ -86,13 +87,16 @@ const EvalSchema = z.object({
 })
 
 /**
- * Per-patient score within one (eval, run) row. `pass` is the golden-row signal;
- * `state` is the judge-row signal. `agree` lives ONLY on judge-row entries — it is
- * the sole source for the later disputed-cell indicator and the "you: a/m" marker.
+ * Per-patient score within one (eval, run) row. `state` ('pass' | 'fail') is the
+ * UNIFIED pass/fail signal for BOTH golden and judge rows (SHA-175 — golden
+ * formerly wrote a boolean `pass` while the judge wrote `state`; the two divergent
+ * fields are now one). An un-gradable / stale / errored entry carries
+ * `errored: true` and NO `state`, so it is excluded from the pass/fail denominator.
+ * `agree` lives ONLY on judge-row entries — it is the sole source for the
+ * disputed-cell indicator and the "you: a/m" marker.
  */
 const PerCaseScoreSchema = z.object({
   patientId: z.string(),
-  pass: z.boolean().optional(),
   state: z.string().optional(),
   fails: z.array(z.string()),
   reason: z.string().optional(),
