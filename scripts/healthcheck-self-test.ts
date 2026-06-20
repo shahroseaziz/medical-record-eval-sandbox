@@ -12,7 +12,7 @@
  * Exit codes: 0 (pass), 1 (fail)
  */
 
-import { checkDriftBand, parseDataStream } from './healthcheck.js'
+import { checkDriftBand, isTimeoutError, parseDataStream } from './healthcheck.js'
 
 let failed = false
 
@@ -78,6 +78,18 @@ assert(
 const malformedBody = '2:not-valid-json\n2:[{"type":"ok"}]\n'
 const malformedEvents = parseDataStream(malformedBody)
 assert(malformedEvents.length === 1, 'malformed 2: line is skipped gracefully')
+
+// ── Test 7: isTimeoutError classifies aborts as transient (SHA-43) ────────────
+// A request timeout/abort is inconclusive (prod cold-start / model latency), not
+// drift — the canary skips it instead of red-flagging the whole Health Check.
+const timeoutErr = new Error('aborted')
+timeoutErr.name = 'TimeoutError'
+const abortErr = new Error('aborted')
+abortErr.name = 'AbortError'
+assert(isTimeoutError(timeoutErr), 'TimeoutError is classified as a transient timeout')
+assert(isTimeoutError(abortErr), 'AbortError is classified as a transient timeout')
+assert(!isTimeoutError(new Error('HTTP 500')), 'a generic error is NOT a transient timeout')
+assert(!isTimeoutError('aborted'), 'a non-Error value is NOT a transient timeout')
 
 // ── Result ────────────────────────────────────────────────────────────────────
 console.log('\n══════════════════════════════════════════════════════════════')
