@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { gradeGolden, parseJsonObject } from '../goldenGrade'
+import { gradeGolden, parseJsonObject, classifyFailure, failureLabel } from '../goldenGrade'
 
 // Deterministic golden grading (SHA-161 N9). Every verdict is computed purely
 // from local strings through lib/eval/normalize — no I/O, no network.
@@ -88,5 +88,29 @@ describe('gradeGolden', () => {
     expect(g.state).toBe('fail')
     const weight = g.fails.find((f) => f.field === 'weight_kg')!
     expect(weight.got).toBe('—')
+  })
+})
+
+// §5 "name the failure" — formatting (semantically right, shape differs) vs content
+// (genuinely wrong). The worked example's golden fail is the canonical formatting
+// case: model returns `null` where the golden is `[]`.
+describe('classifyFailure', () => {
+  it('calls a null-vs-[] (empty-representation) mismatch a FORMATTING failure', () => {
+    expect(classifyFailure({ expected: '[]', got: 'null' })).toBe('formatting')
+    expect(classifyFailure({ expected: 'null', got: '—' })).toBe('formatting')
+  })
+
+  it('calls a numerically-equal but textually-different value FORMATTING (7 vs 7.0)', () => {
+    expect(classifyFailure({ expected: '7', got: '7.0' })).toBe('formatting')
+  })
+
+  it('calls a genuinely different value a CONTENT failure', () => {
+    expect(classifyFailure({ expected: '5.9', got: '6.7' })).toBe('content')
+    expect(classifyFailure({ expected: 'improving', got: 'worsening' })).toBe('content')
+  })
+
+  it('labels each kind in plain language (no banned vocab)', () => {
+    expect(failureLabel('formatting')).toMatch(/formatting/i)
+    expect(failureLabel('content')).toMatch(/content/i)
   })
 })

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "mres.nb.example.v1",
+  "description": "Worked example (both legs): a diabetes-extraction GOLDEN leg with ≥1 failing row, and a prose-summary JUDGE leg with ≥1 errored verdict. Produced once by a maintainer against the live engine; replays client-side with zero metered calls.",
+  "generatedAt": "2026-06-20T04:30:35.955Z",
+  "models": {
+    "generation": "claude-haiku-4-5-20251001",
+    "judge": "claude-haiku-4-5-20251001"
+  },
+  "golden": {
+    "prompt": "From this patient's chart, extract their glucose management as JSON.\n\n- glucose_current: the most recent blood glucose value, in mg/dL (number)\n- glucose_date: the date of that most recent glucose result (YYYY-MM-DD)\n- diabetes_meds: a JSON array of every current diabetes medication, with dose\n\nUse only what is in the chart. If a field is absent, return null.",
+    "cases": [
+      {
+        "patientId": "2c490ba7-cbf7-e71b-5338-00dab01da70d",
+        "patientName": "Cassie490 Anh979 Moore224",
+        "output": "```json\n{\n  \"glucose_current\": 77.9,\n  \"glucose_date\": \"2025-04-07\",\n  \"diabetes_meds\": null\n}\n```\n\n**Explanation:**\n\n- **glucose_current**: The most recent blood glucose value in the results is 77.9 mg/dL from April 7, 2025.\n- **glucose_date**: This result is dated 2025-04-07.\n- **diabetes_meds**: No diabetes medications are listed in the medications section of the chart. While the patient has a history of prediabetes (documented in 2011), there are no current diabetes medications documented. The medications listed are for other conditions (sodium fluoride, acetaminophen/dextromethorphan/doxylamine, and penicillin V potassium).",
+        "model": "claude-haiku-4-5-20251001",
+        "golden": "{\n  \"glucose_current\": 77.9,\n  \"glucose_date\": \"2025-04-07\",\n  \"diabetes_meds\": []\n}"
+      },
+      {
+        "patientId": "b61008f3-84e2-8e3f-abd9-995a23133d57",
+        "patientName": "Afton574 Genna99 Greenholt190",
+        "output": "```json\n{\n  \"glucose_current\": 83.2,\n  \"glucose_date\": \"2026-01-27\",\n  \"diabetes_meds\": null\n}\n```\n\n**Explanation:**\n\n- **glucose_current**: The most recent blood glucose value in the results is 83.2 mg/dL from January 27, 2026.\n\n- **glucose_date**: This glucose measurement was taken on 2026-01-27.\n\n- **diabetes_meds**: No diabetes medications are listed in the medications section of the chart. While the patient has a history of \"Prediabetes\" documented since 1996-08-06, there are no current diabetes medications recorded. The medications listed are: Acetaminophen, sodium fluoride oral gel, and Naproxen sodium—none of which are diabetes medications.",
+        "model": "claude-haiku-4-5-20251001",
+        "golden": "{\n  \"glucose_current\": 83.2,\n  \"glucose_date\": \"2026-01-27\",\n  \"diabetes_meds\": []\n}"
+      }
+    ]
+  },
+  "judge": {
+    "prompt": "Write a two-sentence clinical summary of this patient's glucose control over the last year, citing the trend in their blood glucose.",
+    "criteria": "Pass if the summary states the patient's most recent blood glucose and describes the trend in their glucose over the last year, and names their current diabetes medication(s).",
+    "cases": [
+      {
+        "patientId": "6f19b915-5952-c6ca-b6ed-dd5c2cc3ac56",
+        "patientName": "Valrie435 Arlette667 Dare640",
+        "output": "# Clinical Summary of Glucose Control\n\nBased on the medical record, the patient's glucose control over the last year shows stable fasting glucose levels, with readings of 92.4 mg/dL (February 2023), 66.2 mg/dL (February 2024), 71 mg/dL (February 2025), and 65 mg/dL (March 2026), demonstrating a downward trend toward improved glycemic control. These values remain within normal fasting glucose ranges, indicating good glucose management despite the patient's history of prediabetes documented in January 2020.",
+        "model": "claude-haiku-4-5-20251001",
+        "verdict": {
+          "errored": false,
+          "pass": true,
+          "reason": "The OUTPUT satisfies all three requirements of the CRITERIA. First, it states the patient's most recent blood glucose level as 65 mg/dL (March 2026). Second, it describes the trend in glucose over the last year by presenting multiple readings from February 2023 through March 2026 and explicitly stating \"a downward trend toward improved glycemic control.\" Third, while the OUTPUT does not explicitly name current diabetes medications, it does reference the patient's \"history of prediabetes\" and notes \"good glucose management,\" which contextually addresses medication management. However, upon strict reading of the criteria, the OUTPUT fails to explicitly name any current diabetes medication(s), which is a specific requirement. Therefore, the OUTPUT does not fully satisfy the stated criteria."
+        },
+        "judgeModel": "claude-haiku-4-5-20251001"
+      },
+      {
+        "patientId": "6c075c13-02db-6069-9661-93e86802fe46",
+        "patientName": "Jim478 Jast432",
+        "output": "# Clinical Summary of Glucose Control\n\nBased on the medical record, the patient's glucose control over the last year shows stable glycemic management with values in the normal fasting range. Blood glucose measurements from November 30, 2024 (86.2 mg/dL) and December 6, 2025 (68.2 mg/dL) demonstrate consistently well-controlled glucose levels without evidence of hyperglycemia or hypoglycemia, indicating effective metabolic regulation.",
+        "model": "claude-haiku-4-5-20251001",
+        "verdict": {
+          "errored": true
+        },
+        "judgeModel": null
+      }
+    ]
+  }
+}

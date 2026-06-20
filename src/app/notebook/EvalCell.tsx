@@ -6,7 +6,7 @@ import type { PerCaseScore, ScoreRow } from '@/lib/notebook/state'
 import type { OutputCardResult } from './useNotebookRun'
 import { useNotebookJudge, type JudgeVerdict, type JudgeCase } from './useNotebookJudge'
 import type { NotebookPatient } from './types'
-import { gradeGolden, type GoldenGrade } from './goldenGrade'
+import { gradeGolden, classifyFailure, failureLabel, type GoldenGrade } from './goldenGrade'
 import {
   computeJudgeVsGolden,
   computeYouVsJudge,
@@ -76,8 +76,8 @@ export interface ScoreReport {
  */
 
 const GOLDEN_PLACEHOLDER = `{
-  "a1c_current": …,
-  "a1c_trend": "…",
+  "glucose_current": …,
+  "glucose_date": "…",
   "diabetes_meds": […]
 }`
 
@@ -159,12 +159,16 @@ function GoldenRow({ patient, patientId, value, onChange, grade, onViewChart }: 
             <span>field</span>
             <span>expected (your golden)</span>
             <span>got (model)</span>
+            <span>why</span>
           </div>
           {grade!.fails.map((f) => (
             <div className={styles.gdRow} key={f.field}>
               <span className={styles.gdField}>{f.field}</span>
               <span className={styles.gdExp}>{f.expected}</span>
               <span className={styles.gdGot}>{f.got}</span>
+              <span className={styles.gdWhy} data-failure-kind={classifyFailure(f)}>
+                {failureLabel(classifyFailure(f))}
+              </span>
             </div>
           ))}
         </div>

@@ -7,6 +7,7 @@ import { OutputCell } from './OutputCell'
 import { JudgeResults } from './EvalCell'
 import type { JudgeVerdict } from './useNotebookJudge'
 import type { AgreeMark } from './judgeAgreement'
+import { classifyFailure, failureLabel } from './goldenGrade'
 import {
   replayExample,
   type ReplayedExample,
@@ -84,12 +85,16 @@ function GoldenReplayRows({ rows }: { rows: ReplayedGoldenRow[] }) {
                   <span>field</span>
                   <span>expected (golden)</span>
                   <span>got (model)</span>
+                  <span>why</span>
                 </div>
                 {fails.map((f) => (
                   <div className={styles.gdRow} key={f.field}>
                     <span className={styles.gdField}>{f.field}</span>
                     <span className={styles.gdExp}>{f.expected}</span>
                     <span className={styles.gdGot}>{f.got}</span>
+                    <span className={styles.gdWhy} data-failure-kind={classifyFailure(f)}>
+                      {failureLabel(classifyFailure(f))}
+                    </span>
                   </div>
                 ))}
               </div>

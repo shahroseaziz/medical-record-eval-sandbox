@@ -1,25 +1,22 @@
 {
-  "_README": "Curated INPUTS for scripts/gen-notebook-example.ts (N13a). The maintainer owns this file: pin REAL seeded patient ids and author TRUTHFUL goldens (derived from each chart) before running the generator. The generator runs the live engine over these inputs, then refuses to write the artifact unless BOTH teaching moments survive (>=1 failing golden, >=1 errored verdict). NEVER edit a golden to manufacture a failure — change the patient selection until the live model genuinely gets one wrong. The golden-leg prompt is pinned to WORKED_PROMPT and the judge criteria to WORKED_CRITERIA (src/app/notebook/worked-example.ts); only the prose-output query lives here.",
+  "_README": "Curated INPUTS for scripts/gen-notebook-example.ts (N13a). The maintainer owns this file: pin REAL seeded patient ids and author TRUTHFUL goldens (derived from each chart) before running the generator. The generator runs the live engine over these inputs, then refuses to write the artifact unless BOTH teaching moments survive (>=1 failing golden, >=1 errored verdict). NEVER edit a golden to manufacture a failure — change the patient selection until the live model genuinely gets one wrong. The golden-leg prompt is pinned to WORKED_PROMPT and the judge criteria to WORKED_CRITERIA (src/app/notebook/worked-example.ts); only the prose-output query lives here. Scoped to GLUCOSE, not A1c (this Synthea cohort's C-CDA has no Hemoglobin A1c). The golden patients are prediabetic with routine glucose labs and NO diabetes meds (verified), so diabetes_meds is truthfully []. The live free-tier model extracts glucose value+date correctly but returns diabetes_meds=null (not the spec'd []), so each golden row fails on a REPRESENTATION/FORMATTING mismatch — the worked example's teaching moment (named as a formatting failure, fixable with output instructions). Only budget-fitting (<11.5k tok stuff) patients are usable; every diabetes-MED patient overflows. Richer (diabetic, abnormal/trending) examples need the dataset-enrichment effort (Linear).",
   "golden": {
     "patients": [
       {
-        "patientId": "REPLACE-WITH-A-SEEDED-DIABETES-PATIENT-ID",
-        "golden": "{\n  \"a1c_current\": 7.2,\n  \"a1c_date\": \"2026-03-01\",\n  \"a1c_trend\": \"improving\",\n  \"diabetes_meds\": [\"Metformin 1000 MG\", \"Insulin glargine 100 UNT/ML\"]\n}"
+        "patientId": "2c490ba7-cbf7-e71b-5338-00dab01da70d",
+        "golden": "{\n  \"glucose_current\": 77.9,\n  \"glucose_date\": \"2025-04-07\",\n  \"diabetes_meds\": []\n}"
       },
       {
-        "patientId": "REPLACE-WITH-A-SECOND-SEEDED-DIABETES-PATIENT-ID",
-        "golden": "{\n  \"a1c_current\": 8.4,\n  \"a1c_date\": \"2026-02-15\",\n  \"a1c_trend\": \"worsening\",\n  \"diabetes_meds\": [\"Metformin 500 MG\"]\n}"
+        "patientId": "b61008f3-84e2-8e3f-abd9-995a23133d57",
+        "golden": "{\n  \"glucose_current\": 83.2,\n  \"glucose_date\": \"2026-01-27\",\n  \"diabetes_meds\": []\n}"
       }
     ]
   },
   "judge": {
-    "prosePrompt": "Write a two-sentence clinical summary of this patient's diabetes control over the last year, citing the trend in their A1c.",
+    "prosePrompt": "Write a two-sentence clinical summary of this patient's glucose control over the last year, citing the trend in their blood glucose.",
     "patients": [
-      { "patientId": "REPLACE-WITH-A-SEEDED-DIABETES-PATIENT-ID" },
-      {
-        "patientId": "REPLACE-WITH-A-SECOND-SEEDED-DIABETES-PATIENT-ID",
-        "erroredDemo": true
-      }
+      { "patientId": "6f19b915-5952-c6ca-b6ed-dd5c2cc3ac56" },
+      { "patientId": "6c075c13-02db-6069-9661-93e86802fe46", "erroredDemo": true }
     ]
   }
 }

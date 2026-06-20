@@ -1068,7 +1068,7 @@
 .gdHead,
 .gdRow {
   display: grid;
-  grid-template-columns: minmax(96px, 1fr) 1.4fr 1.4fr;
+  grid-template-columns: minmax(80px, 0.9fr) 1.2fr 1.2fr 1.3fr;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
 }
@@ -1096,6 +1096,12 @@
 
 .gdGot {
   color: var(--color-danger-text);
+  word-break: break-word;
+}
+
+/* §5 "name the failure" — formatting vs content classifier label. */
+.gdWhy {
+  color: var(--color-text-subtle);
   word-break: break-word;
 }
 
