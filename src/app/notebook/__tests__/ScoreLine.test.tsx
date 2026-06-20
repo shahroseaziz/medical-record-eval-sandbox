@@ -39,7 +39,7 @@ function mkRun(id: string, version: number): NotebookRun {
 }
 
 function mkRow(n: number): ScoreRow {
-  return { frac: `${n}/1`, per: [{ patientId: 'patient-a', pass: n === 1, fails: [] }] }
+  return { frac: `${n}/1`, per: [{ patientId: 'patient-a', state: n === 1 ? 'pass' : 'fail', fails: [] }] }
 }
 
 function mkEval(key: string, label: string, version: number): NotebookEval {
@@ -219,7 +219,7 @@ describe('ScoreLine (SHA-163 N11 / SHA-170 N15a)', () => {
   // ── N15b: current-column trust markers + the disputed-cell indicator ────────
 
   function gp(patientId: string, pass: boolean): PerCaseScore {
-    return { patientId, pass, fails: [] }
+    return { patientId, state: pass ? 'pass' : 'fail', fails: [] }
   }
   function jp(patientId: string, state: 'pass' | 'fail', agree?: 'a' | 'm'): PerCaseScore {
     return { patientId, state, fails: [], agree }

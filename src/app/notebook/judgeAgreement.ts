@@ -34,7 +34,7 @@ function judgeScored(p: PerCaseScore): boolean {
 
 /** Whether a golden entry was actually graded (pass/fail, not empty/invalid). */
 function goldenScored(p: PerCaseScore): boolean {
-  return typeof p.pass === 'boolean'
+  return p.state === 'pass' || p.state === 'fail'
 }
 
 export interface YouVsJudge {
@@ -64,8 +64,8 @@ export interface JudgeVsGolden {
 
 /**
  * "judge-vs-golden m of n" — computed from the OVERLAP where a judge AND the golden
- * both scored the same patient. A match is the SAME pass/fail verdict (judge
- * `state==='pass'` vs golden `pass===true`). Purely client-side: no metered call,
+ * both scored the same patient. A match is the SAME pass/fail verdict (both the
+ * judge and golden `state==='pass'`). Purely client-side: no metered call,
  * no kappa, no threshold — a lead, not a verdict.
  */
 export function computeJudgeVsGolden(
@@ -76,7 +76,7 @@ export function computeJudgeVsGolden(
   const comparable = judgePer.filter((j) => judgeScored(j) && goldenById.has(j.patientId))
   const matched = comparable.filter((j) => {
     const g = goldenById.get(j.patientId)!
-    return (j.state === 'pass') === (g.pass === true)
+    return (j.state === 'pass') === (g.state === 'pass')
   }).length
   return { matched, overlap: comparable.length }
 }

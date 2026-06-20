@@ -75,8 +75,8 @@ function fullState(): NotebookState {
         'run-1': {
           frac: '1/2',
           per: [
-            { patientId: 'patient-a', pass: true, fails: [] },
-            { patientId: 'patient-b', pass: false, fails: ['medications'], reason: 'missed dose' },
+            { patientId: 'patient-a', state: 'pass', fails: [] },
+            { patientId: 'patient-b', state: 'fail', fails: ['medications'], reason: 'missed dose' },
           ],
         },
       },
@@ -189,7 +189,7 @@ describe('notebook bench-state v1', () => {
           golden: {
             'run-1': {
               frac: '1/1',
-              per: [{ patientId: 'patient-a', pass: true, fails: [] }],
+              per: [{ patientId: 'patient-a', state: 'pass', fails: [] }],
             },
           },
         },
@@ -209,7 +209,7 @@ describe('notebook bench-state v1', () => {
       // And it has the simple-trail shape: a frac string + per-patient array.
       expect(projected).toEqual({
         frac: '1/1',
-        per: [{ patientId: 'patient-a', pass: true, fails: [] }],
+        per: [{ patientId: 'patient-a', state: 'pass', fails: [] }],
       })
       expect(typeof projected?.frac).toBe('string')
       expect(Array.isArray(projected?.per)).toBe(true)
@@ -256,7 +256,7 @@ describe('notebook bench-state v1', () => {
       })
       const mkRow = (n: number): ScoreRow => ({
         frac: `${n}/1`,
-        per: [{ patientId: 'patient-a', pass: n === 1, fails: [] }],
+        per: [{ patientId: 'patient-a', state: n === 1 ? 'pass' : 'fail', fails: [] }],
       })
       return {
         ...createEmptyState({ modelIds: ['claude-opus-4-8'], appVersion: '0.1.0' }),
@@ -446,7 +446,7 @@ describe('notebook bench-state v1', () => {
         evals: [e],
         scores: {
           golden: {
-            'run-1': { frac: '1/1', per: [{ patientId: 'patient-a', pass: true, fails: [] }], evalVersion: e.version },
+            'run-1': { frac: '1/1', per: [{ patientId: 'patient-a', state: 'pass', fails: [] }], evalVersion: e.version },
           },
         },
       }
